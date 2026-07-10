@@ -46,6 +46,8 @@ docker run -p 8000:8000 neural-options-lab
 
 The live-news feature of the risk analyst and the live-quote features are optional. Set `GROQ_API_KEY` (free tier at console.groq.com) to enable the language model; without it the offline summary is used.
 
+To host it somewhere public so it opens from a link instead of a local clone, see [DEPLOY.md](DEPLOY.md). The app is a single service that serves the API and the dashboard together, so any host that runs the Docker image works.
+
 ## How it works
 
 | Piece | Approach |
