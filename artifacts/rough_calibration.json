@@ -1,0 +1,22 @@
+{
+  "ticker": "SPY",
+  "as_of": "2026-07-09T03:43:16.965974-04:00",
+  "spot": 745.4000244140625,
+  "rate": 0.037230000495910645,
+  "eta": 2.1384,
+  "rho": -0.7387,
+  "H": 0.1172,
+  "xi": 0.032837,
+  "sqrt_xi": 0.1812,
+  "n_quotes": 72,
+  "expiries": [
+    "2026-07-09",
+    "2026-07-10"
+  ],
+  "iv_rmse_volpts": 1.969,
+  "search_paths": 8000,
+  "final_paths": 64000,
+  "objective": "vega-weighted price Huber (CRN)",
+  "quote_source": "last_trade_market_closed",
+  "accepted": true
+}

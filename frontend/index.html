@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neural Options Lab: Deep Learning for Options Pricing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Command Bar -->
+<header class="cmd-bar">
+  <div class="brand">
+    <div class="brand-mark">∂</div>
+    <div class="brand-copy">
+      <span class="brand-name">Neural Options Lab</span>
+      <span class="brand-sub">Deep Pricing | Deep Hedging | XAI</span>
+    </div>
+  </div>
+
+  <nav class="tab-nav" aria-label="Sections">
+    <button class="tab-btn active" data-tab="tab-pricing">Pricing Lab</button>
+    <button class="tab-btn" data-tab="tab-stream">Live Stream</button>
+    <button class="tab-btn" data-tab="tab-hedging">Deep Hedging</button>
+    <button class="tab-btn" data-tab="tab-ai">AI Risk Analyst</button>
+  </nav>
+
+  <div class="status-cluster" id="model-badge">
+    <span class="status-dot" id="status-dot"></span>
+    <span class="status-text mono" id="model-badge-text">Connecting...</span>
+  </div>
+</header>
+
+<div class="shell">
+
+  <!-- Parameter Rail -->
+  <aside class="rail" id="controls">
+
+    <section class="rail-section">
+      <h2 class="kicker">Live Market</h2>
+      <div class="ticker-row">
+        <input type="text" id="in-ticker" class="ticker-input mono" placeholder="TICKER" maxlength="10">
+        <button class="btn btn-accent" id="btn-fetch-ticker">Fetch</button>
+      </div>
+      <div class="market-chip mono" id="market-chip"></div>
+    </section>
+
+    <section class="rail-section">
+      <h2 class="kicker">Contract</h2>
+      <div class="segmented" id="option-type">
+        <button class="seg-btn active" data-value="call">Call</button>
+        <button class="seg-btn" data-value="put">Put</button>
+      </div>
+
+      <div class="param">
+        <div class="param-head"><label>Spot <i class="sym">S₀</i></label>
+          <output class="param-val mono" id="val-spot">100</output></div>
+        <input type="range" id="in-spot" min="55" max="195" step="1" value="100">
+      </div>
+
+      <div class="param">
+        <div class="param-head"><label>Strike <i class="sym">K</i></label>
+          <output class="param-val mono" id="val-strike">100</output></div>
+        <input type="range" id="in-strike" min="55" max="195" step="1" value="100">
+      </div>
+
+      <div class="param">
+        <div class="param-head"><label>Maturity <i class="sym">T</i></label>
+          <output class="param-val mono" id="val-maturity">1.00y</output></div>
+        <input type="range" id="in-maturity" min="0.0039" max="2" step="0.001" value="1">
+      </div>
+    </section>
+
+    <section class="rail-section">
+      <h2 class="kicker">Model Inputs</h2>
+      <div class="param">
+        <div class="param-head"><label>Volatility <i class="sym">σ</i></label>
+          <output class="param-val mono" id="val-sigma">25%</output></div>
+        <input type="range" id="in-sigma" min="5" max="80" step="1" value="25">
+      </div>
+
+      <div class="param">
+        <div class="param-head"><label>Risk-free rate <i class="sym">r</i></label>
+          <output class="param-val mono" id="val-rate">4.0%</output></div>
+        <input type="range" id="in-rate" min="0" max="10" step="0.25" value="4">
+      </div>
+    </section>
+
+    <section class="rail-section">
+      <h2 class="kicker">Simulation</h2>
+      <div class="segmented dense" id="mc-paths">
+        <button class="seg-btn mono" data-value="10000">10k</button>
+        <button class="seg-btn mono active" data-value="50000">50k</button>
+        <button class="seg-btn mono" data-value="100000">100k</button>
+        <button class="seg-btn mono" data-value="250000">250k</button>
+      </div>
+
+      <div class="readout-row">
+        <span>Moneyness S/K</span>
+        <span class="mono" id="moneyness-val">1.00</span>
+      </div>
+      <div class="domain-warning" id="domain-warning">
+        Outside trained domain [0.5, 2.0] (Surrogate is extrapolating)
+      </div>
+    </section>
+
+    <p class="rail-note">
+      Discrete arithmetic-average Asian, 50 monitoring dates. MC uses
+      antithetic sampling + geometric-Asian control variate. Greeks are exact
+      autograd derivatives of the network.
+    </p>
+  </aside>
+
+  <!-- Stage -->
+  <main class="stage">
+
+    <!-- Tab: Pricing Lab -->
+    <section id="tab-pricing" class="tab-pane results active">
+
+      <!-- Hero: neural price dominates; conic speedup dial pivots the duel -->
+      <div class="hero">
+        <article class="panel hero-card hero-nn" id="card-nn">
+          <header class="panel-tag">
+            <span class="tag tag-nn">Neural Net</span>
+            <span class="meta mono" id="nn-latency">-</span>
+          </header>
+          <div class="price mono" id="nn-price">-</div>
+          <p class="card-sub" id="nn-sub">price + 5 Greeks in one autograd pass</p>
+        </article>
+
+        <article class="panel hero-card hero-vs" id="card-speedup">
+          <div class="dial-core">
+            <span class="dial-label">Speedup</span>
+            <span class="speedup mono" id="speedup">-</span>
+          </div>
+          <p class="card-sub centered" id="agreement">-</p>
+        </article>
+
+        <article class="panel hero-card hero-mc" id="card-mc">
+          <header class="panel-tag">
+            <span class="tag tag-mc">Monte Carlo</span>
+            <span class="meta mono" id="mc-latency">-</span>
+          </header>
+          <div class="price mono" id="mc-price">-</div>
+          <p class="card-sub mono" id="mc-ci">-</p>
+        </article>
+      </div>
+
+      <!-- Greeks: one dense instrument strip, hairline-divided -->
+      <div class="panel greek-strip" id="greeks-row">
+        <div class="greek"><span class="greek-sym">Δ</span>
+          <span class="greek-name">Delta</span><span class="greek-val mono" id="g-delta">-</span></div>
+        <div class="greek"><span class="greek-sym">Γ</span>
+          <span class="greek-name">Gamma</span><span class="greek-val mono" id="g-gamma">-</span></div>
+        <div class="greek"><span class="greek-sym">ν</span>
+          <span class="greek-name">Vega</span><span class="greek-val mono" id="g-vega">-</span></div>
+        <div class="greek"><span class="greek-sym">Θ</span>
+          <span class="greek-name">Theta</span><span class="greek-val mono" id="g-theta">-</span></div>
+        <div class="greek"><span class="greek-sym">ρ</span>
+          <span class="greek-name">Rho</span><span class="greek-val mono" id="g-rho">-</span></div>
+      </div>
+
+      <!-- Analytics grid: asymmetric 7/5 rhythm -->
+      <div class="grid-75">
+        <article class="panel chart-panel">
+          <header class="chart-head">
+            <div>
+              <h3>Monte Carlo Convergence</h3>
+              <p>MC estimate ±95% CI vs path count (against the instant neural price)</p>
+            </div>
+          </header>
+          <div class="plot" id="plot-convergence"><div class="shimmer"></div></div>
+        </article>
+
+        <article class="panel chart-panel">
+          <header class="chart-head">
+            <div>
+              <h3>Latency</h3>
+              <p>wall-clock per pricing task (log scale)</p>
+            </div>
+            <button class="btn" id="btn-benchmark">Re-run</button>
+          </header>
+          <div class="plot" id="plot-latency"><div class="shimmer"></div></div>
+        </article>
+      </div>
+
+      <div class="grid-75">
+        <article class="panel chart-panel">
+          <header class="chart-head">
+            <div>
+              <h3>Error Distribution: Single vs. Ensemble</h3>
+              <p id="error-sub">signed pricing error vs high-precision Monte Carlo references</p>
+            </div>
+            <div class="chart-tools">
+              <div class="segmented dense" id="error-metric">
+                <button class="seg-btn active" data-value="price">Price</button>
+                <button class="seg-btn" data-value="delta">Delta</button>
+                <button class="seg-btn" data-value="vega">Vega</button>
+              </div>
+              <span class="meta mono" id="error-stat"></span>
+            </div>
+          </header>
+          <div class="plot" id="plot-errors"><div class="shimmer"></div></div>
+        </article>
+
+        <article class="panel chart-panel">
+          <header class="chart-head">
+            <div>
+              <h3>Feature Attributions</h3>
+              <p id="xai-sub">Integrated Gradients vs an ATM minimal-option baseline</p>
+            </div>
+            <span class="meta mono" id="xai-stat"></span>
+          </header>
+          <div class="plot" id="plot-xai"><div class="shimmer"></div></div>
+        </article>
+      </div>
+
+      <article class="panel chart-panel">
+        <header class="chart-head">
+          <div>
+            <h3>Price Surface</h3>
+            <p>Price / Strike over Moneyness and Maturity</p>
+          </div>
+          <span class="meta mono accent" id="surface-stat"></span>
+        </header>
+        <div class="plot tall" id="plot-surface"><div class="shimmer"></div></div>
+      </article>
+    </section>
+
+    <!-- Tab: Live Stream -->
+    <section id="tab-stream" class="tab-pane" style="display:none">
+      <article class="panel chart-panel">
+        <header class="chart-head">
+          <div>
+            <h3>Real-Time Neural Pricing</h3>
+            <p id="stream-sub">Simulated GBM market ticks priced by the neural surrogate at 20 Hz</p>
+          </div>
+          <div class="chart-tools">
+            <button class="btn btn-accent" id="btn-stream">Connect</button>
+          </div>
+        </header>
+
+        <div class="stream-stats" id="stream-stats">
+          <div class="stream-stat">
+            <span class="k">Spot</span>
+            <span class="v mono" id="ws-spot">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">NN Price</span>
+            <span class="v mono" id="ws-price">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">Delta</span>
+            <span class="v mono" id="ws-delta">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">Gamma</span>
+            <span class="v mono" id="ws-gamma">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">Vega</span>
+            <span class="v mono" id="ws-vega">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">Theta</span>
+            <span class="v mono" id="ws-theta">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">Latency</span>
+            <span class="v mono" id="ws-latency">--</span>
+          </div>
+          <div class="stream-stat">
+            <span class="k">Ticks</span>
+            <span class="v mono" id="ws-ticks">0</span>
+          </div>
+        </div>
+
+        <div class="plot tall" id="plot-stream"></div>
+      </article>
+    </section>
+
+    <!-- Tab: Deep Hedging -->
+    <section id="tab-hedging" class="tab-pane" style="display:none">
+      <article class="panel chart-panel">
+        <header class="chart-head">
+          <div>
+            <h3>Hedging Simulator</h3>
+            <p id="hedge-sub">3,000 simulated 30-day paths | Short ATM call | Deep policy vs. Black-Scholes delta hedge</p>
+          </div>
+          <div class="chart-tools">
+            <div class="cost-slider-row">
+              <label>Transaction cost</label>
+              <input type="range" id="in-cost" min="0" max="200" step="5" value="50">
+              <span class="param-val mono" id="val-cost">50 bps</span>
+            </div>
+            <button class="btn btn-accent" id="btn-hedge">Run Simulation</button>
+          </div>
+        </header>
+        <div class="hedge-stats" id="hedge-stats"></div>
+        <div class="plot tall" id="plot-hedge"><div class="shimmer"></div></div>
+      </article>
+
+      <article class="panel chart-panel">
+        <header class="chart-head">
+          <div>
+            <h3>Policy Behaviour</h3>
+            <p>holdings chosen by each strategy along one simulated spot path (median terminal spot)</p>
+          </div>
+        </header>
+        <div class="plot" id="plot-holdings"><div class="shimmer"></div></div>
+      </article>
+    </section>
+
+    <!-- Tab: AI Risk Analyst -->
+    <section id="tab-ai" class="tab-pane" style="display:none">
+      <article class="panel chart-panel report-panel">
+        <header class="chart-head">
+          <div>
+            <h3>Risk Report</h3>
+            <p>numerical outputs of the pricer, hedger and XAI, narrated for the desk</p>
+          </div>
+          <button class="btn btn-accent" id="btn-risk">Generate Report</button>
+        </header>
+        <div class="report-body" id="ai-report">Click "Generate Report" to analyze the current option state. Uses Llama 3 via Groq when GROQ_API_KEY is set; otherwise a deterministic offline summary.</div>
+      </article>
+    </section>
+
+    <footer class="colophon">
+      Research tool. Prices come from neural surrogates trained on simulated
+      data and are not investment advice. Built with PyTorch, FastAPI and
+      Plotly.
+    </footer>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

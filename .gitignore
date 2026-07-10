@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets and environment
+.env
+.env.*
+
+# Editor and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude Code local config
+.claude/
+
+# Local automation with machine-specific paths (documented in the README)
+overnight.ps1
+calibrate_live.ps1
+
+# Development notes, not part of the product
+handoff_to_claude.md
+claude_prompt.md
+
+# Large regenerable caches and ablation artifacts.
+# The trained checkpoints the app needs to run are committed; these are not.
+artifacts/dataset.npz
+artifacts/dataset_0dte.pt
+artifacts/model_price_only.pt
+artifacts/eval_price_only.json
+artifacts/drift_log.jsonl
+artifacts/calibration_logs/

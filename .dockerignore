@@ -1,0 +1,41 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.mypy_cache/
+.pytest_cache/
+
+# Environments
+.env
+.env.*
+.venv
+env/
+venv/
+ENV/
+
+# Git and Claude
+.git
+.gitignore
+.claude/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Large regenerable caches and ablation artifacts (trained models are kept)
+artifacts/dataset.npz
+artifacts/dataset_0dte.pt
+artifacts/model_price_only.pt
+artifacts/eval_price_only.json
+artifacts/drift_log.jsonl
+artifacts/calibration_logs/
+
+# Local scripts and dev notes
+overnight.ps1
+calibrate_live.ps1
+handoff_to_claude.md
+claude_prompt.md
