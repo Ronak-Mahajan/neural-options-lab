@@ -218,3 +218,72 @@ def test_asian_call_dominates_geometric(engine):
         geo = geometric_asian_price(100.0 * m, 100.0, t, s, r,
                                     engine.n_steps, "call")
         assert arith >= geo - 0.05, f"arith {arith:.5f} < geo {geo:.5f}"
+
+
+# --------------------------------------------------------------------------- #
+#  rough_vol.py — the wrong fractional kernel, and the wrong leverage object
+# --------------------------------------------------------------------------- #
+
+def test_volterra_covariance_matches_quadrature():
+    """The driver was built from the Type-I (Mandelbrot-Van Ness) fBm
+    covariance, not the Riemann-Liouville Volterra covariance rough Bergomi
+    requires. The two agree only on the diagonal, which is why it survived."""
+    from scipy.integrate import quad
+    from backend.quant.rough_vol import volterra_covariance
+    H, n = 0.1172, 40
+    dt = (1.5 / 365) / n
+    C = volterra_covariance(n, dt, H, torch.device("cpu")).double().numpy()
+    t = np.arange(1, n + 1) * dt
+
+    def exact(u, v):
+        f = lambda s: (u - s) ** (H - 0.5) * (v - s) ** (H - 0.5)
+        return 2 * H * quad(f, 0, min(u, v), points=[min(u, v)], limit=200)[0]
+
+    for i in (0, 7, 19, 39):
+        for j in (0, 3, 25, 39):
+            got, want = C[i, j], exact(t[i], t[j])
+            assert abs(got - want) / abs(want) < 1e-5, (i, j, got, want)
+    # Diagonal is Var[W~_t] = t^{2H} in both parameterizations.
+    assert np.abs(np.diag(C) / t ** (2 * H) - 1.0).max() < 1e-5
+
+
+def test_leverage_correlates_spot_with_the_driving_brownian_motion():
+    """chol(C) is NOT the Volterra kernel: W~ is a continuous integral, not a
+    linear function of n coarse increments, so factorising C alone forces
+    corr(Z_1, W~_t1) = 1 by construction. The truth is sqrt(2H)/(H+1/2).
+
+    Applying rho to the wrong object over-correlates spot and vol at the short
+    end, which is exactly where a 0DTE skew fit is identified.
+    """
+    from backend.quant.rough_vol import joint_factor, volterra_covariance
+    H, n = 0.1172, 50
+    dt = (1.5 / 365) / n
+    L = joint_factor(n, dt, H, torch.device("cpu")).double().numpy()
+    S = L @ L.T
+    assert np.abs(S[:n, :n] - np.eye(n)).max() < 1e-8, "dW must be i.i.d. N(0,1)"
+    expected = math.sqrt(2 * H) / (H + 0.5)
+    got = S[n, 0] / math.sqrt(S[n, n])
+    assert abs(got - expected) < 1e-6, f"corr {got:.4f} vs {expected:.4f}"
+    C = volterra_covariance(n, dt, H, torch.device("cpu")).double().numpy()
+    assert np.abs(S[n:, n:] - C / dt ** (2 * H)).max() \
+        / np.abs(C / dt ** (2 * H)).max() < 1e-6
+
+
+def test_rough_bergomi_discounted_spot_is_a_martingale():
+    """A pricing measure must satisfy E[S_T] = S_0 e^{rT}; priced with a strike
+    of ~0 the call collapses to the discounted expected spot."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    S0 = torch.tensor([100.0])
+    out = rough_bergomi_mc(S0, torch.tensor([1e-9]), torch.tensor([1.5 / 365]),
+                           torch.tensor([0.18 ** 2]), torch.tensor([2.1384]),
+                           torch.tensor([-0.7387]), torch.tensor([0.0]),
+                           n_paths=200_000, n_steps=50, H=0.1172, seed=5)
+    assert abs(float(out[0]) / 100.0 - 1.0) < 1e-4
+
+
+def test_old_fbm_covariance_fails_loudly():
+    """Anything still calling the removed Type-I builder must stop, not
+    silently simulate the wrong process."""
+    from backend.quant.rough_vol import generate_fbm_covariance
+    with pytest.raises(NotImplementedError, match="not the rough Bergomi"):
+        generate_fbm_covariance(10, 0.001, 0.1, torch.device("cpu"))
