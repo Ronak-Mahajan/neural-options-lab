@@ -1,6 +1,6 @@
 # Neural Options Lab
 
-A neural network that prices options in about a millisecond, trained to match a Monte Carlo engine that takes a hundred times longer, wrapped in an interactive dashboard you can run locally in two commands.
+A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 28x more accurately than the standard closed-form approximation, wrapped in an interactive dashboard you can run locally in two commands.
 
 The project covers the full stack of a modern quant pricing system: the numerical methods that generate ground truth, the deep learning that learns to imitate them, a rough volatility model for same-day-expiry options, a reinforcement-style hedging agent, live market calibration, and a browser front end that ties it together. Trained model weights are included, so it runs the moment you clone it.
 
@@ -10,9 +10,11 @@ Built with PyTorch, FastAPI, and plain JavaScript with Plotly. No frontend build
 
 Arithmetic Asian options have no closed-form price. The payoff depends on the average price over the option's life, so the standard way to value one is Monte Carlo simulation, which is accurate but slow. At a 100,000-path budget a single price takes roughly 100 milliseconds, and a trading desk needs thousands of prices and their risk sensitivities (the Greeks) refreshed continuously.
 
-A neural network trained on Monte Carlo prices learns the pricing function itself. Once trained it prices the same contract in about a millisecond and returns all five Greeks as exact derivatives of the network through automatic differentiation, not finite differences. That turns a batch job into something interactive.
+A neural network trained on Monte Carlo prices learns the pricing function itself. Once trained it prices the same contract in ~714 microseconds (p50) and returns all five Greeks as exact derivatives of the network through automatic differentiation, not finite differences. Price plus all Greeks together costs 8.4 ms at p50, because gamma needs a second backward pass through five ensemble members. That turns a batch job into something interactive.
 
 The interesting part is doing this with enough numerical care that the surrogate is actually trustworthy: sub-2-basis-point pricing error, Greeks accurate enough to hedge with, and a separate model for the short-dated regime where the usual assumptions break down.
+
+This README states measured numbers and retracts the ones that did not survive measurement. Where an earlier version overclaimed, the correction is left in place rather than quietly edited out.
 
 ## What it does
 
@@ -52,7 +54,7 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 
 | Piece | Approach |
 |---|---|
-| Monte Carlo engine | Antithetic sampling with a geometric-Asian control variate (Kemna and Vorst, 1990). Cuts the standard error by 23.8x, measured as the ratio of empirical standard deviations across 400 seeded replications at 20,000 paths. An earlier version of this README claimed "about 30x"; that figure came from the reported standard error, which was computed as if antithetic pairs were independent and overstated the true error by ~45%. Both the estimator and the claim are fixed. |
+| Monte Carlo engine | Antithetic sampling with a geometric-Asian control variate (Kemna and Vorst, 1990). Cuts the standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications. An earlier version of this README claimed "about 30x"; that figure came from the reported standard error, which was computed as if antithetic pairs were independent and overstated the true error by ~45%. Both the estimator and the claim are fixed. |
 | Parameterization | The network prices the unit-strike call as a function of moneyness (spot over strike). Option prices scale linearly in spot and strike, so one model covers every strike exactly. Puts come from Asian put-call parity, which is exact. |
 | Architecture | A residual multilayer perceptron with SiLU activations and LayerNorm, about 134k parameters. Smooth activations matter here because the Greeks are computed by differentiating the network, and something like ReLU would give zero gamma almost everywhere. |
 | Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function, not just its level. |
