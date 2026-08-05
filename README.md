@@ -60,7 +60,7 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 | Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function, not just its level. |
 | Deep ensemble | Five independently initialized networks. Averaging them lowers error, and the Greeks average cleanly through the mean. |
 | Same-day-expiry (0DTE) model | Very short-dated option smiles show a power-law skew that classical models cannot reproduce. A rough Bergomi Monte Carlo engine (fractional Brownian motion, Hurst index near 0.1) generates training data for a separate ensemble that serves maturities of 12 trading days or less. |
-| Live calibration | `calibrate.py` fits the rough volatility parameters to the live SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. |
+| Live calibration | `calibrate.py` fits the rough volatility parameters to the SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. |
 | Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under two measures. It loses to both out of sample — see the negative result below. |
 | Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, mapped onto the pricing measure by enforcing the terminal variance and the martingale condition. Known limitation: the shipped generator is mode-collapsed (participation ratio 4.66 of 30 factors), so its paths are forecastable and it is not a sound measure for evaluating a hedging policy. Quantified in `docs/hedging_findings.md`. |
 | Explainability | Integrated Gradients through the ensemble against an at-the-money baseline, with the completeness check (attributions sum to the price difference) reported alongside. |
@@ -144,7 +144,44 @@ being kernel-launch bound.
 
 A controlled ablation (same sample budget, training on prices only versus the differential loss) cut delta error about 3x and vega error about 4x, which is the whole point of differential machine learning: better sensitivities for hedging.
 
-The 0DTE ensemble prices to about 2 basis points against its rough Bergomi teacher. Calibrated to the live SPY smile it reached a fit of about 2 volatility points across 72 quotes and two expiries.
+### The 0DTE model needs regenerating, and its calibration was not live
+
+Two defects here, both found by audit and both invalidating claims this README
+previously made.
+
+**The driver was the wrong process.** `rough_vol.py` built the Type-I
+(Mandelbrot–Van Ness) fractional Brownian covariance
+`0.5(t_i^2H + t_j^2H − |t_i−t_j|^2H)`. Rough Bergomi is driven by the
+Riemann–Liouville Volterra process `W̃_t = √(2H)∫₀ᵗ(t−s)^(H−½)dW_s`. The two agree
+on the diagonal — both give `Var[W̃_t] = t^2H`, which is why the martingale property
+held and nothing looked wrong — and agree nowhere else: at H = 0.1172 the maximum
+off-diagonal relative difference is **4.93**, and `corr(W̃_t1, W̃_t50)` was **+0.320**
+against a true **+0.054**.
+
+There was a second half to it. `chol(C)` is not the Volterra kernel, because W̃ is a
+continuous stochastic integral rather than a linear function of n coarse increments.
+Factorising C alone forces `corr(Z_1, W̃_t1) = 1` by construction when the truth is
+`√(2H)/(H+½) = 0.7844`, so the leverage correlation ρ was being applied to the wrong
+object — over-correlating spot and vol precisely at the short end where a 0DTE skew
+fit is identified. Both are now fixed with the exact joint-Gaussian scheme, verified
+against quadrature to 5.4e-08 and against 400,000 draws.
+
+**Consequence: `artifacts/model_0dte.pt` was trained against the old kernel**, so it
+is a surrogate for a process that is not rough Bergomi. It must be regenerated before
+its prices mean what this section says. The "about 2 basis points against its rough
+Bergomi teacher" figure describes agreement with the *wrong* teacher.
+
+**The calibration was not live.** This README previously said the model was
+"calibrated to the live SPY smile ... about 2 volatility points across 72 quotes and
+two expiries." The committed `artifacts/rough_calibration.json` reads
+`as_of 2026-07-09T03:43:16-04:00` — 03:43 New York, market closed — with
+`quote_source: "last_trade_market_closed"`, and `accepted: true`. Those exact
+parameters (H 0.1172, η 2.1384, ρ −0.7387) are what `model_0dte.pt` carries. A
+market-closed fit passed the quality gate and was trained into the served model,
+because the gate tested only RMSE and bound-pinning and never looked at staleness.
+Related: in the market-closed branch time-to-expiry was stamped from `now` while the
+prices were the previous session's last trades, which on synthetic quotes with known
+truth inflated √ξ by 21% and moved H by 0.021.
 
 ### Deep hedging: a negative result
 
