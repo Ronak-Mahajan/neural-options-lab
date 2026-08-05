@@ -52,15 +52,15 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 
 | Piece | Approach |
 |---|---|
-| Monte Carlo engine | Antithetic sampling with a geometric-Asian control variate (Kemna and Vorst, 1990). Cuts the standard error by about 30x, which makes generating accurate training labels cheap. |
+| Monte Carlo engine | Antithetic sampling with a geometric-Asian control variate (Kemna and Vorst, 1990). Cuts the standard error by 23.8x, measured as the ratio of empirical standard deviations across 400 seeded replications at 20,000 paths. An earlier version of this README claimed "about 30x"; that figure came from the reported standard error, which was computed as if antithetic pairs were independent and overstated the true error by ~45%. Both the estimator and the claim are fixed. |
 | Parameterization | The network prices the unit-strike call as a function of moneyness (spot over strike). Option prices scale linearly in spot and strike, so one model covers every strike exactly. Puts come from Asian put-call parity, which is exact. |
 | Architecture | A residual multilayer perceptron with SiLU activations and LayerNorm, about 134k parameters. Smooth activations matter here because the Greeks are computed by differentiating the network, and something like ReLU would give zero gamma almost everywhere. |
 | Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function, not just its level. |
 | Deep ensemble | Five independently initialized networks. Averaging them lowers error, and the Greeks average cleanly through the mean. |
 | Same-day-expiry (0DTE) model | Very short-dated option smiles show a power-law skew that classical models cannot reproduce. A rough Bergomi Monte Carlo engine (fractional Brownian motion, Hurst index near 0.1) generates training data for a separate ensemble that serves maturities of 12 trading days or less. |
 | Live calibration | `calibrate.py` fits the rough volatility parameters to the live SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. |
-| Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. The benchmark is the exact Black-Scholes delta hedge on identical paths. |
-| Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, corrected onto the pricing measure by moment matching so the hedging policy learns hedging rather than the generator's drift. |
+| Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under two measures. It loses to both out of sample — see the negative result below. |
+| Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, mapped onto the pricing measure by enforcing the terminal variance and the martingale condition. Known limitation: the shipped generator is mode-collapsed (participation ratio 4.66 of 30 factors), so its paths are forecastable and it is not a sound measure for evaluating a hedging policy. Quantified in `docs/hedging_findings.md`. |
 | Explainability | Integrated Gradients through the ensemble against an at-the-money baseline, with the completeness check (attributions sum to the price difference) reported alongside. |
 
 ## Results
@@ -75,11 +75,111 @@ Main pricer, 5-member ensemble, 600 test points:
 | Delta | 7.1e-4 |
 | Vega | 13e-4 |
 
-For context, the label noise floor of the Monte Carlo references is itself around 1 basis point, so the pricer is close to the best it could be given its training data. Inference is roughly a millisecond for a single price plus all Greeks, and hundreds of thousands of prices per second in batch.
+### That 1.4 bp is not a noise floor — it is a fixable bias
+
+An earlier version of this README explained the 1.4 bp away as the label noise floor. That
+was wrong, and finding out why produced the most interesting result in the project.
+
+On 600 held-out points, **89.3% of price errors were positive** and the mean accounted for
+**47.6% of total MSE**. Bucketing by true price magnitude showed a flat additive offset
+(+1.05, +1.03, +1.06, +1.20, +0.89 bps across five decades of price), and at points where
+the true price is below 0.01 bps the network still predicted ~1.08 bps and never went below
+0.898. The cause is the output layer: `nn.Softplus()` cannot emit zero, so it floors at
+about 1 bp and lifts the whole surface.
+
+Two fixes were tested at full scale (500,000 labels, 5,000 paths each, 400 epochs,
+5-member ensembles, both arms identical except for the one change under test — see
+`scripts/fullscale_ablation.py` and `artifacts/ablation.json`):
+
+| model | RMSE | bias | % positive | bias²/MSE |
+|---|---|---|---|---|
+| shipped `model.pt` | 1.411 bps | +0.985 | 89.3% | 48.8% |
+| **conditioned head (now shipped)** | **1.331 bps** | **+0.467** | 77.8% | **12.3%** |
+| residual over geometric Asian | 1.823 bps | +0.925 | 86.8% | 25.7% |
+
+*Head conditioning* — carrying the output magnitude in a fixed scale with the Softplus head
+initialized near unity — **halved the systematic bias**. The previous initialization started
+every run at `softplus(0) = 0.693`, i.e. 6,930 bps against a mean price of 3,664 bps.
+
+*Residual over geometric* did **not** work, and that is a real result. Since AM–GM gives
+`C_arith ≥ C_geo` pathwise, learning only the residual should have shrunk what the Softplus
+floor can distort. It made things 37% worse, because the residual has a 3.8x wider relative
+dynamic range (p99/p50 of 12.46 versus 3.27) and that outweighs the 21x smaller output
+scale. Hypothesis tested, hypothesis refuted.
+
+### Is a neural surrogate even the right tool?
+
+Arithmetic Asians have had fast closed-form approximations since the early 1990s, so the
+honest comparison is not only against Monte Carlo. Against Levy (1992) moment matching, on
+300 points versus 200,000-path references:
+
+| method | RMSE | bias | p95 abs err | latency |
+|---|---|---|---|---|
+| neural ensemble | 1.551 bps | +1.102 | 2.743 | 714 µs p50 |
+| Levy moment matching | 44.105 bps | +19.793 | 101.672 | 56 µs |
+| Monte Carlo, 200k paths | (reference) | — | — | 357,000 µs |
+
+28x more accurate than the closed form at 13x its cost, and 500x faster than Monte Carlo —
+a genuine point on the speed/accuracy frontier. The one regime where Levy wins is where the
+true price is essentially zero (0.077 vs 1.050 bps), which is the Softplus floor again, seen
+from an independent direction.
+
+### Latency, honestly
+
+Measured on this machine, best of 200 calls: a single price **plus all Greeks** is
+**8.4 ms at p50** (9.3 ms p95, 9.8 ms p99) — the Greeks path does a double backward pass for
+gamma across five ensemble members. An earlier README claim of "roughly a millisecond for a
+single price plus all Greeks" was off by 8x; ~714 µs is the price-only figure. Batch
+throughput does hold up: **487,843 prices/sec** at a batch of 10,000.
+
+Label generation runs on the GPU in float64 (`backend/quant/gpu_labels.py`): 0.85 G
+path-steps/s on an RTX 5080, so the full 500,000-label dataset takes 148 s instead of roughly
+80 minutes on CPU. float64 is not optional — running the same kernel at float32 with
+identical seeds injects 10.03 bps of price RMSE at 5,000 paths, several times the entire
+error budget, because the control variate differences two deliberately near-identical
+quantities. Serving stays on CPU: at a batch of 1 the GPU is *slower* (1,813 µs vs 1,336 µs),
+being kernel-launch bound.
 
 A controlled ablation (same sample budget, training on prices only versus the differential loss) cut delta error about 3x and vega error about 4x, which is the whole point of differential machine learning: better sensitivities for hedging.
 
-The 0DTE ensemble prices to about 2 basis points against its rough Bergomi teacher. Calibrated to the live SPY smile it reached a fit of about 2 volatility points across 72 quotes and two expiries. The deep hedging policy reduced 95% tail loss by roughly 30% versus delta hedging at lower transaction cost.
+The 0DTE ensemble prices to about 2 basis points against its rough Bergomi teacher. Calibrated to the live SPY smile it reached a fit of about 2 volatility points across 72 quotes and two expiries.
+
+### Deep hedging: a negative result
+
+**This section previously claimed the learned hedger "reduced 95% tail loss by roughly 30%
+versus delta hedging." That claim was wrong and has been retracted.** It was measured
+in-sample, against a handicapped baseline, on a measure that was not a valid pricing
+measure. Full write-up in [`docs/hedging_findings.md`](docs/hedging_findings.md).
+
+Three problems, all measured:
+
+1. **The simulated measure was not risk-neutral.** `risk_neutralize` matched per-step
+   marginals but left cross-step covariance free, so paths realized 1.28x the requested
+   volatility and discounted spot was not a martingale (E[S_T] exceeded e^{rT} by up to
+   147 bps). The option was booked at Black–Scholes while being worth ~30% more under the
+   measure actually being simulated. Now fixed: terminal variance and the martingale
+   condition are both enforced exactly, and the premium is priced under the simulated
+   measure.
+2. **The baseline was handicapped**, hedging at the requested σ while paths realized 1.28σ.
+   On the old measure, vol-matching alone closed ~83% of the claimed gap.
+3. **The comparison was in-sample on a degenerate generator.** The WGAN is mode-collapsed
+   (participation ratio 4.66 of 30 factors), making its paths forecastable — R² = 0.8755
+   regressing future returns on realized ones, versus 0.0006 for GBM. Minimizing CVaR there
+   rewards market timing, not hedging.
+
+After fixing 1 and 2 and adding a cost-aware Whalley–Wilmott baseline, evaluated
+out-of-sample on risk-neutral GBM over a 12-cell (σ, cost) grid, 15,000 paths per cell:
+
+| policy | beats vol-matched delta | median ratio | beats Whalley–Wilmott |
+|---|---|---|---|
+| trained on the fixed GAN measure | 2 / 12 | 1.469 | 0 / 12 |
+| **trained on GBM (in-sample!)** | **5 / 12** | **1.085** | **1 / 12** |
+
+A ratio above 1 means worse tail loss. Even trained and evaluated on the same correct
+measure, the learned policy loses to a vol-matched delta hedge in 7 of 12 cells and to
+Whalley–Wilmott in 11 of 12. **As implemented, deep hedging here does not beat a properly
+specified baseline.** `compare()` now reports both measures side by side with bootstrap
+standard errors and defaults its headline to the out-of-sample one.
 
 ## Repository layout
 
