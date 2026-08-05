@@ -7,6 +7,7 @@ Run from the repo root:
 
 from __future__ import annotations
 
+import anyio
 import asyncio
 import json
 import math
@@ -18,7 +19,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..quant.engine import PricingEngine, time_call
 from ..quant.monte_carlo import MCResult
@@ -28,13 +29,29 @@ FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 # Below this maturity the engine routes to the 0DTE rough-Bergomi surrogate,
 # so the Monte Carlo benchmark must switch measure too. The rough-vol
 # parameters must match backend/quant/dataset_0dte.py (the teacher).
+#
+# IMPORTANT: this cutoff separates two different CONTRACTS, not just two models.
+# Above it the service prices an arithmetic-average ASIAN option under GBM;
+# at or below it, a EUROPEAN option under rough Bergomi. Measured at S=K=100,
+# sigma=0.25, r=0.04, the price jumps +45.6% (1.35400 -> 1.97183) across 8.1e-5
+# years of maturity, about 42 minutes. Every response therefore carries an
+# explicit `regime` field rather than leaving the switch invisible.
 ZERO_DTE_CUTOFF = 12.0 / 252.0
+ZERO_DTE_MIN_MATURITY = 1.0 / 252.0      # 0DTE surrogate's trained floor
 ZERO_DTE_MONEYNESS = (0.85, 1.15)
+ASIAN_MIN_MATURITY = 0.05                # main surrogate's trained floor
+ASIAN_MONEYNESS = (0.5, 2.0)
 ROUGH_ETA, ROUGH_RHO, ROUGH_H = 1.5, -0.7, 0.1
+
+# Measured cost of one price+Greeks frame is ~13.7 ms median / 74.7 ms p95, so
+# 60 Hz cannot be honoured (the socket actually delivered 28.8 Hz while starving
+# the loop). 15 Hz leaves the event loop real headroom.
+MAX_STREAM_HZ = 15
 
 app = FastAPI(title="Deep Learning for Options Pricing",
               description="Neural surrogate vs Monte Carlo for arithmetic "
-                          "Asian options")
+                          "Asian options (maturity > 12/252) and European "
+                          "options under rough Bergomi (maturity <= 12/252)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -63,17 +80,71 @@ except FileNotFoundError:
 # Schemas
 # ---------------------------------------------------------------------------
 
-def validate_moneyness(req: "OptionParams") -> None:
-    """Domain check depends on which surrogate serves the maturity band."""
+def regime_for(maturity: float) -> str:
+    """Which surrogate (and therefore which CONTRACT) serves this maturity."""
+    if maturity <= ZERO_DTE_CUTOFF and ENGINE is not None and ENGINE.has_0dte:
+        return "rough_bergomi_european"
+    return "asian_gbm"
+
+
+def validate_domain(req: "OptionParams") -> str:
+    """Reject anything outside a trained box, and name the serving regime.
+
+    Previously only moneyness was checked, and only against the Asian box, so
+    three failure modes reached the model as silent extrapolation:
+
+      * maturity below the 0DTE floor. At S=K=100, sigma=0.25, r=0.04 the
+        surrogate plateaus at ~0.399 as T -> 0 instead of decaying to the
+        intrinsic value: T=1e-9 returned 0.39898 against a Monte Carlo
+        reference of 0.00031, roughly 1300x the true value, with HTTP 200.
+      * the dead band (12/252, 0.05). Above the 0DTE cutoff so it routes to the
+        Asian net, but below that net's 0.05 training floor. Measured error
+        there is 2.95-3.00 bps of strike versus 0.83 bps at T=1.0.
+      * sigma below the trained floor of 0.05, which yields arbitrage-violating
+        prices.
+
+    Returns the regime string so handlers can label their response.
+    """
     m = req.spot / req.strike
-    if req.maturity <= ZERO_DTE_CUTOFF and engine().has_0dte:
+    regime = regime_for(req.maturity)
+
+    if regime == "rough_bergomi_european":
         lo, hi = ZERO_DTE_MONEYNESS
         if not (lo <= m <= hi):
             raise HTTPException(
-                422, f"0DTE engine covers moneyness S/K in [{lo}, {hi}]")
-    elif not (0.5 <= m <= 2.0):
-        raise HTTPException(422, "moneyness S/K outside trained domain "
-                                 "[0.5, 2.0]")
+                422, f"0DTE engine covers moneyness S/K in [{lo}, {hi}]; "
+                     f"got {m:.4f}")
+        if req.maturity < ZERO_DTE_MIN_MATURITY:
+            raise HTTPException(
+                422, f"maturity {req.maturity:.6g} is below the 0DTE "
+                     f"surrogate's trained floor of {ZERO_DTE_MIN_MATURITY:.6g} "
+                     f"(1 trading day); the model extrapolates to a price far "
+                     f"above intrinsic value there")
+    else:
+        lo, hi = ASIAN_MONEYNESS
+        if not (lo <= m <= hi):
+            raise HTTPException(
+                422, f"moneyness S/K outside trained domain [{lo}, {hi}]; "
+                     f"got {m:.4f}")
+        if req.maturity < ASIAN_MIN_MATURITY:
+            raise HTTPException(
+                422, f"maturity {req.maturity:.6g} falls in the uncovered band "
+                     f"({ZERO_DTE_CUTOFF:.6g}, {ASIAN_MIN_MATURITY:.6g}): above "
+                     f"the 0DTE cutoff but below the Asian surrogate's trained "
+                     f"floor. No surrogate is valid here.")
+
+    if not (0.05 <= req.sigma <= 0.80):
+        raise HTTPException(
+            422, f"sigma {req.sigma:.4g} outside trained domain [0.05, 0.80]")
+    if not (0.0 <= req.rate <= 0.10):
+        raise HTTPException(
+            422, f"rate {req.rate:.4g} outside trained domain [0.0, 0.10]")
+    return regime
+
+
+# Kept as an alias so existing call sites keep working.
+def validate_moneyness(req: "OptionParams") -> None:
+    validate_domain(req)
 
 
 def mc_reference(req: "OptionParams", n_paths: int,
@@ -131,8 +202,25 @@ class PriceRequest(OptionParams):
 
 
 class ConvergenceRequest(OptionParams):
+    # Previously unbounded in value, sign AND length: a caller could ask for
+    # [10**12] * 10**6 and the handler would try to honour it. Each entry costs
+    # a full Monte Carlo run on the request thread.
     path_counts: list[int] = Field(
-        default=[500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000])
+        default=[500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000],
+        min_length=1, max_length=12)
+
+    @field_validator("path_counts")
+    @classmethod
+    def _bounded_paths(cls, v: list[int]) -> list[int]:
+        for n in v:
+            if not (100 <= n <= 500_000):
+                raise ValueError(
+                    f"path_counts entries must be in [100, 500000]; got {n}")
+        if sum(v) > 1_500_000:
+            raise ValueError(
+                f"total simulated paths {sum(v):,} exceeds the 1,500,000 "
+                f"budget for a single convergence request")
+        return v
 
 
 class SurfaceRequest(BaseModel):
@@ -357,9 +445,25 @@ async def ws_stream(ws: WebSocket):
          "maturity": 1.0, "option_type": "call", "hz": 20}
 
     The server then pushes a JSON frame every 1/hz seconds containing the
-    GBM-simulated spot, the neural net price, and all five Greeks. This
-    proves the surrogate can price at interactive frame rates — something
-    Monte Carlo cannot do.
+    GBM-simulated spot, the neural net price, and all five Greeks.
+
+    Two things this handler previously got wrong:
+
+      * It called price_with_greeks synchronously on the event loop. That call
+        is a 5-member ensemble forward plus a double backward for gamma —
+        measured at 13.73 ms median, 74.71 ms p95, NOT the "sub-millisecond"
+        the old comment claimed. At the formerly-permitted 60 Hz the loop was
+        busy 82% of the time, and against a real uvicorn server one client
+        moved GET /api/health from 1.79 ms median to 152.92 ms median with
+        2050 ms p95 — an 85x inflation. Since render.yaml health-checks that
+        endpoint, a single browser tab could mark the container unhealthy.
+        The pricing call now runs in a worker thread.
+      * It applied no validation at all, so sigma=-1 streamed a call delta of
+        -4.49. The config is now validated against the same trained domain as
+        the REST endpoints.
+
+    hz is capped at MAX_STREAM_HZ, chosen so the measured per-frame cost leaves
+    the loop real headroom rather than saturating it.
     """
     await ws.accept()
     eng = ENGINE
@@ -372,15 +476,40 @@ async def ws_stream(ws: WebSocket):
         config = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
     except (asyncio.TimeoutError, WebSocketDisconnect):
         return
+    except Exception:
+        await ws.send_json({"error": "config must be a JSON object"})
+        await ws.close()
+        return
 
-    spot0 = float(config.get("spot", 100))
-    strike = float(config.get("strike", 100))
-    sigma = float(config.get("sigma", 0.25))
-    rate = float(config.get("rate", 0.04))
-    maturity = float(config.get("maturity", 1.0))
-    option_type = config.get("option_type", "call")
-    hz = min(int(config.get("hz", 20)), 60)
-    dt = 1.0 / max(hz, 1)
+    try:
+        params = OptionParams(
+            spot=float(config.get("spot", 100)),
+            strike=float(config.get("strike", 100)),
+            maturity=float(config.get("maturity", 1.0)),
+            sigma=float(config.get("sigma", 0.25)),
+            rate=float(config.get("rate", 0.04)),
+            option_type=str(config.get("option_type", "call")))
+        regime = validate_domain(params)
+    except HTTPException as exc:
+        await ws.send_json({"error": exc.detail})
+        await ws.close()
+        return
+    except Exception as exc:
+        await ws.send_json({"error": f"invalid config: {exc}"})
+        await ws.close()
+        return
+
+    spot0, strike = params.spot, params.strike
+    sigma, rate = params.sigma, params.rate
+    maturity, option_type = params.maturity, params.option_type
+    try:
+        hz = int(config.get("hz", 10))
+    except (TypeError, ValueError):
+        hz = 10
+    hz = max(1, min(hz, MAX_STREAM_HZ))
+    dt = 1.0 / hz
+    await ws.send_json({"status": "ready", "hz": hz, "regime": regime,
+                        "max_hz": MAX_STREAM_HZ})
 
     # GBM tick simulator: dS = mu*S*dt + sigma*S*dW
     # We use the risk-neutral drift so the walk is financially coherent.
@@ -398,9 +527,12 @@ async def ws_stream(ws: WebSocket):
             spot *= math.exp((rate - 0.5 * sigma**2) * annual_dt + sigma * dW)
             tick += 1
 
-            # Neural net forward pass (sub-millisecond)
+            # Price + Greeks off the event loop: this is ~13.7 ms of CPU
+            # (ensemble forward + double backward for gamma), which would
+            # otherwise block every other request on the loop thread.
             try:
-                result = eng.price_with_greeks(
+                result = await anyio.to_thread.run_sync(
+                    eng.price_with_greeks,
                     spot, strike, maturity, sigma, rate, option_type)
                 frame = {
                     "tick": tick,
