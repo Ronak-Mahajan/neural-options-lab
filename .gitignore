@@ -48,3 +48,4 @@ _*.py
 _*.log
 diagnose*.py
 artifacts/dataset_gpu_*.npz
+artifacts/ablation_probe.json
