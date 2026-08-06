@@ -4,11 +4,11 @@
   "as_of": "2026-08-05T21:48:15Z",
   "venue": "deribit-public-v2",
   "index_price": 64631.3,
-  "eta": 4.4135,
-  "rho": -0.165,
-  "H": 0.3295,
-  "xi": 0.095726,
-  "sqrt_xi": 0.3094,
+  "eta": 4.2179,
+  "rho": -0.2363,
+  "H": 0.2522,
+  "xi": 0.099355,
+  "sqrt_xi": 0.3152,
   "n_quotes": 63,
   "n_scored": 63,
   "n_unpriceable": 0,
@@ -18,12 +18,12 @@
     "2026-08-14T08:00:00Z",
     "2026-08-21T08:00:00Z"
   ],
-  "iv_rmse_volpts": 3.509,
-  "objective_value": 2.066103,
-  "objective_mc_sd": 0.002237,
-  "search_paths": 4000,
-  "polish_paths": 8000,
-  "final_paths": 20000,
+  "iv_rmse_volpts": 2.47,
+  "objective_value": 2.551853,
+  "objective_mc_sd": 0.000945,
+  "search_paths": 8000,
+  "polish_paths": 64000,
+  "final_paths": 200000,
   "day_count": "ACT/365 from the venue clock",
   "quote_source": "live_two_sided_book",
   "rate": 0.0,
@@ -34,11 +34,10 @@
     8.0
   ],
   "median_iv_half_spread_volpts": 0.9759,
-  "rmse_over_half_spread": 3.596,
+  "rmse_over_half_spread": 2.531,
   "accepted": false,
   "reject_reasons": [
-    "implied-vol RMSE 3.509 vp >= 3.0 vp",
-    "fit RMSE 3.509 vp is 3.60x the market's own median half-spread (0.976 vp) \u2014 the model prices outside the book it is fitting"
+    "fit RMSE 2.470 vp is 2.53x the market's own median half-spread (0.976 vp) \u2014 the model prices outside the book it is fitting"
   ],
-  "fit_seconds": 110.9
+  "fit_seconds": 485.9
 }
