@@ -59,7 +59,7 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 | Architecture | A residual multilayer perceptron with SiLU activations and LayerNorm, about 134k parameters. Smooth activations matter here because the Greeks are computed by differentiating the network, and something like ReLU would give zero gamma almost everywhere. |
 | Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function, not just its level. |
 | Deep ensemble | Five independently initialized networks. Averaging them lowers error, and the Greeks average cleanly through the mean. |
-| Same-day-expiry (0DTE) model | Very short-dated option smiles show a power-law skew that classical models cannot reproduce. A rough Bergomi Monte Carlo engine generates training data for a separate ensemble serving maturities of 12 trading days or less. The driver is the Riemann-Liouville Volterra process (Bayer-Friz-Gatheral 2016) with Hurst index near 0.1, simulated exactly via the joint law of the driving Brownian motion and the Volterra integral. NOTE: the shipped 0DTE checkpoint predates that correction and must be regenerated — see the results section. |
+| Same-day-expiry (0DTE) model | Very short-dated option smiles show a power-law skew that classical models cannot reproduce. A rough Bergomi Monte Carlo engine generates training data for a separate ensemble serving maturities of 12 trading days or less. The driver is the Riemann-Liouville Volterra process (Bayer-Friz-Gatheral 2016) with Hurst index near 0.1, simulated exactly via the joint law of the driving Brownian motion and the Volterra integral. The 0DTE checkpoint has been regenerated against the corrected driver; it is currently UNCALIBRATED, because the prior calibration was fitted under the old kernel from market-closed quotes. |
 | Live calibration | `calibrate.py` fits the rough volatility parameters to the SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. |
 | Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under two measures. It loses to both out of sample — see the negative result below. |
 | Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, mapped onto the pricing measure by enforcing the terminal variance and the martingale condition. Known limitation: the shipped generator is mode-collapsed (participation ratio 4.66 of 30 factors), so its paths are forecastable and it is not a sound measure for evaluating a hedging policy. Quantified in `docs/hedging_findings.md`. |
@@ -166,10 +166,23 @@ object — over-correlating spot and vol precisely at the short end where a 0DTE
 fit is identified. Both are now fixed with the exact joint-Gaussian scheme, verified
 against quadrature to 5.4e-08 and against 400,000 draws.
 
-**Consequence: `artifacts/model_0dte.pt` was trained against the old kernel**, so it
-is a surrogate for a process that is not rough Bergomi. It must be regenerated before
-its prices mean what this section says. The "about 2 basis points against its rough
-Bergomi teacher" figure describes agreement with the *wrong* teacher.
+**`artifacts/model_0dte.pt` has been regenerated** against the corrected driver. The
+previous checkpoint is kept as `model_0dte_legacy_wrong_kernel.pt` for comparison. The
+old "about 2 basis points against its rough Bergomi teacher" figure described agreement
+with the *wrong* teacher and has been replaced by a measurement against the right one:
+
+| 0DTE ensemble, 400 held-out points vs 500,000-path references | |
+|---|---|
+| RMSE | **1.48 bps of strike** |
+| bias | **+0.13 bps** |
+| p95 abs error | 2.76 bps |
+| training-label noise floor (20,000 paths/label) | 2.35 bps |
+
+The surrogate sits below its own per-label noise, which is what least-squares over
+25,000 noisy labels should achieve. Validation RMSE against those noisy labels is
+3.5 bps and overstates the true error by 2.4x — the same gap the main pricer shows,
+and the reason this project scores against high-precision references rather than
+against its own training targets.
 
 **The calibration was not live.** This README previously said the model was
 "calibrated to the live SPY smile ... about 2 volatility points across 72 quotes and
