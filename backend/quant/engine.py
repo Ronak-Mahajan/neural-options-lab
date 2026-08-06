@@ -55,6 +55,15 @@ class PricingEngine:
         self._highs = torch.tensor([hi for _, hi in ranges.values()],
                                    dtype=torch.float32)
 
+        # Fixed output scale. The Softplus head is trained to emit a quantity of
+        # order 1 and the magnitude is carried here instead, which is what
+        # halved the systematic price bias (+0.985 -> +0.467 bps): the previous
+        # recipe initialised every run at softplus(0) = 0.693, i.e. 6,930 bps
+        # against a mean price of 3,664 bps, and never fully recovered.
+        # Legacy checkpoints, which fold the magnitude into the network, carry
+        # no such field and get 1.0.
+        self._output_scale = float(self.meta.get("output_scale", 1.0))
+
         # Load 0DTE surrogate if available
         self.has_0dte = False
         ckpt_0dte = ARTIFACTS / "model_0dte.pt"
@@ -106,8 +115,12 @@ class PricingEngine:
         x = torch.stack([m, mat, sig, r], dim=-1)
         xn = 2.0 * (x - self._lows) / (self._highs - self._lows) - 1.0
         if member is not None:
-            return self.members[member](xn)
-        return torch.stack([net(xn) for net in self.members]).mean(dim=0)
+            return self._output_scale * self.members[member](xn)
+        # The scale is shared by every member, so scaling the ensemble mean is
+        # identical to scaling each member first, and autograd is unaffected
+        # (a constant factor passes straight through to the Greeks).
+        return self._output_scale * torch.stack(
+            [net(xn) for net in self.members]).mean(dim=0)
 
     def _zero_dte_call(self, m, mat, sig, r, member: int | None = None):
         x = torch.stack([m, mat, sig, r], dim=-1)

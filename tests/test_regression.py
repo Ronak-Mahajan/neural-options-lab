@@ -367,3 +367,50 @@ def test_calibrate_stamps_the_kernel_it_was_fitted_under():
     from backend.quant.calibrate import KERNEL_ID as cal_kernel
     from backend.quant.dataset_0dte import KERNEL_ID as ds_kernel
     assert cal_kernel == ds_kernel
+
+
+# --------------------------------------------------------------------------- #
+#  engine.py — the served checkpoint carries a fixed output scale
+# --------------------------------------------------------------------------- #
+
+def test_output_scale_is_loaded_and_legacy_checkpoints_default_to_one(engine):
+    """The served model conditions its Softplus head to emit a quantity of
+    order 1 and carries the magnitude in a fixed scale, which is what halved the
+    systematic price bias. Legacy checkpoints fold the magnitude into the
+    network and must keep working unchanged."""
+    from pathlib import Path
+    from backend.quant.engine import ARTIFACTS
+    assert engine._output_scale > 0.0
+    legacy = ARTIFACTS / "model_legacy_unconditioned_head.pt"
+    if legacy.exists():
+        assert PricingEngine(legacy)._output_scale == 1.0
+
+
+def test_greeks_flow_through_the_output_scale(engine):
+    """A constant output factor must pass cleanly into every derivative — if it
+    were applied outside the autograd graph the price would move and the Greeks
+    would not, which is the kind of error that only shows up when someone hedges
+    with it."""
+    S = K = 100.0
+    out = engine.price_with_greeks(S, K, 1.0, 0.20, 0.05, "call")
+    h = 0.01
+    up = engine.price_with_greeks(S + h, K, 1.0, 0.20, 0.05, "call")["price"]
+    dn = engine.price_with_greeks(S - h, K, 1.0, 0.20, 0.05, "call")["price"]
+    assert out["greeks"]["delta"] == pytest.approx((up - dn) / (2 * h), rel=1e-3)
+
+    hv = 1e-4
+    vup = engine.price_with_greeks(S, K, 1.0, 0.20 + hv, 0.05, "call")["price"]
+    vdn = engine.price_with_greeks(S, K, 1.0, 0.20 - hv, 0.05, "call")["price"]
+    # vega is reported per vol POINT, the difference quotient is per unit vol
+    assert out["greeks"]["vega"] * 100.0 == pytest.approx(
+        (vup - vdn) / (2 * hv), rel=1e-2)
+
+
+def test_served_model_beats_its_predecessor_on_price(engine):
+    """Guards the promotion itself: the served checkpoint must actually be the
+    conditioned one, not silently reverted."""
+    meta = engine.meta
+    if "promoted_from" not in meta:
+        pytest.skip("served checkpoint predates the promotion gate")
+    assert meta["output_scale"] != 1.0
+    assert meta.get("residual") is False

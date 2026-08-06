@@ -1,6 +1,6 @@
 # Neural Options Lab
 
-A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 28x more accurately than the standard closed-form approximation, wrapped in an interactive dashboard you can run locally in two commands.
+A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 33x more accurately than the standard closed-form approximation, wrapped in an interactive dashboard you can run locally in two commands.
 
 The project covers the full stack of a modern quant pricing system: the numerical methods that generate ground truth, the deep learning that learns to imitate them, a rough volatility model for same-day-expiry options, a reinforcement-style hedging agent, live market calibration, and a browser front end that ties it together. Trained model weights are included, so it runs the moment you clone it.
 
@@ -96,9 +96,46 @@ Two fixes were tested at full scale (500,000 labels, 5,000 paths each, 400 epoch
 
 | model | RMSE | bias | % positive | bias²/MSE |
 |---|---|---|---|---|
-| shipped `model.pt` | 1.411 bps | +0.985 | 89.3% | 48.8% |
-| **conditioned head (now shipped)** | **1.331 bps** | **+0.467** | 77.8% | **12.3%** |
+| previous `model.pt` | 1.489 bps | +0.966 | 89.3% | 42.1% |
+| **conditioned head — now served** | **1.301 bps** | **+0.404** | 78.1% | **9.7%** |
 | residual over geometric Asian | 1.823 bps | +0.925 | 86.8% | 25.7% |
+
+The conditioned head is now the served checkpoint. Promotion is gated:
+`scripts/promote_model.py` re-prices a fresh 1,500-point test set against
+200,000-path references on a seed used by neither training nor the ablation, and
+writes `model.pt` only if the candidate beats the incumbent on **both** RMSE and
+|bias|. The previous checkpoint is kept as `model_legacy_unconditioned_head.pt`.
+Swapping a served model on a training-time validation number is how the old one
+came to carry a +0.99 bp bias that this README described as an irreducible noise
+floor.
+
+**What the promotion actually bought — and cost.** Paired comparison, both
+models priced on the same 1,500 points against the same references:
+
+| | price RMSE | price bias | delta RMSE | vega RMSE |
+|---|---|---|---|---|
+| legacy (unconditioned head) | 1.531 | +1.032 | **7.338e-4** | **17.757e-4** |
+| promoted (conditioned head) | **1.366** | **+0.468** | 7.768e-4 | 17.978e-4 |
+
+Price RMSE improves 10.8% and the systematic bias halves. **Delta gets 5.9%
+worse and vega 1.2% worse.** That is a real regression and it is stated rather
+than buried: conditioning the output head helps the level and slightly hurts the
+shape, which is what you would expect from changing where the magnitude lives in
+a network trained on a joint price-and-derivative loss. The promotion is kept
+because price accuracy is this model's primary claim, but a service that hedges
+off these Greeks should weigh that differently.
+
+The first version of the gate tested price only, so it did not see the Greeks
+regression at all. It now reports delta and vega alongside; they are reported,
+not blocking, and the reason is written into the script.
+
+Two further caveats. The gain is concentrated in the systematic component — p95
+absolute error is essentially unchanged (2.609 vs 2.595 bps) and the worst case
+is marginally wider (10.34 vs 10.20). And the absolute RMSE is heavy-tailed
+enough that it moves with the test draw: the same promoted checkpoint measures
+1.301, 1.329, 1.366 and 1.488 bps on four independent Latin-hypercube draws. The
+*paired* comparison above is the meaningful one, because both models see
+identical points and identical references.
 
 *Head conditioning* — carrying the output magnitude in a fixed scale with the Softplus head
 initialized near unity — **halved the systematic bias**. The previous initialization started
@@ -118,14 +155,18 @@ honest comparison is not only against Monte Carlo. Against Levy (1992) moment ma
 
 | method | RMSE | bias | p95 abs err | latency |
 |---|---|---|---|---|
-| neural ensemble | 1.551 bps | +1.102 | 2.743 | 714 µs p50 |
-| Levy moment matching | 44.105 bps | +19.793 | 101.672 | 56 µs |
+| neural ensemble | 1.329 bps | +0.548 | 2.376 | 714 µs p50 |
+| Levy moment matching | 44.344 bps | +19.813 | 103.300 | 56 µs |
 | Monte Carlo, 200k paths | (reference) | — | — | 357,000 µs |
 
-28x more accurate than the closed form at 13x its cost, and 500x faster than Monte Carlo —
-a genuine point on the speed/accuracy frontier. The one regime where Levy wins is where the
-true price is essentially zero (0.077 vs 1.050 bps), which is the Softplus floor again, seen
-from an independent direction.
+**33x more accurate** than the closed form at 13x its cost, and 500x faster than Monte
+Carlo — a genuine point on the speed/accuracy frontier that neither alternative occupies.
+
+The one regime where Levy still wins is where the true price is essentially zero
+(0.082 vs 0.310 bps), which is the Softplus floor seen from an independent direction. Note
+that gap narrowed by more than 3x when the head was conditioned — the floor shrank from
+1.050 to 0.310 bps — which is corroboration from a completely different measurement that
+the bias diagnosis was right.
 
 ### Latency, honestly
 
