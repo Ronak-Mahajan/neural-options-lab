@@ -63,6 +63,7 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 | Live calibration | `calibrate.py` fits the rough volatility parameters to the SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. |
 | Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under two measures. It loses to both out of sample — see the negative result below. |
 | Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, mapped onto the pricing measure by enforcing the terminal variance and the martingale condition. Known limitation: the shipped generator is mode-collapsed (participation ratio 4.66 of 30 factors), so its paths are forecastable and it is not a sound measure for evaluating a hedging policy. Quantified in `docs/hedging_findings.md`. |
+| Real market data | A live [Deribit](https://www.deribit.com) option chain — 836 BTC instruments across 12 expiries, fetched from public endpoints with no API key. Coin-denominated premiums are converted on the per-expiry forward, implied vol is inverted on BOTH bid and ask so the market shows as a band, and the surface is checked for butterfly, vertical, calendar and put-call-parity arbitrage. Everything downstream reads a committed snapshot, so it runs offline. See [`docs/real_market_data.md`](docs/real_market_data.md). |
 | Explainability | Integrated Gradients through the ensemble against an at-the-money baseline, with the completeness check (attributions sum to the price difference) reported alongside. |
 
 ## Results
@@ -232,6 +233,37 @@ measure, the learned policy loses to a vol-matched delta hedge in 7 of 12 cells 
 Whalley–Wilmott in 11 of 12. **As implemented, deep hedging here does not beat a properly
 specified baseline.** `compare()` now reports both measures side by side with bootstrap
 standard errors and defaults its headline to the out-of-sample one.
+
+### Real market data
+
+Everything else in this project is simulated. `backend/quant/deribit.py` and
+`backend/quant/surface.py` are the exception: a live institutional option chain, and the
+diagnostics you would actually run on one.
+
+Measured on the committed snapshot (836 BTC options, 12 expiries, 0.42 to 323 days):
+
+**The convention matters more than the code.** Deribit quotes premiums in BTC and reports a
+per-expiry forward, not spot. Reading `price_usd = price_btc x forward` and inverting
+Black-76 reproduces Deribit's own published `mark_iv` to a median of **0.0028 vol points**.
+Reading the coin premium as a dollar price instead gives 4.62 vol points where the truth is
+32.88 — **wrong by 7.1x**, and wrong in a way that still produces a smooth, plausible
+surface. The day count was pinned the same way: ACT/365 reproduces `mark_iv` to +0.0001 vol
+points, against -0.2727 for a 360-day year.
+
+**A real chain is mostly unusable.** 289 of 836 quotes are flagged and dropped — 199 with a
+bid below the no-arbitrage floor, 118 with no volume or open interest, 66 one-sided, 56 with
+vega too small for the IV inversion to mean anything. The IV bid-ask on what survives has a
+median of **1.36 vol points** and a 95th percentile of 9.79.
+
+**No static arbitrage survives the spread.** Of 499 butterfly triples, 523 vertical pairs, 11
+calendar pairs and 195 parity strikes, 51 violations appear on mid prices — and **zero are
+executable** once you require crossing the actual bid-ask, before fees. Reporting the
+mid-price count as "arbitrage found" would have been the easy, wrong answer.
+
+**The conversion chain checks out end to end.** A forward backed out of put-call parity
+agrees with the listed BTC future to a median of under **1 basis point** across all 12
+expiries, which simultaneously validates the parity map, the day count and the coin-to-dollar
+conversion.
 
 ## Repository layout
 

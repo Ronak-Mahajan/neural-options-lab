@@ -1,0 +1,215 @@
+{
+ "n_tested": {
+  "butterfly_triples": 499,
+  "vertical_pairs": 523,
+  "parity_strikes": 195,
+  "calendar_expiry_pairs": 11,
+  "clean_quotes": 547
+ },
+ "butterfly": {
+  "n": 41,
+  "n_executable": 0,
+  "n_net_of_fees": 0,
+  "units": "bps_of_forward",
+  "median": 0.24999907724646658,
+  "p95": 45.000000000000824,
+  "max": 106.25408147504874,
+  "worst": {
+   "kind": "butterfly",
+   "expiry": "2027-03-26T08:00:00Z",
+   "right": "put",
+   "strikes": [
+    88000.0,
+    90000.0,
+    92000.0
+   ],
+   "magnitude": 106.254081,
+   "units": "bps_of_forward",
+   "executable": false,
+   "net_of_fees": false,
+   "detail": "mid cost -705.83 USD, executable cost +464.97 USD, taker fees 39.86 USD"
+  }
+ },
+ "vertical": {
+  "n": 9,
+  "n_executable": 0,
+  "n_net_of_fees": 0,
+  "units": "bps_of_forward",
+  "median": 20.82156162776855,
+  "p95": 63.14625360013694,
+  "max": 68.93132102046117,
+  "worst": {
+   "kind": "vertical_slope",
+   "expiry": "2027-03-26T08:00:00Z",
+   "right": "put",
+   "strikes": [
+    88000.0,
+    90000.0
+   ],
+   "magnitude": 68.931321,
+   "units": "bps_of_forward",
+   "executable": false,
+   "net_of_fees": false,
+   "detail": "spread 90000/88000 worth more than its 2000 USD max payoff"
+  }
+ },
+ "calendar": {
+  "n": 1,
+  "n_executable": 0,
+  "n_net_of_fees": 0,
+  "units": "total_variance_bps",
+  "median": 0.8047785871455608,
+  "p95": 0.8047785871455608,
+  "max": 0.8047785871455608,
+  "worst": {
+   "kind": "calendar",
+   "expiry": "2026-08-08T08:00:00Z -> 2026-08-09T08:00:00Z",
+   "right": "otm",
+   "strikes": [
+    0.0794
+   ],
+   "magnitude": 0.804779,
+   "units": "total_variance_bps",
+   "executable": false,
+   "net_of_fees": false,
+   "detail": "3/25 grid points violated; worst at k=+0.0794, far-expiry IV 36.07% vs 37.24% needed (+1.17 vol points)"
+  }
+ },
+ "put_call_parity": {
+  "n": 0
+ },
+ "forward_consistency": [
+  {
+   "expiry": "2026-08-06T08:00:00Z",
+   "tenor_days": 0.425,
+   "n_pairs": 2,
+   "future_mark": 64634.53,
+   "option_forward": 64633.62,
+   "synthetic_forward_median": 64640.2,
+   "bracket_width_median_bps": 17.97,
+   "synthetic_vs_future_median_bps": 0.88,
+   "basis_vs_index_pct": 0.0036
+  },
+  {
+   "expiry": "2026-08-07T08:00:00Z",
+   "tenor_days": 1.425,
+   "n_pairs": 4,
+   "future_mark": 64639.16,
+   "option_forward": 64638.59,
+   "synthetic_forward_median": 64646.12,
+   "bracket_width_median_bps": 21.26,
+   "synthetic_vs_future_median_bps": 1.08,
+   "basis_vs_index_pct": 0.0113
+  },
+  {
+   "expiry": "2026-08-08T08:00:00Z",
+   "tenor_days": 2.425,
+   "n_pairs": 5,
+   "future_mark": 64650.0,
+   "option_forward": 64649.16,
+   "synthetic_forward_median": 64654.7,
+   "bracket_width_median_bps": 20.2,
+   "synthetic_vs_future_median_bps": 0.73,
+   "basis_vs_index_pct": 0.0276
+  },
+  {
+   "expiry": "2026-08-09T08:00:00Z",
+   "tenor_days": 3.425,
+   "n_pairs": 2,
+   "future_mark": 64657.93,
+   "option_forward": 64657.0,
+   "synthetic_forward_median": 64677.39,
+   "bracket_width_median_bps": 22.47,
+   "synthetic_vs_future_median_bps": 3.01,
+   "basis_vs_index_pct": 0.0398
+  },
+  {
+   "expiry": "2026-08-14T08:00:00Z",
+   "tenor_days": 8.425,
+   "n_pairs": 9,
+   "future_mark": 64687.38,
+   "option_forward": 64686.88,
+   "synthetic_forward_median": 64691.04,
+   "bracket_width_median_bps": 45.68,
+   "synthetic_vs_future_median_bps": 0.57,
+   "basis_vs_index_pct": 0.086
+  },
+  {
+   "expiry": "2026-08-21T08:00:00Z",
+   "tenor_days": 15.425,
+   "n_pairs": 7,
+   "future_mark": 64728.49,
+   "option_forward": 64728.32,
+   "synthetic_forward_median": 64735.41,
+   "bracket_width_median_bps": 24.51,
+   "synthetic_vs_future_median_bps": 1.07,
+   "basis_vs_index_pct": 0.1501
+  },
+  {
+   "expiry": "2026-08-28T08:00:00Z",
+   "tenor_days": 22.425,
+   "n_pairs": 18,
+   "future_mark": 64788.57,
+   "option_forward": 64787.93,
+   "synthetic_forward_median": 64794.47,
+   "bracket_width_median_bps": 45.15,
+   "synthetic_vs_future_median_bps": 0.91,
+   "basis_vs_index_pct": 0.2423
+  },
+  {
+   "expiry": "2026-09-25T08:00:00Z",
+   "tenor_days": 50.425,
+   "n_pairs": 19,
+   "future_mark": 65022.82,
+   "option_forward": 65022.78,
+   "synthetic_forward_median": 65025.9,
+   "bracket_width_median_bps": 48.16,
+   "synthetic_vs_future_median_bps": 0.47,
+   "basis_vs_index_pct": 0.6057
+  },
+  {
+   "expiry": "2026-10-30T08:00:00Z",
+   "tenor_days": 85.425,
+   "n_pairs": 19,
+   "future_mark": 65288.32,
+   "option_forward": 65288.14,
+   "synthetic_forward_median": 65288.73,
+   "bracket_width_median_bps": 40.81,
+   "synthetic_vs_future_median_bps": 0.06,
+   "basis_vs_index_pct": 1.0163
+  },
+  {
+   "expiry": "2026-12-25T08:00:00Z",
+   "tenor_days": 141.425,
+   "n_pairs": 36,
+   "future_mark": 65751.82,
+   "option_forward": 65750.88,
+   "synthetic_forward_median": 65740.61,
+   "bracket_width_median_bps": 51.91,
+   "synthetic_vs_future_median_bps": -1.71,
+   "basis_vs_index_pct": 1.7323
+  },
+  {
+   "expiry": "2027-03-26T08:00:00Z",
+   "tenor_days": 232.425,
+   "n_pairs": 41,
+   "future_mark": 66429.0,
+   "option_forward": 66428.19,
+   "synthetic_forward_median": 66430.26,
+   "bracket_width_median_bps": 66.38,
+   "synthetic_vs_future_median_bps": 0.19,
+   "basis_vs_index_pct": 2.7802
+  },
+  {
+   "expiry": "2027-06-25T08:00:00Z",
+   "tenor_days": 323.425,
+   "n_pairs": 33,
+   "future_mark": 67175.19,
+   "option_forward": 67174.56,
+   "synthetic_forward_median": 67171.2,
+   "bracket_width_median_bps": 63.45,
+   "synthetic_vs_future_median_bps": -0.59,
+   "basis_vs_index_pct": 3.935
+  }
+ ]
+}
