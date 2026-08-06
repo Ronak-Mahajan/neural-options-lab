@@ -181,6 +181,7 @@ from scipy.optimize import differential_evolution, minimize
 from scipy.stats import norm
 
 from .market_data import MarketDataError
+from .dataset_0dte import KERNEL_ID
 from .rough_vol import rough_bergomi_mc
 
 # Windows consoles often default to cp1252, which cannot encode the rules
@@ -1032,6 +1033,14 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
                      "days — see the module docstring)",
         "min_tau_hours": min_tau_hours,
         "quote_source": snap.quote_source,
+        # Which simulated driver this fit is valid FOR. A calibration is only
+        # meaningful for the kernel it was fitted under, and this project has
+        # already shipped one that was not: the previous rough_calibration.json
+        # was fitted against the Type-I fBm covariance, i.e. against a process
+        # that is not rough Bergomi. dataset_0dte.load_calibrated_dynamics()
+        # refuses any fit whose kernel id does not match the current driver, so
+        # a stale-kernel calibration can never be silently re-adopted.
+        "kernel": KERNEL_ID,
         "accepted": accepted,
         "reject_reasons": reasons,
     }

@@ -287,3 +287,83 @@ def test_old_fbm_covariance_fails_loudly():
     from backend.quant.rough_vol import generate_fbm_covariance
     with pytest.raises(NotImplementedError, match="not the rough Bergomi"):
         generate_fbm_covariance(10, 0.001, 0.1, torch.device("cpu"))
+
+
+# --------------------------------------------------------------------------- #
+#  calibrate.py / dataset_0dte.py — a bad calibration must never be adopted
+# --------------------------------------------------------------------------- #
+
+def _ok_fit(**over):
+    base = dict(rmse=1.0, eta=2.0, rho=-0.7, H=0.12, xi=0.03,
+                stale=False, n_unpriceable=0)
+    base.update(over)
+    return base
+
+
+def test_quality_gate_accepts_a_good_fit():
+    from backend.quant.calibrate import quality_gate
+    accepted, reasons = quality_gate(**_ok_fit())
+    assert accepted, reasons
+
+
+@pytest.mark.parametrize("bad,needle", [
+    ({"rmse": 48.7}, "RMSE"),
+    ({"stale": True}, "live book"),
+    ({"n_unpriceable": 3}, "unpriceable"),
+    ({"eta": 4.0}, "pinned"),
+    ({"xi": 1e-9}, "pinned"),
+])
+def test_quality_gate_rejects(bad, needle):
+    """Each clause the shipped calibration slipped past.
+
+    The committed rough_calibration.json was stamped 03:43 New York with
+    quote_source 'last_trade_market_closed' and accepted=true, because the gate
+    tested only RMSE and bound-pinning — never staleness, never xi, never
+    unpriceable quotes. Those parameters were then trained into the served model.
+    """
+    from backend.quant.calibrate import quality_gate
+    accepted, reasons = quality_gate(**_ok_fit(**bad))
+    assert not accepted
+    assert any(needle.lower() in r.lower() for r in reasons), reasons
+
+
+def test_calibration_is_refused_when_it_predates_the_current_kernel(tmp_path,
+                                                                    monkeypatch):
+    """A fit is only valid for the driver it was fitted under.
+
+    The shipped calibration was fitted against the Type-I fBm covariance — a
+    process that is not rough Bergomi — so its (eta, rho, H) carry no
+    information now. Such files have no `kernel` field.
+    """
+    import json
+    from backend.quant import dataset_0dte as d
+
+    monkeypatch.setattr(d, "ARTIFACTS", tmp_path)
+    cal = tmp_path / "rough_calibration.json"
+    defaults = {"eta": 1.5, "rho": -0.7, "H": 0.1}
+
+    # Legacy: accepted, but no kernel field.
+    cal.write_text(json.dumps({"accepted": True, "eta": 2.1384,
+                               "rho": -0.7387, "H": 0.1172,
+                               "quote_source": "live"}))
+    assert d.load_calibrated_dynamics() == defaults
+
+    # Right kernel but market-closed quotes.
+    cal.write_text(json.dumps({"accepted": True, "eta": 2.1384,
+                               "rho": -0.7387, "H": 0.1172,
+                               "kernel": d.KERNEL_ID,
+                               "quote_source": "last_trade_market_closed"}))
+    assert d.load_calibrated_dynamics() == defaults
+
+    # Right kernel, live quotes, accepted -> adopted.
+    cal.write_text(json.dumps({"accepted": True, "eta": 2.0, "rho": -0.6,
+                               "H": 0.13, "kernel": d.KERNEL_ID,
+                               "quote_source": "live"}))
+    assert d.load_calibrated_dynamics() == {"eta": 2.0, "rho": -0.6, "H": 0.13}
+
+
+def test_calibrate_stamps_the_kernel_it_was_fitted_under():
+    """Without this, a fresh, valid calibration would be refused forever."""
+    from backend.quant.calibrate import KERNEL_ID as cal_kernel
+    from backend.quant.dataset_0dte import KERNEL_ID as ds_kernel
+    assert cal_kernel == ds_kernel
