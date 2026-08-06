@@ -414,3 +414,66 @@ def test_served_model_beats_its_predecessor_on_price(engine):
         pytest.skip("served checkpoint predates the promotion gate")
     assert meta["output_scale"] != 1.0
     assert meta.get("residual") is False
+
+
+# --------------------------------------------------------------------------- #
+#  calibrate.py — the quality gate had two blind spots a live run exposed
+# --------------------------------------------------------------------------- #
+
+def test_pin_tolerance_is_wide_enough_to_actually_fire():
+    """PIN_FRAC was 1e-3 — 0.1% of a parameter's range — so tight it could
+    essentially never trigger. The first live Deribit BTC calibration returned
+    eta = 3.936 against an upper bound of 4.0, i.e. 98.2% of the way across the
+    range, and the gate ACCEPTED it. A bound hit is the signal that the model
+    cannot reach the market without an extreme parameter; that is the whole
+    point of the check.
+    """
+    from backend.quant.calibrate import BOUNDS, PIN_FRAC, quality_gate
+    lo, hi = BOUNDS["eta"]
+    near = hi - 0.001 * (hi - lo)          # 99.9% across the range
+    accepted, reasons = quality_gate(rmse=1.0, eta=near, rho=-0.7, H=0.12,
+                                     xi=0.03, stale=False, n_unpriceable=0)
+    assert not accepted
+    assert any("pinned" in r for r in reasons), reasons
+    # The historically-observed value must also be caught.
+    accepted, _ = quality_gate(rmse=1.0, eta=3.936, rho=-0.7, H=0.12, xi=0.03,
+                               stale=False, n_unpriceable=0)
+    assert not accepted, "eta=3.936 of a [0.5, 4.0] range must read as pinned"
+    assert PIN_FRAC >= 0.01
+
+
+def test_fit_quality_is_judged_against_the_market_width():
+    """An absolute vol-point threshold is market-independent and therefore
+    blind: 3 vol points is tight against a market quoting 8 wide and useless
+    against one quoting 1 wide. Deribit publishes two-sided books, so the
+    honest question is whether the model prices INSIDE the spread.
+    """
+    from backend.quant.calibrate_deribit import MAX_RMSE_OVER_HALF_SPREAD
+    assert 1.0 <= MAX_RMSE_OVER_HALF_SPREAD <= 3.0
+    # The measured BTC fit: 2.812 vp RMSE against a 0.976 vp median
+    # half-spread on the fitted quotes.
+    assert 2.812 / 0.976 > MAX_RMSE_OVER_HALF_SPREAD
+
+
+def test_deribit_quotes_convert_into_calibrator_quotes():
+    """The BTC path must reuse calibrate.py's objective, not reimplement it."""
+    from backend.quant.deribit import find_snapshots, latest_snapshot
+    from backend.quant.surface import build_surface
+    from backend.quant.calibrate import Calibrator
+    from backend.quant.calibrate_deribit import quotes_from_surface
+    if not find_snapshots():
+        pytest.skip("no committed Deribit snapshot")
+    quotes, drops = quotes_from_surface(build_surface(latest_snapshot()))
+    assert len(quotes) >= 8
+    assert len({q.expiry for q in quotes}) >= 2, (
+        "H is identified by the term structure of the skew; a single-expiry "
+        "fit cannot identify it")
+    assert math.isfinite(drops["median_iv_spread_volpts"])
+    assert drops["median_iv_spread_volpts"] > 0
+    for q in quotes:
+        assert q.tau > 0 and q.strike > 0 and q.mid_call > 0
+        assert 0.05 <= q.iv <= 0.80
+        assert q.vega > 0
+    cal = Calibrator(rate=0.0, quotes=quotes, n_paths=200)
+    assert len(cal.quotes) == len(quotes)
+    assert len(cal.groups) >= 2

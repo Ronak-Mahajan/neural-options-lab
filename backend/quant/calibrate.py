@@ -205,7 +205,16 @@ MAX_RMSE_VOLPTS = 3.0
 # means the same thing for a correlation (width 1.0) as for a variance
 # (width 1.4375). An absolute 1e-3, as used before, is 0.03% of the eta range
 # but 40% of the lower xi bound.
-PIN_FRAC = 1e-3
+#: How close to a bound counts as pinned, as a fraction of that parameter's
+#: range. This was 1e-3, i.e. 0.1% — so tight it could essentially never fire.
+#: Caught empirically: the first live Deribit BTC calibration returned
+#: eta = 3.936 against an upper bound of 4.0 — 98.2% of the way across the
+#: range, pinned in any practical sense — and the gate ACCEPTED it. A bound hit
+#: is the signal that the model cannot reach the market without an extreme
+#: parameter, which is exactly what the gate exists to catch, so the tolerance
+#: has to be wide enough to notice. At 2% that fit is correctly rejected while
+#: rho (74.4% of range), H (36.4%) and xi (5.7%) still pass.
+PIN_FRAC = 0.02
 
 # ── quote filters ─────────────────────────────────────────────────────
 MIN_QUOTES = 8
@@ -870,14 +879,25 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
     elif rmse >= MAX_RMSE_VOLPTS:
         reasons.append(f"implied-vol RMSE {rmse:.3f} vp >= "
                        f"{MAX_RMSE_VOLPTS:.1f} vp")
-    for name, value in (("eta", eta), ("rho", rho), ("H", H), ("xi", xi)):
-        lo, hi = BOUNDS[name]
+    # xi is a VARIANCE whose bound spans 5% to 120% vol, so its range in
+    # variance space is 0.0025 to 1.44 — enormous and wildly non-uniform. A
+    # fixed fraction of that range is meaningless at the low end: 2% of it is
+    # 0.029, which would flag every fit with an ATM vol below ~17.7% as pinned,
+    # including perfectly ordinary equity-index calibrations. Pinning is
+    # therefore judged in VOL space for xi, which is the scale the bound was
+    # actually chosen in, and in native units for the others.
+    checks = (("eta", eta, BOUNDS["eta"]),
+              ("rho", rho, BOUNDS["rho"]),
+              ("H", H, BOUNDS["H"]),
+              ("sqrt(xi)", math.sqrt(xi) if xi > 0 else float("nan"),
+               (math.sqrt(BOUNDS["xi"][0]), math.sqrt(BOUNDS["xi"][1]))))
+    for name, value, (lo, hi) in checks:
         tol = PIN_FRAC * (hi - lo)
         if not math.isfinite(value):
             reasons.append(f"{name} is not finite")
         elif not lo + tol < value < hi - tol:
             reasons.append(f"{name} = {value:.4f} is pinned at its bound "
-                           f"[{lo}, {hi}]")
+                           f"[{lo:.4g}, {hi:.4g}]")
     if stale:
         reasons.append("quotes are last-session prints (market closed), not a "
                        "live book")
