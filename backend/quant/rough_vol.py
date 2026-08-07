@@ -1,23 +1,171 @@
-"""Rough Volatility (Rough Bergomi) Monte Carlo Engine for 0DTE Options.
+"""Rough Bergomi Monte Carlo engine for short-dated options.
 
-Implements a fractional Brownian motion (fBm) generator and a fast 
-PyTorch-based Monte Carlo pricer for the Rough Bergomi model.
-This is used to generate the ground-truth dataset for training the 
-0DTE Neural Surrogate model.
+Implements the Riemann-Liouville (Volterra) driver of Bayer, Friz & Gatheral
+(2016) and a PyTorch Monte Carlo pricer, used to generate ground truth for the
+0DTE neural surrogate.
+
+The kernel this module used to use was the wrong one
+----------------------------------------------------
+`generate_fbm_covariance` built
+
+    C_ij = 0.5 * (t_i^2H + t_j^2H - |t_i - t_j|^2H)
+
+which is the Type-I (Mandelbrot-Van Ness) fractional Brownian motion
+covariance. Rough Bergomi is not driven by Type-I fBm. It is driven by the
+Riemann-Liouville Volterra process
+
+    W~_t = sqrt(2H) * int_0^t (t - s)^{H - 1/2} dW_s,
+    E[W~_u W~_v] = 2H * int_0^{u ^ v} (u - s)^{H-1/2} (v - s)^{H-1/2} ds.
+
+The two agree on the DIAGONAL — both give Var[W~_t] = t^{2H}, so the
+-0.5 eta^2 t^{2H} drift correction and the martingale property were unaffected,
+which is why this survived undetected. They agree nowhere else. Measured at
+H = 0.1172, n_steps = 50: maximum off-diagonal relative difference 4.93,
+corr(W~_t1, W~_t50) = +0.320 under the old kernel versus +0.054 under the true
+Volterra process.
+
+There is a second, subtler consequence. The discretised Volterra process is
+W~_i = sum_{j<=i} K_ij dW_j with K lower triangular and positive on the
+diagonal, so C = K K^T and — by uniqueness of the Cholesky factorisation —
+K IS chol(C) and the Gaussian vector feeding it IS the driving Brownian
+increment. That makes the existing leverage construction
+Z_spot = rho Z_vol + sqrt(1 - rho^2) Z_indep exactly right, but ONLY once C is
+the Volterra covariance. Under the old Type-I matrix, chol(C) was not the
+Volterra kernel and Z_vol was not dW, so the correlation was being applied to
+the wrong object: corr(Z_vol_1, W~_t1) was +1.0000 where the truth is +0.7844.
+Fixing the covariance therefore fixes the leverage too, with no change to the
+simulation code below.
+
+Closed form used here
+---------------------
+For u <= v, substituting s = u x and applying Euler's integral representation,
+
+    E[W~_u W~_v] = (2H / (H + 1/2)) * u^{H+1/2} * v^{H-1/2}
+                   * 2F1(1/2 - H, 1; H + 3/2; u/v)
+
+with u/v in [0, 1], so the hypergeometric series is evaluated inside its disc of
+convergence everywhere, including the diagonal (where Gauss's theorem gives
+2F1(...; 1) = (H + 1/2) / (2H) and the expression collapses to t^{2H}).
+
+The covariance is homogeneous of degree 2H, so it is computed once on the unit
+grid t_i = i and rescaled by dt^{2H}. That makes it cacheable across batch
+elements, which also removes the redundant per-element refactorisation.
+
+CONSEQUENCE FOR THE SHIPPED ARTIFACT: artifacts/model_0dte.pt was trained
+against the OLD kernel, so it is a surrogate for a process that is not rough
+Bergomi. It must be regenerated (dataset_0dte.py, then train_0dte.py) before its
+prices mean what the README says they mean.
 """
 
-import math
-import torch
+from __future__ import annotations
 
-def generate_fbm_covariance(n_steps: int, dt: float, H: float, device: torch.device) -> torch.Tensor:
-    """Exact covariance matrix for fractional Brownian motion."""
-    t = torch.arange(1, n_steps + 1, dtype=torch.float32, device=device) * dt
-    ti_2H = t ** (2 * H)
-    tj_2H = t ** (2 * H)
-    ti_tj_2H = torch.abs(t.unsqueeze(1) - t.unsqueeze(0)) ** (2 * H)
-    
-    C = 0.5 * (ti_2H.unsqueeze(1) + tj_2H.unsqueeze(0) - ti_tj_2H)
-    return C
+import math
+from functools import lru_cache
+
+import numpy as np
+import torch
+from scipy.special import hyp2f1
+
+
+@lru_cache(maxsize=64)
+def _volterra_covariance_unit(n_steps: int, H: float) -> tuple:
+    """E[W~_i W~_j] on the unit grid t_i = i, i = 1..n_steps.
+
+    Returned as a nested tuple so lru_cache can hold it; callers convert to a
+    tensor. Homogeneity of degree 2H means the physical covariance is this
+    matrix times dt^{2H}.
+    """
+    i = np.arange(1, n_steps + 1, dtype=np.float64)
+    u = np.minimum(i[:, None], i[None, :])          # min(t_i, t_j)
+    v = np.maximum(i[:, None], i[None, :])          # max(t_i, t_j)
+    pref = 2.0 * H / (H + 0.5)
+    c = pref * u ** (H + 0.5) * v ** (H - 0.5) \
+        * hyp2f1(0.5 - H, 1.0, H + 1.5, u / v)
+    return tuple(map(tuple, c))
+
+
+def volterra_covariance(n_steps: int, dt: float, H: float,
+                        device: torch.device) -> torch.Tensor:
+    """Exact covariance of the Riemann-Liouville driver at t_i = i*dt."""
+    c = np.asarray(_volterra_covariance_unit(n_steps, float(H)),
+                   dtype=np.float64) * (dt ** (2.0 * H))
+    return torch.as_tensor(c, dtype=torch.float32, device=device)
+
+
+@lru_cache(maxsize=64)
+def _joint_factor_unit(n_steps: int, H: float) -> tuple:
+    """Cholesky factor of the JOINT law of (dW / sqrt(dt), W~ / dt^H).
+
+    Why a joint covariance rather than just factorising C
+    ----------------------------------------------------
+    W~_{t_i} = sqrt(2H) int_0^{t_i} (t_i - s)^{H-1/2} dW_s is a continuous
+    stochastic integral. It is NOT a linear function of the n coarse increments
+    dW_1..dW_n — there is residual randomness inside each step — so C is not
+    K K^T for any n x n K built from those increments, and therefore chol(C) is
+    NOT the Volterra kernel and its Gaussian input is NOT dW.
+
+    Concretely, factorising C alone forces corr(Z_1, W~_{t_1}) = 1 by
+    construction (the first row of a lower-triangular factor has one entry),
+    whereas the true value is
+
+        corr(dW_1, W~_{t_1}) = sqrt(2H) / (H + 1/2)
+
+    = 0.7844 at H = 0.1172. Applying the leverage correlation rho to the wrong
+    object is the second half of the kernel bug: it makes the effective
+    spot/vol correlation too strong at the short end, which is exactly where a
+    0DTE skew fit is identified.
+
+    The fix is the standard exact scheme: simulate the 2n-dimensional Gaussian
+    (dW_1..dW_n, W~_{t_1}..W~_{t_n}) directly, using the exact cross-covariance
+
+        E[dW_j W~_{t_i}] = sqrt(2H)/(H+1/2)
+                           * [ (t_i - t_{j-1})^{H+1/2} - (t_i - t_j)^{H+1/2} ]
+                                                                    for t_j <= t_i
+                         = 0                                        otherwise.
+
+    Both blocks are dimensionless once dW is scaled by sqrt(dt) and W~ by dt^H,
+    so the factor depends only on (n_steps, H) and is cached.
+    """
+    n = n_steps
+    i = np.arange(1, n + 1, dtype=np.float64)
+    c = np.asarray(_volterra_covariance_unit(n, H), dtype=np.float64)
+
+    # D[i, j] = E[ (dW_j/sqrt(dt)) * (W~_{t_i}/dt^H) ] on the unit grid.
+    lag_hi = i[:, None] - (i[None, :] - 1.0)        # t_i - t_{j-1}
+    lag_lo = i[:, None] - i[None, :]                # t_i - t_j
+    mask = lag_lo >= 0.0                            # only j <= i contributes
+    d = np.zeros((n, n))
+    d[mask] = (math.sqrt(2.0 * H) / (H + 0.5)) * (
+        np.power(lag_hi[mask], H + 0.5) - np.power(lag_lo[mask], H + 0.5))
+
+    sigma = np.empty((2 * n, 2 * n))
+    sigma[:n, :n] = np.eye(n)
+    sigma[n:, :n] = d
+    sigma[:n, n:] = d.T
+    sigma[n:, n:] = c
+    # W~ is very nearly determined by the increments on a fine grid, so the
+    # joint law is close to singular; jitter only the diagonal.
+    sigma[np.diag_indices(2 * n)] += 1e-10
+    return tuple(map(tuple, np.linalg.cholesky(sigma)))
+
+
+def joint_factor(n_steps: int, dt: float, H: float,
+                 device: torch.device) -> torch.Tensor:
+    """Lower-triangular factor L with (Z, W~_scaled) = L @ noise, shape (2n, 2n)."""
+    lf = np.asarray(_joint_factor_unit(n_steps, float(H)), dtype=np.float64)
+    return torch.as_tensor(lf, dtype=torch.float32, device=device)
+
+
+def generate_fbm_covariance(*args, **kwargs):  # pragma: no cover
+    """Removed: this built the Type-I fBm covariance, which is the wrong driver.
+
+    Kept as a loud failure rather than deleted so that any caller still relying
+    on it stops instead of silently simulating the wrong process.
+    """
+    raise NotImplementedError(
+        "generate_fbm_covariance built the Mandelbrot-Van Ness fBm covariance, "
+        "which is not the rough Bergomi driver. Use volterra_covariance(); see "
+        "the module docstring.")
 
 def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.Tensor,
                      xi: torch.Tensor, eta: torch.Tensor, rho: torch.Tensor, rate: torch.Tensor,
@@ -51,15 +199,15 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         T = maturity[b].item()
         dt = T / n_steps
         
-        C = generate_fbm_covariance(n_steps, dt, H, device)
-        C = C + torch.eye(n_steps, device=device) * 1e-6  # numerical stability
-        L = torch.linalg.cholesky(C)
-        
-        # Standard driving normals for the volatility process
-        Z_vol = torch.randn(n_paths, n_steps, device=device, generator=gen)
-        
-        # Fractional Brownian motion paths
-        W_tilde = torch.matmul(Z_vol, L.T)
+        # Joint exact simulation of the driving increments and the Volterra
+        # process. The factor is cached on (n_steps, H) and dimensionless, so
+        # the 100x100 factorisation is built once rather than per batch element.
+        Lj = joint_factor(n_steps, dt, H, device)
+        noise = torch.randn(n_paths, 2 * n_steps, device=device, generator=gen)
+        joint = noise @ Lj.T
+        Z_vol = joint[:, :n_steps]                       # dW / sqrt(dt), the
+                                                         # actual driving BM
+        W_tilde = joint[:, n_steps:] * (dt ** H)         # W~_{t_i}
         
         # Volatility process (Rough Bergomi)
         t = torch.arange(1, n_steps + 1, dtype=torch.float32, device=device) * dt

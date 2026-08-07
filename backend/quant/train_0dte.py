@@ -136,7 +136,17 @@ def main():
                          "val_rmse_bps": ens_rmse * 1e4,
                          "model": "rough_bergomi",
                          "H": float(dyn["H"]), "eta": float(dyn["eta"]),
-                         "rho": float(dyn["rho"])}},
+                         "rho": float(dyn["rho"]),
+                         "kernel": dyn.get("kernel", "type_I_fbm_LEGACY"),
+                         "calibrated": False,
+                         "calibration_note": (
+                             "Uncalibrated defaults. The previous calibration "
+                             "was fitted under the Type-I fBm kernel (not "
+                             "rough Bergomi) from market-closed quotes, so it "
+                             "carries no information under the corrected "
+                             "driver. Re-run calibrate.py in market hours."),
+                         "epochs": args.epochs, "lr": args.lr,
+                         "batch": args.batch, "seed": args.seed}},
                ARTIFACTS / "model_0dte.pt")
     print(f"Saved {ARTIFACTS / 'model_0dte.pt'}")
 

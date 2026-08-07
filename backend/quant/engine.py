@@ -25,6 +25,9 @@ from .monte_carlo import price_asian_mc, MCResult
 
 ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
 
+# Maturity at or below which the 0DTE (European, rough-Bergomi) surrogate serves.
+ZERO_DTE_CUTOFF = 12.0 / 252.0
+
 
 class PricingEngine:
     def __init__(self, checkpoint: Path | None = None):
@@ -51,6 +54,15 @@ class PricingEngine:
                                   dtype=torch.float32)
         self._highs = torch.tensor([hi for _, hi in ranges.values()],
                                    dtype=torch.float32)
+
+        # Fixed output scale. The Softplus head is trained to emit a quantity of
+        # order 1 and the magnitude is carried here instead, which is what
+        # halved the systematic price bias (+0.985 -> +0.467 bps): the previous
+        # recipe initialised every run at softplus(0) = 0.693, i.e. 6,930 bps
+        # against a mean price of 3,664 bps, and never fully recovered.
+        # Legacy checkpoints, which fold the magnitude into the network, carry
+        # no such field and get 1.0.
+        self._output_scale = float(self.meta.get("output_scale", 1.0))
 
         # Load 0DTE surrogate if available
         self.has_0dte = False
@@ -79,21 +91,46 @@ class PricingEngine:
         member=i evaluates a single member (used for error-attribution
         comparisons). Autograd flows through the mean either way.
         """
-        is_0dte = self.has_0dte and bool((mat <= 12/252.0).all())
-        
-        if is_0dte:
-            x = torch.stack([m, mat, sig, r], dim=-1)
-            xn = 2.0 * (x - self._0dte_lows) / (self._0dte_highs - self._0dte_lows) - 1.0
-            if member is not None:
-                m_idx = min(member, len(self._0dte_members) - 1)
-                return self._0dte_members[m_idx](xn).squeeze(-1)
-            return torch.stack([net(xn).squeeze(-1) for net in self._0dte_members]).mean(dim=0)
+        if not self.has_0dte:
+            return self._asian_call(m, mat, sig, r, member)
 
+        mask = mat <= ZERO_DTE_CUTOFF
+        if bool(mask.all()):
+            return self._zero_dte_call(m, mat, sig, r, member)
+        if not bool(mask.any()):
+            return self._asian_call(m, mat, sig, r, member)
+
+        # Mixed batch. This used to gate on .all(), so a batch spanning the
+        # cutoff sent EVERY element through the Asian net — including
+        # maturities below its 0.05 training floor, silently extrapolated —
+        # while price_batch then applied EUROPEAN parity to the short-dated
+        # ones. Two different parity relations on one price vector. Route
+        # per element instead, so each maturity is priced by the model that
+        # owns it and receives the matching parity relation.
+        return torch.where(mask,
+                           self._zero_dte_call(m, mat, sig, r, member),
+                           self._asian_call(m, mat, sig, r, member))
+
+    def _asian_call(self, m, mat, sig, r, member: int | None = None):
         x = torch.stack([m, mat, sig, r], dim=-1)
         xn = 2.0 * (x - self._lows) / (self._highs - self._lows) - 1.0
         if member is not None:
-            return self.members[member](xn)
-        return torch.stack([net(xn) for net in self.members]).mean(dim=0)
+            return self._output_scale * self.members[member](xn)
+        # The scale is shared by every member, so scaling the ensemble mean is
+        # identical to scaling each member first, and autograd is unaffected
+        # (a constant factor passes straight through to the Greeks).
+        return self._output_scale * torch.stack(
+            [net(xn) for net in self.members]).mean(dim=0)
+
+    def _zero_dte_call(self, m, mat, sig, r, member: int | None = None):
+        x = torch.stack([m, mat, sig, r], dim=-1)
+        xn = 2.0 * (x - self._0dte_lows) \
+            / (self._0dte_highs - self._0dte_lows) - 1.0
+        if member is not None:
+            idx = min(member, len(self._0dte_members) - 1)
+            return self._0dte_members[idx](xn).squeeze(-1)
+        return torch.stack([net(xn).squeeze(-1)
+                            for net in self._0dte_members]).mean(dim=0)
 
     def _parity_adjustment_torch(self, m, mat, r) -> torch.Tensor:
         """exp(-rT) * (E[A]/K - 1) with spot=m, strike=1, differentiable.
@@ -123,7 +160,7 @@ class PricingEngine:
 
         f = self._call_price_torch(m, mat, sig, r, member=member)
         if option_type == "put":
-            if self.has_0dte and float(maturity) <= 12/252.0:
+            if self.has_0dte and float(maturity) <= ZERO_DTE_CUTOFF:
                 # European Put Parity: P/K = C/K - S/K + e^-rT
                 f = f - m + torch.exp(-r * mat)
             else:
@@ -159,7 +196,7 @@ class PricingEngine:
         f = self._call_price_torch(m, mat, sig, r, member=member)
         if option_type == "put":
             if self.has_0dte:
-                mask_0dte = mat <= 12/252.0
+                mask_0dte = mat <= ZERO_DTE_CUTOFF
                 adj_asian = self._parity_adjustment_torch(m, mat, r)
                 adj_euro = m - torch.exp(-r * mat) # P = C - (S - Ke^-rT)
                 adj = torch.where(mask_0dte, adj_euro, adj_asian)
@@ -180,9 +217,23 @@ class PricingEngine:
 
     def in_domain(self, spot: float, strike: float, maturity: float,
                   sigma: float, rate: float) -> bool:
+        """Is this request inside the trained box of whichever model serves it?
+
+        Previously this checked only the Asian box, so a legitimate 0DTE query
+        (maturity below 12/252, which the 0DTE surrogate covers down to 1/252)
+        was reported out-of-domain. It also went uncalled by price_batch, so
+        nothing actually guarded extrapolation.
+
+        Note the gap between the two boxes: maturities in (12/252, 0.05) are
+        above the 0DTE cutoff but below the Asian surrogate's training floor,
+        so NO model is valid there and this returns False.
+        """
         x = np.array([spot / strike, maturity, sigma, rate])
-        return bool(np.all(x >= self._lows.numpy() - 1e-9)
-                    and np.all(x <= self._highs.numpy() + 1e-9))
+        if self.has_0dte and maturity <= ZERO_DTE_CUTOFF:
+            lo, hi = self._0dte_lows.numpy(), self._0dte_highs.numpy()
+        else:
+            lo, hi = self._lows.numpy(), self._highs.numpy()
+        return bool(np.all(x >= lo - 1e-9) and np.all(x <= hi + 1e-9))
 
 
 # ---------------------------------------------------------------------------
