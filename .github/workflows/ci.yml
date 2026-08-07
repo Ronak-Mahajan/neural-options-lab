@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch: the GPU wheel is ~2.5 GB and nothing in CI needs it.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Show resolved versions
+        run: pip list
+
+      - name: Run tests
+        # Network-dependent tests (yfinance, Deribit) are marked and skipped;
+        # everything else must pass, including the shipped-checkpoint load.
+        run: python -m pytest tests/ -v -m "not network" --durations=10

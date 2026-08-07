@@ -42,3 +42,10 @@ artifacts/model_price_only.pt
 artifacts/eval_price_only.json
 artifacts/drift_log.jsonl
 artifacts/calibration_logs/
+
+# scratch: ad-hoc audit/diagnostic scripts and run logs
+_*.py
+_*.log
+diagnose*.py
+artifacts/dataset_gpu_*.npz
+artifacts/ablation_probe.json

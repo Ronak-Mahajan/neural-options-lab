@@ -1,10 +1,15 @@
-numpy>=1.26
-scipy>=1.11
-torch>=2.2
-fastapi>=0.110
-uvicorn[standard]>=0.29
-pydantic>=2.6
-yfinance>=0.2.40
-httpx>=0.27
-groq>=0.9
-websockets>=12.0
+# Pinned with compatible-release bounds (~=) so a patch upgrade is allowed but
+# a minor/major bump cannot silently change numerics. The README claims
+# deterministic, reproducible offline execution; unbounded ">=" pins made that
+# claim false. Versions are those this project is actually tested against.
+numpy~=2.5.1
+scipy~=1.17.1
+torch~=2.11.0
+fastapi~=0.139.0
+uvicorn[standard]~=0.34.0
+pydantic~=2.11.0
+yfinance~=1.5.1
+httpx~=0.28.1
+groq~=0.9.0
+websockets~=15.0
+python-dotenv~=1.0.1

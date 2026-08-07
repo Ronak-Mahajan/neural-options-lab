@@ -18,19 +18,52 @@ from backend.quant.rough_vol import rough_bergomi_mc
 ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
 
 
+# Bump when the simulated dynamics change in a way that invalidates an existing
+# calibration. A fit is only meaningful for the kernel it was fitted under.
+KERNEL_ID = "riemann_liouville_volterra_joint_v1"
+
+
 def load_calibrated_dynamics() -> dict:
-    """Live-calibrated rough-vol dynamics from calibrate.py when available,
-    else the historical defaults."""
+    """Calibrated rough-vol dynamics from calibrate.py, if they are USABLE.
+
+    Three ways a calibration is rejected, all of which the previous version
+    accepted:
+
+    1. Wrong kernel. Parameters are only meaningful for the driver they were
+       fitted under. Everything calibrated before the Riemann-Liouville fix
+       was fitted against the Type-I fBm covariance, i.e. against a process
+       that is not rough Bergomi, so those (eta, rho, H) carry no calibration
+       information now. Such files have no `kernel` field.
+    2. Market-closed quotes. The committed rough_calibration.json is stamped
+       03:43 New York with quote_source "last_trade_market_closed" and
+       accepted true, because the gate looked only at RMSE and bound-pinning.
+       Those exact parameters were trained into the served model.
+    3. Not accepted by calibrate.py's own gate.
+    """
     import json
     cal_file = ARTIFACTS / "rough_calibration.json"
     defaults = {"eta": 1.5, "rho": -0.7, "H": 0.1}
-    if cal_file.exists():
-        cal = json.loads(cal_file.read_text())
-        if cal.get("accepted"):
-            return {k: float(cal.get(k, defaults[k])) for k in defaults}
-        print("calibration file present but not accepted "
-              "(quality gate); using defaults")
-    return defaults
+    if not cal_file.exists():
+        return defaults
+
+    cal = json.loads(cal_file.read_text())
+    kernel = cal.get("kernel")
+    source = str(cal.get("quote_source", ""))
+    if kernel != KERNEL_ID:
+        print(f"REFUSING calibration: fitted under kernel {kernel!r}, this "
+              f"build simulates {KERNEL_ID!r}. Re-run "
+              f"'python -m backend.quant.calibrate' during market hours. "
+              f"Using uncalibrated defaults.")
+        return defaults
+    if "closed" in source or "last_trade" in source:
+        print(f"REFUSING calibration: quote_source {source!r} means the fit "
+              f"used stale/market-closed prices. Using defaults.")
+        return defaults
+    if not cal.get("accepted"):
+        print("calibration present but not accepted (quality gate); "
+              "using defaults")
+        return defaults
+    return {k: float(cal.get(k, defaults[k])) for k in defaults}
 
 
 def generate_0dte_dataset(n_samples: int = 25000, batch_size: int = 5000, seed: int = 42,
@@ -93,7 +126,9 @@ def generate_0dte_dataset(n_samples: int = 25000, batch_size: int = 5000, seed: 
     ARTIFACTS.mkdir(exist_ok=True)
     out_path = ARTIFACTS / "dataset_0dte.pt"
     torch.save({"X": features, "y": target_price,
-                "params": {"eta": eta, "rho": rho, "H": H}}, out_path)
+                "params": {"eta": eta, "rho": rho, "H": H,
+                           "kernel": KERNEL_ID,
+                           "n_paths": 20000, "n_steps": 50}}, out_path)
     print(f"Dataset saved to {out_path} in {time.perf_counter() - t0:.1f}s")
 
 

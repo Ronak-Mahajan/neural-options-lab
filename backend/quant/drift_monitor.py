@@ -145,20 +145,46 @@ def assess_drift(threshold_bps: float) -> DriftReport:
           f"{n_expiries_used} expiries")
 
     if n_quotes == 0:
+        # Fail LOUD, not open. Previously this returned rmse_bps=0.0 with
+        # drift_detected=False, which is indistinguishable in the log from a
+        # perfectly calibrated model and would suppress a real alert.
         return DriftReport(
             timestamp=now.isoformat(),
             n_quotes=0,
-            rmse_bps=0.0,
-            max_err_bps=0.0,
+            rmse_bps=float("nan"),
+            max_err_bps=float("nan"),
             drift_detected=False,
-            action_taken="none",
+            action_taken="aborted",
             tests_passed=None,
             new_model_promoted=False,
-            details={"error": "no quotes survived filtering"},
+            details={"error": "no quotes survived filtering; drift status is "
+                              "UNKNOWN, not healthy"},
         )
 
-    # neural net pricing
-    engine = PricingEngine(ARTIFACTS / "model_0dte.pt")
+    # Neural net pricing.
+    #
+    # This previously constructed PricingEngine(ARTIFACTS / "model_0dte.pt")
+    # and raised KeyError: 'width'. PricingEngine.__init__ reads meta['width'],
+    # 'blocks', 'n_monitoring_steps' and 'param_ranges', none of which exist in
+    # the 0DTE checkpoint — its meta holds {'0dte','normalize','n_members',
+    # 'val_rmse_bps','model','H','eta','rho'}. The 0DTE ensemble is only ever
+    # meant to be reached through the has_0dte side-path inside a default
+    # engine, which hardcodes its own width/blocks and bounds.
+    #
+    # The crash happened AFTER the full option-chain download, and main() had
+    # no try/except, so every run burned the network fetch and then died
+    # without ever appending to drift_log.jsonl. The entire advertised
+    # drift-detection and auto-retrain mechanism had never executed.
+    engine = PricingEngine()
+    if not engine.has_0dte:
+        return DriftReport(
+            timestamp=now.isoformat(), n_quotes=n_quotes,
+            rmse_bps=float("nan"), max_err_bps=float("nan"),
+            drift_detected=False, action_taken="aborted", tests_passed=None,
+            new_model_promoted=False,
+            details={"error": "no 0DTE surrogate available; monitored "
+                              "maturities are all <= 12/252"},
+        )
     spots_arr = np.array(quotes_spots, dtype=np.float64)
     strikes_arr = np.array(quotes_strikes, dtype=np.float64)
     taus_arr = np.array(quotes_taus, dtype=np.float64)
