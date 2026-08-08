@@ -757,6 +757,13 @@ class Calibrator:
     at, and the noise floor is measured by re-seeding.
     """
 
+    #: The Monte Carlo teacher runs wherever tensors are built. Every tensor
+    #: below used to be created without a device, i.e. on the CPU, so a fit
+    #: never touched the GPU: a 439-quote objective evaluation measured 15.82 s
+    #: on CPU against roughly 0.07 s of equivalent GPU work, and one live SPY
+    #: calibration took 2,788 s.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def __init__(self, rate: float, quotes: Sequence[Quote], n_paths: int,
                  seed: int = CRN_SEED) -> None:
         self.rate = rate
@@ -783,16 +790,19 @@ class Calibrator:
             b = len(qs)
             # The MC starts at the PV of the market's forward, not at spot, so
             # model and market agree on E[S_T] by construction.
+            dev = self.device
             prices = rough_bergomi_mc(
-                torch.full((b,), qs[0].fwd_pv),
-                torch.tensor([q.strike for q in qs], dtype=torch.float32),
-                torch.full((b,), qs[0].tau),
-                torch.full((b,), xi),
-                torch.full((b,), eta), torch.full((b,), rho),
-                torch.full((b,), self.rate),
+                torch.full((b,), qs[0].fwd_pv, device=dev),
+                torch.tensor([q.strike for q in qs], dtype=torch.float32,
+                             device=dev),
+                torch.full((b,), qs[0].tau, device=dev),
+                torch.full((b,), xi, device=dev),
+                torch.full((b,), eta, device=dev),
+                torch.full((b,), rho, device=dev),
+                torch.full((b,), self.rate, device=dev),
                 n_paths=n_paths or self.n_paths, n_steps=50, H=H,
                 seed=self.seed if seed is None else seed)
-            out.append(prices.numpy())
+            out.append(prices.cpu().numpy())
         return np.concatenate(out)
 
     def loss(self, theta: np.ndarray) -> float:
@@ -1079,7 +1089,13 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--ticker", default="SPY")
-    p.add_argument("--max-dte", type=int, default=3)
+    p.add_argument("--max-dte", type=int, default=17,
+                   help="calendar days to expiry to retain. The default used "
+                        "to be 3, which after the tau floor retained a SINGLE "
+                        "expiry — and H is identified by the TERM STRUCTURE of "
+                        "the skew, so a one-expiry surface cannot identify it "
+                        "at all. 17 days is the surrogate's own maturity "
+                        "ceiling (12/252 yr in ACT/365 terms).")
     p.add_argument("--search-paths", type=int, default=8_000)
     p.add_argument("--polish-paths", type=int, default=None,
                    help="paths for the stage-3 re-polish (default: "

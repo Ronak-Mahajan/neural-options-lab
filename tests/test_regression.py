@@ -477,3 +477,93 @@ def test_deribit_quotes_convert_into_calibrator_quotes():
     cal = Calibrator(rate=0.0, quotes=quotes, n_paths=200)
     assert len(cal.quotes) == len(quotes)
     assert len(cal.groups) >= 2
+
+
+# --------------------------------------------------------------------------- #
+#  rough_vol.py / calibrate.py — one simulation per smile, and on the GPU
+# --------------------------------------------------------------------------- #
+
+def test_strikes_on_one_smile_share_a_single_path_set():
+    """Strike does not affect the terminal distribution, so every contract
+    sharing (spot, T, xi, eta, rho, rate) must be priced against ONE sample.
+
+    Drawing an independent sample per strike injected noise into the smile
+    SHAPE, and shape is what identifies rho, eta and H. Sharing the sample
+    makes the call price monotone in the strike by construction.
+    """
+    from backend.quant.rough_vol import rough_bergomi_mc
+    n = 30
+    K = torch.linspace(730.0, 800.0, n)
+    kw = dict(n_paths=20_000, n_steps=50, H=0.16, seed=5)
+    p = rough_bergomi_mc(torch.full((n,), 771.0), K, torch.full((n,), 5 / 365),
+                         torch.full((n,), 0.11 ** 2), torch.full((n,), 3.4),
+                         torch.full((n,), -0.31), torch.full((n,), 0.037), **kw)
+    diffs = (p[1:] - p[:-1]).numpy()
+    assert (diffs <= 1e-6).all(), "call price must not rise with strike"
+
+
+def test_grouping_does_not_change_prices():
+    """Same seed, same dynamics: pricing a smile in one call must agree with
+    pricing each strike separately."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    n = 12
+    K = torch.linspace(740.0, 790.0, n)
+    kw = dict(n_paths=20_000, n_steps=50, H=0.16, seed=11)
+    def args(m):
+        return (torch.full((m,), 771.0), torch.full((m,), 5 / 365),
+                torch.full((m,), 0.11 ** 2), torch.full((m,), 3.4),
+                torch.full((m,), -0.31), torch.full((m,), 0.037))
+    s, T, xi, eta, rho, r = args(n)
+    grouped = rough_bergomi_mc(s, K, T, xi, eta, rho, r, **kw)
+    for i in range(n):
+        s1, T1, xi1, eta1, rho1, r1 = args(1)
+        one = rough_bergomi_mc(s1, K[i:i + 1], T1, xi1, eta1, rho1, r1, **kw)
+        assert abs(float(one[0]) - float(grouped[i])) < 1e-4
+
+
+def test_distinct_dynamics_are_not_merged():
+    """Grouping must key on the dynamics, not just the strike: different
+    maturities are different terminal distributions."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    p = rough_bergomi_mc(
+        torch.full((2,), 771.0), torch.tensor([771.0, 771.0]),
+        torch.tensor([5 / 365, 20 / 365]), torch.full((2,), 0.11 ** 2),
+        torch.full((2,), 3.4), torch.full((2,), -0.31),
+        torch.full((2,), 0.037), n_paths=20_000, n_steps=50, H=0.16, seed=3)
+    assert float(p[1]) > float(p[0]), "longer maturity must be worth more"
+
+
+def test_calibration_runs_on_the_gpu_when_one_is_available():
+    """Every tensor in model_prices used to be built without a device, so a fit
+    never left the CPU: 15.82 s per objective evaluation against roughly 0.09 s
+    of equivalent GPU work, and 2,788 s for one live SPY calibration."""
+    from backend.quant.calibrate import Calibrator
+    expected = "cuda" if torch.cuda.is_available() else "cpu"
+    assert Calibrator.device.type == expected
+
+
+def test_max_dte_default_admits_a_term_structure():
+    """H is identified by the term structure of the skew. The old default of 3
+    calendar days retained a SINGLE expiry after the tau floor, so the shipped
+    default could not identify one of the four parameters it fits — a live SPY
+    run said so in its own output and then reported an H anyway.
+
+    Reads the real default out of the module source rather than restating it.
+    """
+    import inspect
+    import re
+    from backend.quant import calibrate
+
+    src = inspect.getsource(calibrate.main)
+    m = re.search(r'"--max-dte",\s*type=int,\s*default=(\d+)', src)
+    assert m, "could not find the --max-dte default"
+    default = int(m.group(1))
+
+    # Weekly expiries, so anything under ~10 days risks a single surviving
+    # expiry once the 34.8h tau floor is applied.
+    assert default >= 14, f"--max-dte default {default} is too narrow for H"
+    # And it must stay inside the surrogate's trained ceiling of 12/252 yr,
+    # which is 12/252*365 = 17.38 calendar days.
+    assert default <= 12 * 365 / 252, (
+        f"--max-dte default {default} admits maturities the surrogate was "
+        f"never trained on")
