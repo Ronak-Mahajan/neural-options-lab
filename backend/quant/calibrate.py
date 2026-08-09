@@ -95,11 +95,21 @@ The quality gate
 is adopted only when all of the following hold:
 
     1. the honest implied-vol RMSE is below MAX_RMSE_VOLPTS;
-    2. no free parameter — eta, rho, H *or xi* — sits within PIN_FRAC of a
+    2. the RMSE is within MAX_RMSE_OVER_HALF_SPREAD of the MARKET'S OWN median
+       half-spread. An absolute vol-point threshold is market-independent and
+       therefore blind: 3 points is tight against a book quoting 8 wide and
+       useless against one quoting 1 wide. Where two-sided quotes exist the
+       honest question is whether the model prices inside the spread;
+    3. no free parameter — eta, rho, H *or xi* — sits within PIN_FRAC of a
        bound (a bound hit signals misspecification or an ill-conditioned fit);
-    3. the quotes came from a live book, not from last-session prints;
-    4. every quote was priceable, i.e. no model price fell outside the no-arb
-       range (see the metric note below).
+    4. the quotes came from a live book, not from last-session prints;
+    5. fewer than MAX_UNPRICEABLE_FRAC of quotes fall outside the no-arb range.
+       This USED to fail on a single unpriceable quote, which is a Monte Carlo
+       noise detector rather than a quality measure: holding the parameters and
+       the quotes fixed and varying only the path set gave 1, 4 and 3
+       unpriceable at 64,000 paths and 1, 0 and 0 at 200,000, so a calibration
+       passed or failed on the random draw. The count is now a diagnostic, and
+       only a share too large for sampling to explain still fails.
 
 The gate is enforced HERE, at the point of use: `main --retrain` refuses to
 regenerate the dataset or retrain the surrogate on a rejected fit and exits 2.
@@ -118,8 +128,8 @@ error precisely where the fit is failing. Unpriceable quotes are now scored by
 the same vega-linearised error the objective uses, (P_model - P_mid)/vega,
 which is the first-order continuation of the implied-vol error past the no-arb
 boundary; `n_scored`, `n_unpriceable` and the old drop-the-worst number
-(`iv_rmse_volpts_priceable_only`) are all recorded, and any unpriceable quote
-fails the gate.
+(`iv_rmse_volpts_priceable_only`) are all recorded. The count itself is a
+diagnostic rather than a gate — see criterion 5.
 
 Day-count convention — READ THIS BEFORE COMPARING TO THE SURROGATE
 ------------------------------------------------------------------
@@ -216,6 +226,16 @@ MAX_RMSE_VOLPTS = 3.0
 #: rho (74.4% of range), H (36.4%) and xi (5.7%) still pass.
 PIN_FRAC = 0.02
 
+#: A fit must price inside the market it is fitting. Ratio of the implied-vol
+#: RMSE to the market's own median half-spread.
+MAX_RMSE_OVER_HALF_SPREAD = 1.5
+
+#: Share of quotes allowed to fall outside the no-arb range before it stops
+#: being sampling noise and starts being misspecification. Measured: identical
+#: parameters and quotes gave 1/4/3 unpriceable at 64k paths and 1/0/0 at 200k,
+#: i.e. up to ~1% is pure path noise.
+MAX_UNPRICEABLE_FRAC = 0.03
+
 # ── quote filters ─────────────────────────────────────────────────────
 MIN_QUOTES = 8
 MIN_BID = 0.02              # a 1-cent bid is not a price
@@ -303,6 +323,12 @@ class Quote:
     kind: str           # original instrument: "C" or "P"
     expiry: str
     fwd_pv: float       # F * e^{-r tau} for this expiry (see Forward)
+    # Half the bid-ask, expressed in VOL POINTS via vega. A fit is only
+    # meaningful relative to the width of the market it is fitting: an absolute
+    # vol-point threshold is tight against a book quoting 8 wide and useless
+    # against one quoting 1 wide. Retained per quote so the gate can compare
+    # the fit residual against the market's own resolution.
+    half_spread_iv: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -602,10 +628,13 @@ def build_expiry_quotes(rows: Sequence[RawRow], *, tau: float, rate: float,
         if iv is None:
             drops["no_arb"] = drops.get("no_arb", 0) + 1
             continue
+        _vega = bs_vega(fwd_pv, row.strike, tau, iv, rate)
+        _hs = (float("nan") if row.bid is None or row.ask is None
+               else 0.5 * (row.ask - row.bid) / max(_vega, VEGA_FLOOR) * 100.0)
         quotes.append(Quote(
             tau=tau, strike=row.strike, mid_call=mid_call, iv=iv,
-            vega=bs_vega(fwd_pv, row.strike, tau, iv, rate),
-            kind=row.kind, expiry=expiry, fwd_pv=fwd_pv))
+            vega=_vega, kind=row.kind, expiry=expiry, fwd_pv=fwd_pv,
+            half_spread_iv=_hs))
     return quotes, fwd
 
 
@@ -785,8 +814,22 @@ class Calibrator:
     def model_prices(self, eta: float, rho: float, H: float, xi: float,
                      n_paths: int | None = None,
                      seed: int | None = None) -> np.ndarray:
+        # xi may be a SCALAR or one value PER EXPIRY GROUP. In Bergomi's
+        # formulation (and Bayer-Friz-Gatheral's rough version) xi_0(t) is a
+        # forward variance CURVE; flattening it to one number forces a single
+        # ATM volatility onto every maturity. Measured on a live SPY surface,
+        # ATM implied vol ran 9.18% to 11.75% across six expiries — a 2.57 vol
+        # point term structure a scalar cannot represent, so a joint fit's
+        # sqrt(xi) = 11.93% simply split the difference. Worse, H then absorbed
+        # the residual level error: fitted per expiry it ranged 0.072 to 0.350,
+        # which is not a physical parameter, it is compensation.
+        xi_vec = (np.full(len(self.groups), float(xi))
+                  if np.ndim(xi) == 0 else np.asarray(xi, dtype=float))
+        if xi_vec.shape[0] != len(self.groups):
+            raise ValueError(f"xi has {xi_vec.shape[0]} entries for "
+                             f"{len(self.groups)} expiry groups")
         out = []
-        for qs in self.groups.values():
+        for gi, qs in enumerate(self.groups.values()):
             b = len(qs)
             # The MC starts at the PV of the market's forward, not at spot, so
             # model and market agree on E[S_T] by construction.
@@ -796,7 +839,7 @@ class Calibrator:
                 torch.tensor([q.strike for q in qs], dtype=torch.float32,
                              device=dev),
                 torch.full((b,), qs[0].tau, device=dev),
-                torch.full((b,), xi, device=dev),
+                torch.full((b,), float(xi_vec[gi]), device=dev),
                 torch.full((b,), eta, device=dev),
                 torch.full((b,), rho, device=dev),
                 torch.full((b,), self.rate, device=dev),
@@ -805,8 +848,58 @@ class Calibrator:
             out.append(prices.cpu().numpy())
         return np.concatenate(out)
 
+    # -- forward variance curve ------------------------------------------- #
+
+    def _atm(self) -> tuple[list[int], np.ndarray]:
+        """Index of the closest-to-the-money quote in each group, and its mid."""
+        idx, tgt = [], []
+        for qs in self.groups.values():
+            i = min(range(len(qs)),
+                    key=lambda j: abs(qs[j].strike / qs[j].fwd_pv - 1.0))
+            idx.append(i)
+            tgt.append(qs[i].mid_call)
+        return idx, np.array(tgt)
+
+    def solve_xi(self, eta: float, rho: float, H: float,
+                 n_paths: int | None = None, seed: int | None = None,
+                 iters: int = 16) -> np.ndarray:
+        """Pin one forward variance per expiry to that expiry's ATM quote.
+
+        xi is a nuisance parameter: it sets the LEVEL of each smile, while
+        (eta, rho, H) set its SHAPE. Searching all four jointly lets H trade
+        against the level and destroys its identification. Profiling xi out —
+        solving it exactly for each candidate (eta, rho, H) — leaves the outer
+        optimizer a 3-parameter shape problem, which is the quantity the skew
+        term structure actually identifies.
+
+        The ATM price is monotone in xi, so a geometric bisection converges
+        reliably. Every group is solved simultaneously, so an iteration costs
+        one model evaluation regardless of how many expiries there are.
+        """
+        idx, target = self._atm()
+        lo = np.full(len(self.groups), BOUNDS["xi"][0])
+        hi = np.full(len(self.groups), BOUNDS["xi"][1])
+        offsets = np.cumsum([0] + [len(qs) for qs in self.groups.values()])
+        for _ in range(iters):
+            mid = np.sqrt(lo * hi)                    # geometric midpoint
+            prices = self.model_prices(eta, rho, H, mid, n_paths=n_paths,
+                                       seed=seed)
+            atm_px = np.array([prices[offsets[g] + i]
+                               for g, i in enumerate(idx)])
+            below = atm_px < target
+            lo = np.where(below, mid, lo)
+            hi = np.where(below, hi, mid)
+        return np.sqrt(lo * hi)
+
+    def loss_shape(self, theta3: np.ndarray) -> float:
+        """Objective over (eta, rho, H) alone, with the xi curve profiled out."""
+        eta, rho, H = map(float, theta3)
+        xi = self.solve_xi(eta, rho, H)
+        return self.loss(np.array([eta, rho, H, xi], dtype=object))
+
     def loss(self, theta: np.ndarray) -> float:
-        eta, rho, H, xi = map(float, theta)
+        eta, rho, H, xi = (float(theta[0]), float(theta[1]), float(theta[2]),
+                           theta[3])
         self.n_evals += 1
         model = self.model_prices(eta, rho, H, xi)
         e = (model - self.mids) / self.vegas          # ≈ IV error
@@ -877,7 +970,9 @@ def iv_fit_report(quotes: Sequence[Quote], model: np.ndarray,
 
 
 def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
-                 stale: bool, n_unpriceable: int) -> tuple[bool, list[str]]:
+                 stale: bool, n_unpriceable: int, n_quotes: int = 0,
+                 median_half_spread_iv: float | None = None
+                 ) -> tuple[bool, list[str]]:
     """The one gate. Returns (accepted, reasons it was not).
 
     Downstream adoption — dataset regeneration, surrogate retraining,
@@ -896,11 +991,21 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
     # including perfectly ordinary equity-index calibrations. Pinning is
     # therefore judged in VOL space for xi, which is the scale the bound was
     # actually chosen in, and in native units for the others.
-    checks = (("eta", eta, BOUNDS["eta"]),
+    # xi may be a scalar or a per-expiry CURVE. A curve is pinned if EITHER end
+    # of it is: one maturity railed against the bound is the same misspecific-
+    # ation signal as a scalar railed against it, and checking only a summary
+    # would hide it.
+    xi_arr = np.atleast_1d(np.asarray(xi, dtype=float))
+    checks = [("eta", eta, BOUNDS["eta"]),
               ("rho", rho, BOUNDS["rho"]),
-              ("H", H, BOUNDS["H"]),
-              ("sqrt(xi)", math.sqrt(xi) if xi > 0 else float("nan"),
-               (math.sqrt(BOUNDS["xi"][0]), math.sqrt(BOUNDS["xi"][1]))))
+              ("H", H, BOUNDS["H"])]
+    xi_bounds = (math.sqrt(BOUNDS["xi"][0]), math.sqrt(BOUNDS["xi"][1]))
+    for tag, v in (("min", xi_arr.min()), ("max", xi_arr.max())):
+        label = "sqrt(xi)" if xi_arr.size == 1 else f"sqrt(xi) [{tag}]"
+        checks.append((label, math.sqrt(v) if v > 0 else float("nan"),
+                       xi_bounds))
+        if xi_arr.size == 1:
+            break
     for name, value, (lo, hi) in checks:
         tol = PIN_FRAC * (hi - lo)
         if not math.isfinite(value):
@@ -911,13 +1016,39 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
     if stale:
         reasons.append("quotes are last-session prints (market closed), not a "
                        "live book")
-    if n_unpriceable:
-        reasons.append(f"{n_unpriceable} quote(s) unpriceable: the model price "
-                       f"is outside the no-arb range")
+
+    # A fit is only meaningful RELATIVE TO THE WIDTH OF THE MARKET. An absolute
+    # vol-point threshold is market-independent and therefore blind: 3 points is
+    # tight against a book quoting 8 wide and useless against one quoting 1
+    # wide. Where two-sided quotes exist, the honest question is whether the
+    # model prices inside the spread.
+    if (median_half_spread_iv is not None
+            and math.isfinite(median_half_spread_iv)
+            and median_half_spread_iv > 0):
+        ratio = rmse / median_half_spread_iv
+        if ratio > MAX_RMSE_OVER_HALF_SPREAD:
+            reasons.append(
+                f"fit RMSE {rmse:.3f} vp is {ratio:.2f}x the market's own "
+                f"median half-spread ({median_half_spread_iv:.3f} vp) — the "
+                f"model prices outside the book it is fitting")
+
+    # Unpriceable quotes are a DIAGNOSTIC, not a gate. The previous criterion
+    # failed on n_unpriceable > 0, which is a Monte Carlo noise detector rather
+    # than a quality measure: holding the parameters and quotes fixed and
+    # varying only the path set gave 1, 4 and 3 unpriceable at 64,000 paths and
+    # 1, 0 and 0 at 200,000. A calibration therefore passed or failed on the
+    # random draw. Only a share large enough to signal real misspecification
+    # rather than sampling still fails.
+    if n_quotes and n_unpriceable / n_quotes > MAX_UNPRICEABLE_FRAC:
+        reasons.append(
+            f"{n_unpriceable} of {n_quotes} quotes "
+            f"({n_unpriceable / n_quotes:.1%}) price outside the no-arb range, "
+            f"above the {MAX_UNPRICEABLE_FRAC:.0%} that sampling explains")
     return (not reasons), reasons
 
 
 def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
+              xi_curve: bool = False,
               seed: int = 7, polish_paths: int | None = None,
               noise_reps: int = 4,
               min_tau_hours: float = MIN_TAU_HOURS) -> dict:
@@ -949,21 +1080,45 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
     t0 = time.perf_counter()
 
     def cb(xk, convergence=None):
+        # Under --xi-curve, xi is not a search variable and there is one per
+        # expiry, so report its range. Solve it ONCE here and reuse it for the
+        # loss: calling solve_xi and then loss_shape would pay for the same
+        # 16-iteration bisection twice every generation.
         gen[0] += 1
+        if len(xk) > 3:
+            xi_s, loss = f"{math.sqrt(float(xk[3])):>8.1%}", cal.loss(xk)
+        else:
+            xi = cal.solve_xi(*(float(v) for v in xk[:3]))
+            xi_s = f"{math.sqrt(xi.min()):>3.0%}-{math.sqrt(xi.max()):<4.0%}"
+            loss = cal.loss(np.array([*(float(v) for v in xk[:3]), xi],
+                                     dtype=object))
         print(f"  {gen[0]:>4} {CY}{xk[0]:>7.3f}{RS} {MG}{xk[1]:>7.3f}{RS} "
-              f"{VI}{xk[2]:>7.3f}{RS} {math.sqrt(xk[3]):>8.1%} "
-              f"{cal.loss(xk):>10.4f}", flush=True)
+              f"{VI}{xk[2]:>7.3f}{RS} {xi_s} {loss:>10.4f}", flush=True)
 
+    # With xi_curve the forward variance is PROFILED OUT: for each candidate
+    # (eta, rho, H) it is solved exactly against every expiry's ATM quote, so
+    # the optimizer searches a 3-parameter SHAPE problem. Measured on a live
+    # SPY surface this leaves the RMSE essentially unchanged (4.353 -> 4.444 vp,
+    # inside the objective's own MC noise) but fixes IDENTIFICATION: eta moved
+    # from 3.889 of a [0.5, 4.0] box — 96.8% of range, effectively pinned — to
+    # 2.141, and H from 0.339 to 0.108, the value the rough-vol literature
+    # reports. Previously both were absorbing ATM level error a scalar xi could
+    # not represent. It costs roughly 10x the wall time.
+    objective = cal.loss_shape if xi_curve else cal.loss
+    if xi_curve:
+        bounds = bounds[:3]
     de = differential_evolution(
-        cal.loss, bounds, seed=seed, maxiter=12, popsize=6, tol=1e-3,
+        objective, bounds, seed=seed, maxiter=12, popsize=6, tol=1e-3,
         mutation=(0.4, 0.9), recombination=0.8, polish=False, callback=cb,
         init="sobol", updating="deferred")
 
     rule(f"STAGE 2 · POWELL POLISH · {search_paths:,} paths")
-    res = minimize(cal.loss, de.x, method="Powell", bounds=bounds,
+    res = minimize(objective, de.x, method="Powell", bounds=bounds,
                    options={"xtol": 1e-3, "ftol": 1e-4, "maxfev": 120})
+    _xi2 = (f"{math.sqrt(res.x[3]):.1%}" if len(res.x) > 3 else
+            "profiled per expiry")
     print(f"  {CY}eta={res.x[0]:.3f}{RS}  {MG}rho={res.x[1]:.3f}{RS}  "
-          f"{VI}H={res.x[2]:.3f}{RS}  sqrt(xi)={math.sqrt(res.x[3]):.1%}  "
+          f"{VI}H={res.x[2]:.3f}{RS}  sqrt(xi)={_xi2}  "
           f"loss {res.fun:.4f}")
 
     # Stage 3. Stages 1-2 optimise the CHEAP objective; H in particular is not
@@ -972,22 +1127,39 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
     rule(f"STAGE 3 · POWELL RE-POLISH · {polish_paths:,} paths")
     cal.n_paths = polish_paths
     t_eval = time.perf_counter()
-    loss_before = cal.loss(res.x)
+    loss_before = objective(res.x)
     t_eval = time.perf_counter() - t_eval
     print(f"  {DIM}{t_eval:.2f}s per objective evaluation at "
           f"{polish_paths:,} paths ({len(quotes)} quotes, "
           f"{len(cal.groups)} expiry group(s)){RS}")
-    res3 = minimize(cal.loss, res.x, method="Powell", bounds=bounds,
+    res3 = minimize(objective, res.x, method="Powell", bounds=bounds,
                     options={"xtol": 1e-3, "ftol": 1e-4, "maxfev": 120})
-    eta, rho, H, xi = map(float, res3.x)
+    if xi_curve:
+        eta, rho, H = map(float, res3.x)
+        xi = cal.solve_xi(eta, rho, H, n_paths=final_paths, seed=REPORT_SEED)
+    else:
+        eta, rho, H, xi = map(float, res3.x)
     elapsed = time.perf_counter() - t0
+    xi_arr = np.atleast_1d(np.asarray(xi, dtype=float))
+    xi_report = (f"{math.sqrt(xi_arr[0]):.1%}" if xi_arr.size == 1 else
+                 f"{math.sqrt(xi_arr.min()):.1%}-"
+                 f"{math.sqrt(xi_arr.max()):.1%} across {xi_arr.size} expiries")
     print(f"  converged: {CY}eta={eta:.3f}{RS}  {MG}rho={rho:.3f}{RS}  "
-          f"{VI}H={H:.3f}{RS}  sqrt(xi)={math.sqrt(xi):.1%}  "
+          f"{VI}H={H:.3f}{RS}  sqrt(xi)={xi_report}  "
           f"({cal.n_evals} MC objective evals · {elapsed:.0f}s)")
+    if xi_arr.size > 1:
+        for name, v in zip(cal.groups, xi_arr):
+            print(f"    {DIM}{name}  xi={v:.6f}  "
+                  f"sqrt(xi)={math.sqrt(v):.2%}{RS}")
     print(f"  loss {loss_before:.4f} -> {res3.fun:.4f} at {polish_paths:,} "
           f"paths")
 
-    noise_mean, noise_sd, _ = cal.objective_noise(res3.x, n_reps=noise_reps)
+    # Measure the noise at the REPORTED parameters, not at res3.x: under
+    # --xi-curve the optimizer's vector is the 3 shape parameters and xi is
+    # solved afterwards, so res3.x alone does not describe the fit being gated.
+    theta_final = np.array([eta, rho, H, xi], dtype=object)
+    noise_mean, noise_sd, _ = cal.objective_noise(theta_final,
+                                                  n_reps=noise_reps)
     print(f"  {BOLD}objective noise floor{RS}: {noise_mean:.4f} ± "
           f"{noise_sd:.4f} (1 s.d. over {noise_reps} independent path sets at "
           f"{polish_paths:,} paths) — loss differences below this are "
@@ -1023,9 +1195,13 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
               f"(dropping them would report "
               f"{rep['rmse_volpts_priceable_only']:.3f} vp){RS}")
 
+    _hs = [q.half_spread_iv for q in cal.quotes
+           if math.isfinite(q.half_spread_iv)]
+    median_half_spread = float(np.median(_hs)) if _hs else None
     accepted, reasons = quality_gate(
         rmse=rmse, eta=eta, rho=rho, H=H, xi=xi, stale=snap.stale,
-        n_unpriceable=rep["n_unpriceable"])
+        n_unpriceable=rep["n_unpriceable"], n_quotes=len(cal.quotes),
+        median_half_spread_iv=median_half_spread)
 
     result = {
         "ticker": ticker,
@@ -1039,7 +1215,16 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
                                 else None),
         "spot": snap.spot, "rate": snap.rate, "rate_source": snap.rate_source,
         "eta": round(eta, 4), "rho": round(rho, 4), "H": round(H, 4),
-        "xi": round(xi, 6), "sqrt_xi": round(math.sqrt(xi), 4),
+        # Under --xi-curve there is one forward variance per expiry. "xi" and
+        # "sqrt_xi" stay SCALARS so every existing consumer keeps working
+        # (dataset_0dte.load_calibrated_dynamics reads them by name); when a
+        # curve was fitted they carry its front value and "xi_curve" carries
+        # the whole thing, keyed by expiry.
+        "xi": round(float(xi_arr[0]), 6),
+        "sqrt_xi": round(math.sqrt(float(xi_arr[0])), 4),
+        "xi_curve": (None if xi_arr.size == 1 else
+                     {e: round(float(v), 6)
+                      for e, v in zip(cal.groups, xi_arr)}),
         "n_quotes": len(cal.quotes), "n_scored": rep["n_scored"],
         "n_unpriceable": rep["n_unpriceable"],
         "expiries": snap.expiries,
@@ -1063,6 +1248,10 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
                      "days — see the module docstring)",
         "min_tau_hours": min_tau_hours,
         "quote_source": snap.quote_source,
+        "median_half_spread_iv_volpts": (round(median_half_spread, 4)
+                                         if median_half_spread else None),
+        "rmse_over_half_spread": (round(rmse / median_half_spread, 3)
+                                  if median_half_spread else None),
         # Which simulated driver this fit is valid FOR. A calibration is only
         # meaningful for the kernel it was fitted under, and this project has
         # already shipped one that was not: the previous rough_calibration.json
@@ -1096,6 +1285,14 @@ def main() -> None:
                         "the skew, so a one-expiry surface cannot identify it "
                         "at all. 17 days is the surrogate's own maturity "
                         "ceiling (12/252 yr in ACT/365 terms).")
+    p.add_argument("--xi-curve", action="store_true",
+                   help="profile the forward variance out per expiry instead "
+                        "of fitting one scalar. xi_0(t) is a CURVE in Bergomi's "
+                        "formulation; a scalar forces one ATM vol onto every "
+                        "maturity (measured live: ATM ran 9.18%% to 11.75%% "
+                        "across six SPY expiries). Leaves RMSE about the same "
+                        "but stops eta and H absorbing the level error, at "
+                        "roughly 10x the wall time.")
     p.add_argument("--search-paths", type=int, default=8_000)
     p.add_argument("--polish-paths", type=int, default=None,
                    help="paths for the stage-3 re-polish (default: "
@@ -1116,7 +1313,8 @@ def main() -> None:
     args = p.parse_args()
 
     result = calibrate(args.ticker, args.max_dte, args.search_paths,
-                       args.final_paths, polish_paths=args.polish_paths,
+                       args.final_paths, xi_curve=args.xi_curve,
+                       polish_paths=args.polish_paths,
                        noise_reps=args.noise_reps,
                        min_tau_hours=args.min_tau_hours)
 
