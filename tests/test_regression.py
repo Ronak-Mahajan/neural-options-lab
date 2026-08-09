@@ -309,7 +309,7 @@ def test_quality_gate_accepts_a_good_fit():
 @pytest.mark.parametrize("bad,needle", [
     ({"rmse": 48.7}, "RMSE"),
     ({"stale": True}, "live book"),
-    ({"n_unpriceable": 3}, "unpriceable"),
+    ({"n_unpriceable": 60, "n_quotes": 385}, "no-arb"),
     ({"eta": 4.0}, "pinned"),
     ({"xi": 1e-9}, "pinned"),
 ])
@@ -567,3 +567,80 @@ def test_max_dte_default_admits_a_term_structure():
     assert default <= 12 * 365 / 252, (
         f"--max-dte default {default} admits maturities the surrogate was "
         f"never trained on")
+
+
+# --------------------------------------------------------------------------- #
+#  calibrate.py — xi is a curve, and the gate is not a coin flip
+# --------------------------------------------------------------------------- #
+
+def test_a_few_unpriceable_quotes_are_noise_not_a_failure():
+    """The gate used to fail on a single unpriceable quote. Holding the
+    parameters AND the quotes fixed and varying only the Monte Carlo path set
+    gave 1, 4 and 3 unpriceable at 64,000 paths and 1, 0 and 0 at 200,000 — so
+    a calibration passed or failed on the random draw, not on fit quality."""
+    from backend.quant.calibrate import quality_gate
+    ok = dict(rmse=1.0, eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
+              n_quotes=385, median_half_spread_iv=1.0)
+    accepted, reasons = quality_gate(n_unpriceable=4, **ok)
+    assert accepted, reasons
+    accepted, reasons = quality_gate(n_unpriceable=60, **ok)
+    assert not accepted
+    assert any("no-arb" in r for r in reasons), reasons
+
+
+def test_fit_quality_is_judged_against_the_market_width():
+    """The same RMSE is a good fit to a wide book and a bad fit to a tight one.
+    An absolute vol-point threshold cannot see the difference."""
+    from backend.quant.calibrate import quality_gate
+    base = dict(rmse=2.5, eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
+                n_unpriceable=0, n_quotes=385)
+    tight, _ = quality_gate(median_half_spread_iv=1.0, **base)
+    wide, _ = quality_gate(median_half_spread_iv=2.0, **base)
+    assert not tight, "2.5 vp against a 1.0 vp half-spread must fail"
+    assert wide, "2.5 vp against a 2.0 vp half-spread must pass"
+
+
+def test_xi_accepts_a_curve_and_pins_each_expiry_to_its_own_atm():
+    """xi_0(t) is a forward variance CURVE. Flattening it to a scalar forces one
+    ATM vol onto every maturity: measured live, ATM ran 9.18% to 11.75% across
+    six SPY expiries, a 2.57 vol point term structure a single number cannot
+    represent, and H then absorbed the residual (0.072 to 0.350 across expiries).
+    """
+    from backend.quant.calibrate import Calibrator, Quote
+    quotes = []
+    for expiry, tau, atm_iv in (("A", 2 / 365, 0.09), ("B", 10 / 365, 0.12)):
+        for k in (0.97, 1.00, 1.03):
+            quotes.append(Quote(tau=tau, strike=770.0 * k, mid_call=5.0,
+                                iv=atm_iv, vega=60.0, kind="C", expiry=expiry,
+                                fwd_pv=770.0, half_spread_iv=0.5))
+    cal = Calibrator(rate=0.0, quotes=quotes, n_paths=4_000)
+    assert len(cal.groups) == 2
+
+    # A scalar must still work (back-compatible), and a per-group vector must
+    # produce DIFFERENT prices from a scalar that cannot match both expiries.
+    flat = cal.model_prices(2.0, -0.4, 0.12, 0.01)
+    curve = cal.model_prices(2.0, -0.4, 0.12, np.array([0.008, 0.016]))
+    assert flat.shape == curve.shape == (len(quotes),)
+    assert not np.allclose(flat, curve)
+
+    with pytest.raises(ValueError, match="expiry groups"):
+        cal.model_prices(2.0, -0.4, 0.12, np.array([0.01, 0.01, 0.01]))
+
+
+def test_solve_xi_recovers_a_rising_forward_variance_curve():
+    """Given a rising ATM term structure, the profiled xi must rise with it."""
+    from backend.quant.calibrate import Calibrator, Quote, bs_call
+    F, rate = 770.0, 0.0
+    quotes = []
+    for expiry, tau, iv in (("A", 3 / 365, 0.09), ("B", 12 / 365, 0.13)):
+        for k in (0.98, 1.00, 1.02):
+            K = F * k
+            quotes.append(Quote(tau=tau, strike=K,
+                                mid_call=bs_call(F, K, tau, iv, rate), iv=iv,
+                                vega=60.0, kind="C", expiry=expiry, fwd_pv=F,
+                                half_spread_iv=0.5))
+    cal = Calibrator(rate=rate, quotes=quotes, n_paths=20_000)
+    xi = cal.solve_xi(1.5, -0.3, 0.12, n_paths=20_000, seed=3, iters=14)
+    assert xi.shape == (2,)
+    assert xi[1] > xi[0], f"forward variance must rise: {xi}"
+    assert 0.05 ** 2 < xi[0] < 1.2 ** 2
