@@ -1,3 +1,8 @@
+# Requires Python >=3.12, which the numpy pin below enforces (every numpy 2.5.x
+# declares Requires-Python >=3.12). The README says 3.12; CI tests 3.12 only.
+# Keep those three in step -- they disagreed once, and the resulting CI job
+# failed at dependency install on every commit without ever running a test.
+#
 # Pinned with compatible-release bounds (~=) so a patch upgrade is allowed but
 # a minor/major bump cannot silently change numerics. The README claims
 # deterministic, reproducible offline execution; unbounded ">=" pins made that
