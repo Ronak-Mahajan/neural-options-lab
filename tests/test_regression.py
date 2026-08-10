@@ -588,16 +588,39 @@ def test_a_few_unpriceable_quotes_are_noise_not_a_failure():
     assert any("no-arb" in r for r in reasons), reasons
 
 
-def test_fit_quality_is_judged_against_the_market_width():
-    """The same RMSE is a good fit to a wide book and a bad fit to a tight one.
-    An absolute vol-point threshold cannot see the difference."""
-    from backend.quant.calibrate import quality_gate
-    base = dict(rmse=2.5, eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
+def test_market_width_can_only_raise_the_rmse_ceiling_never_lower_it():
+    """A wide book earns a looser ceiling. A TIGHT book must not earn a
+    stricter one.
+
+    The first version of this criterion was symmetric — RMSE had to sit within
+    1.5x the median half-spread either way — and a live SPY run showed why that
+    is wrong. Across 677 two-sided quotes in 8 expiries the median half-spread
+    was 0.052 vol points, i.e. a 3-cent market on a $3.96 option, which is
+    simply how SPY quotes. The symmetric rule demanded a 4-parameter rough
+    Bergomi surface price every strike and expiry to within 0.078 vp and threw
+    out a 1.579 vp fit for being "32x the spread". The bid-ask measures the
+    market's EXECUTION resolution, not the resolution at which four parameters
+    can describe a surface.
+    """
+    from backend.quant.calibrate import quality_gate, MAX_RMSE_VOLPTS
+    base = dict(eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
                 n_unpriceable=0, n_quotes=385)
-    tight, _ = quality_gate(median_half_spread_iv=1.0, **base)
-    wide, _ = quality_gate(median_half_spread_iv=2.0, **base)
-    assert not tight, "2.5 vp against a 1.0 vp half-spread must fail"
-    assert wide, "2.5 vp against a 2.0 vp half-spread must pass"
+
+    # Tight book (SPY): the absolute floor governs, the spread does not tighten.
+    ok, why = quality_gate(rmse=1.579, median_half_spread_iv=0.052, **base)
+    assert ok, why
+    # ...and the floor still bites on a genuinely bad fit in the same book.
+    bad, why = quality_gate(rmse=MAX_RMSE_VOLPTS + 0.5,
+                            median_half_spread_iv=0.052, **base)
+    assert not bad and any("RMSE" in r for r in why), why
+
+    # Wide book (crypto / single names): the ceiling rises above the floor.
+    wide, why = quality_gate(rmse=MAX_RMSE_VOLPTS + 1.0,
+                             median_half_spread_iv=4.0, **base)
+    assert wide, why
+    # But not without limit — 1.5 x 4.0 = 6.0 vp is still a ceiling.
+    too_wide, why = quality_gate(rmse=7.0, median_half_spread_iv=4.0, **base)
+    assert not too_wide and any("half-spread" in r for r in why), why
 
 
 def test_xi_accepts_a_curve_and_pins_each_expiry_to_its_own_atm():
