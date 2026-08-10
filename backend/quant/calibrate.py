@@ -1108,13 +1108,32 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
 
     # With xi_curve the forward variance is PROFILED OUT: for each candidate
     # (eta, rho, H) it is solved exactly against every expiry's ATM quote, so
-    # the optimizer searches a 3-parameter SHAPE problem. Measured on a live
-    # SPY surface this leaves the RMSE essentially unchanged (4.353 -> 4.444 vp,
-    # inside the objective's own MC noise) but fixes IDENTIFICATION: eta moved
-    # from 3.889 of a [0.5, 4.0] box — 96.8% of range, effectively pinned — to
-    # 2.141, and H from 0.339 to 0.108, the value the rough-vol literature
-    # reports. Previously both were absorbing ATM level error a scalar xi could
-    # not represent. It costs roughly 10x the wall time.
+    # the optimizer searches a 3-parameter SHAPE problem.
+    #
+    # WHEN THIS IS WORTH 14x THE WALL TIME — and when it is not. Two live SPY
+    # surfaces, same code, opposite verdicts:
+    #
+    #   6 expiries, 385 quotes, RMSE ~4.4 vp (a poorly conditioned surface)
+    #     scalar  eta 3.889  rho -0.629  H 0.3394   RMSE 4.353
+    #     curve   eta 2.141  rho -0.362  H 0.1080   RMSE 4.444
+    #   8 expiries, 677 quotes, RMSE ~1.6 vp (a well conditioned one)
+    #     scalar  eta 2.688  rho -0.328  H 0.1038   RMSE 1.553   101s
+    #     curve   eta 2.406  rho -0.326  H 0.1020   RMSE 1.593  1442s
+    #
+    # On the first, the scalar fit railed eta at 96.8% of its [0.5, 4.0] range
+    # and H ran to 0.339; profiling xi out moved both to sane values, and I
+    # concluded the curve fixes identification. It does not, in general. On the
+    # second surface the SCALAR fit already finds H = 0.104 on its own and the
+    # two arms agree to within the objective's own MC noise (+-0.59), so there
+    # is nothing left for the curve to fix. What actually mattered was the
+    # surface: 8 expiries and 677 quotes identify H, 6 and 385 did not.
+    #
+    # So this is a diagnostic for an ILL-CONDITIONED fit — reach for it when the
+    # scalar arm rails a parameter — not a default. Hence off by default. The
+    # parameterization is still the correct one (xi_0(t) IS a curve in Bergomi's
+    # formulation, and the fitted curve is not flat: 12.92% at 2d down to 11.40%
+    # at 7d and back to 12.53% at 11d), it simply does not change the answer
+    # when the surface is rich enough to identify the shape parameters anyway.
     objective = cal.loss_shape if xi_curve else cal.loss
     if xi_curve:
         bounds = bounds[:3]
@@ -1299,11 +1318,14 @@ def main() -> None:
     p.add_argument("--xi-curve", action="store_true",
                    help="profile the forward variance out per expiry instead "
                         "of fitting one scalar. xi_0(t) is a CURVE in Bergomi's "
-                        "formulation; a scalar forces one ATM vol onto every "
-                        "maturity (measured live: ATM ran 9.18%% to 11.75%% "
-                        "across six SPY expiries). Leaves RMSE about the same "
-                        "but stops eta and H absorbing the level error, at "
-                        "roughly 10x the wall time.")
+                        "formulation, so this is the correct parameterisation, "
+                        "but measured on a well-conditioned live surface it "
+                        "changes nothing (H 0.104 -> 0.102, RMSE 1.553 -> 1.593 "
+                        "vp, both inside MC noise) for 14x the wall time. It "
+                        "earns its keep only when the scalar arm RAILS a "
+                        "parameter: on a poorer 6-expiry surface it moved eta "
+                        "off its bound (3.889 -> 2.141) and H from 0.339 to "
+                        "0.108. Reach for it as a diagnostic, not a default.")
     p.add_argument("--search-paths", type=int, default=8_000)
     p.add_argument("--polish-paths", type=int, default=None,
                    help="paths for the stage-3 re-polish (default: "
