@@ -1,22 +1,98 @@
 {
   "ticker": "SPY",
-  "as_of": "2026-07-09T03:43:16.965974-04:00",
-  "spot": 745.4000244140625,
-  "rate": 0.037230000495910645,
-  "eta": 2.1384,
-  "rho": -0.7387,
-  "H": 0.1172,
-  "xi": 0.032837,
-  "sqrt_xi": 0.1812,
-  "n_quotes": 72,
+  "as_of": "2026-08-10T12:17:27.143409-04:00",
+  "run_at": "2026-08-10T12:17:27.143409-04:00",
+  "session_date": null,
+  "snapshot_spread_min": null,
+  "spot": 773.72998046875,
+  "rate": 0.03720000028610229,
+  "rate_source": "^IRX",
+  "eta": 2.6882,
+  "rho": -0.3275,
+  "H": 0.1038,
+  "xi": 0.014521,
+  "sqrt_xi": 0.1205,
+  "xi_curve": null,
+  "n_quotes": 677,
+  "n_scored": 677,
+  "n_unpriceable": 1,
   "expiries": [
-    "2026-07-09",
-    "2026-07-10"
+    "2026-08-12",
+    "2026-08-13",
+    "2026-08-14",
+    "2026-08-17",
+    "2026-08-18",
+    "2026-08-19",
+    "2026-08-20",
+    "2026-08-21"
   ],
-  "iv_rmse_volpts": 1.969,
-  "search_paths": 8000,
-  "final_paths": 64000,
+  "forwards": {
+    "2026-08-12": {
+      "F": 774.4049,
+      "source": "parity",
+      "strike": 775.0,
+      "implied_carry": -0.110503
+    },
+    "2026-08-13": {
+      "F": 774.4398,
+      "source": "parity",
+      "strike": 775.0,
+      "implied_carry": -0.068903
+    },
+    "2026-08-14": {
+      "F": 774.6903,
+      "source": "parity",
+      "strike": 774.0,
+      "implied_carry": -0.071774
+    },
+    "2026-08-17": {
+      "F": 774.7405,
+      "source": "parity",
+      "strike": 774.0,
+      "implied_carry": -0.029389
+    },
+    "2026-08-18": {
+      "F": 774.8449,
+      "source": "parity",
+      "strike": 775.0,
+      "implied_carry": -0.02725
+    },
+    "2026-08-19": {
+      "F": 774.9099,
+      "source": "parity",
+      "strike": 775.0,
+      "implied_carry": -0.023557
+    },
+    "2026-08-20": {
+      "F": 774.996,
+      "source": "parity",
+      "strike": 774.0,
+      "implied_carry": -0.021568
+    },
+    "2026-08-21": {
+      "F": 775.258,
+      "source": "parity",
+      "strike": 755.0,
+      "implied_carry": -0.027359
+    }
+  },
+  "skipped_exdiv": [],
+  "ex_dividend_check": "ok",
+  "iv_rmse_volpts": 1.553,
+  "iv_rmse_volpts_priceable_only": 1.548,
   "objective": "vega-weighted price Huber (CRN)",
-  "quote_source": "last_trade_market_closed",
-  "accepted": true
+  "objective_value": 0.17686,
+  "objective_mc_sd": 0.531341,
+  "objective_noise_reps": 4,
+  "search_paths": 8000,
+  "polish_paths": 64000,
+  "final_paths": 64000,
+  "day_count": "ACT/365 calendar (surrogate trains on k/252 trading days \u2014 see the module docstring)",
+  "min_tau_hours": 34.8,
+  "quote_source": "live_mid",
+  "median_half_spread_iv_volpts": 0.0511,
+  "rmse_over_half_spread": 30.389,
+  "kernel": "riemann_liouville_volterra_joint_v1",
+  "accepted": true,
+  "reject_reasons": []
 }
