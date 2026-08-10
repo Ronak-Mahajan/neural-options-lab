@@ -11,7 +11,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        # 3.12 is the FLOOR, not a preference: requirements.txt pins
+        # numpy~=2.5.1, and every numpy 2.5.x requires Python >=3.12. The
+        # matrix used to list 3.10 as well, which meant that job failed at
+        # `pip install -r requirements.txt` on every commit since the pins
+        # landed — it never once reached pytest, so it was reporting an
+        # unsatisfiable config as a test failure and nothing was ever verified
+        # against 3.10. Raise this in step with the pins, not ahead of them.
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 
