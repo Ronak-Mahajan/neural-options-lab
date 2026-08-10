@@ -309,7 +309,7 @@ def test_quality_gate_accepts_a_good_fit():
 @pytest.mark.parametrize("bad,needle", [
     ({"rmse": 48.7}, "RMSE"),
     ({"stale": True}, "live book"),
-    ({"n_unpriceable": 3}, "unpriceable"),
+    ({"n_unpriceable": 60, "n_quotes": 385}, "no-arb"),
     ({"eta": 4.0}, "pinned"),
     ({"xi": 1e-9}, "pinned"),
 ])
@@ -477,3 +477,193 @@ def test_deribit_quotes_convert_into_calibrator_quotes():
     cal = Calibrator(rate=0.0, quotes=quotes, n_paths=200)
     assert len(cal.quotes) == len(quotes)
     assert len(cal.groups) >= 2
+
+
+# --------------------------------------------------------------------------- #
+#  rough_vol.py / calibrate.py — one simulation per smile, and on the GPU
+# --------------------------------------------------------------------------- #
+
+def test_strikes_on_one_smile_share_a_single_path_set():
+    """Strike does not affect the terminal distribution, so every contract
+    sharing (spot, T, xi, eta, rho, rate) must be priced against ONE sample.
+
+    Drawing an independent sample per strike injected noise into the smile
+    SHAPE, and shape is what identifies rho, eta and H. Sharing the sample
+    makes the call price monotone in the strike by construction.
+    """
+    from backend.quant.rough_vol import rough_bergomi_mc
+    n = 30
+    K = torch.linspace(730.0, 800.0, n)
+    kw = dict(n_paths=20_000, n_steps=50, H=0.16, seed=5)
+    p = rough_bergomi_mc(torch.full((n,), 771.0), K, torch.full((n,), 5 / 365),
+                         torch.full((n,), 0.11 ** 2), torch.full((n,), 3.4),
+                         torch.full((n,), -0.31), torch.full((n,), 0.037), **kw)
+    diffs = (p[1:] - p[:-1]).numpy()
+    assert (diffs <= 1e-6).all(), "call price must not rise with strike"
+
+
+def test_grouping_does_not_change_prices():
+    """Same seed, same dynamics: pricing a smile in one call must agree with
+    pricing each strike separately."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    n = 12
+    K = torch.linspace(740.0, 790.0, n)
+    kw = dict(n_paths=20_000, n_steps=50, H=0.16, seed=11)
+    def args(m):
+        return (torch.full((m,), 771.0), torch.full((m,), 5 / 365),
+                torch.full((m,), 0.11 ** 2), torch.full((m,), 3.4),
+                torch.full((m,), -0.31), torch.full((m,), 0.037))
+    s, T, xi, eta, rho, r = args(n)
+    grouped = rough_bergomi_mc(s, K, T, xi, eta, rho, r, **kw)
+    for i in range(n):
+        s1, T1, xi1, eta1, rho1, r1 = args(1)
+        one = rough_bergomi_mc(s1, K[i:i + 1], T1, xi1, eta1, rho1, r1, **kw)
+        assert abs(float(one[0]) - float(grouped[i])) < 1e-4
+
+
+def test_distinct_dynamics_are_not_merged():
+    """Grouping must key on the dynamics, not just the strike: different
+    maturities are different terminal distributions."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    p = rough_bergomi_mc(
+        torch.full((2,), 771.0), torch.tensor([771.0, 771.0]),
+        torch.tensor([5 / 365, 20 / 365]), torch.full((2,), 0.11 ** 2),
+        torch.full((2,), 3.4), torch.full((2,), -0.31),
+        torch.full((2,), 0.037), n_paths=20_000, n_steps=50, H=0.16, seed=3)
+    assert float(p[1]) > float(p[0]), "longer maturity must be worth more"
+
+
+def test_calibration_runs_on_the_gpu_when_one_is_available():
+    """Every tensor in model_prices used to be built without a device, so a fit
+    never left the CPU: 15.82 s per objective evaluation against roughly 0.09 s
+    of equivalent GPU work, and 2,788 s for one live SPY calibration."""
+    from backend.quant.calibrate import Calibrator
+    expected = "cuda" if torch.cuda.is_available() else "cpu"
+    assert Calibrator.device.type == expected
+
+
+def test_max_dte_default_admits_a_term_structure():
+    """H is identified by the term structure of the skew. The old default of 3
+    calendar days retained a SINGLE expiry after the tau floor, so the shipped
+    default could not identify one of the four parameters it fits — a live SPY
+    run said so in its own output and then reported an H anyway.
+
+    Reads the real default out of the module source rather than restating it.
+    """
+    import inspect
+    import re
+    from backend.quant import calibrate
+
+    src = inspect.getsource(calibrate.main)
+    m = re.search(r'"--max-dte",\s*type=int,\s*default=(\d+)', src)
+    assert m, "could not find the --max-dte default"
+    default = int(m.group(1))
+
+    # Weekly expiries, so anything under ~10 days risks a single surviving
+    # expiry once the 34.8h tau floor is applied.
+    assert default >= 14, f"--max-dte default {default} is too narrow for H"
+    # And it must stay inside the surrogate's trained ceiling of 12/252 yr,
+    # which is 12/252*365 = 17.38 calendar days.
+    assert default <= 12 * 365 / 252, (
+        f"--max-dte default {default} admits maturities the surrogate was "
+        f"never trained on")
+
+
+# --------------------------------------------------------------------------- #
+#  calibrate.py — xi is a curve, and the gate is not a coin flip
+# --------------------------------------------------------------------------- #
+
+def test_a_few_unpriceable_quotes_are_noise_not_a_failure():
+    """The gate used to fail on a single unpriceable quote. Holding the
+    parameters AND the quotes fixed and varying only the Monte Carlo path set
+    gave 1, 4 and 3 unpriceable at 64,000 paths and 1, 0 and 0 at 200,000 — so
+    a calibration passed or failed on the random draw, not on fit quality."""
+    from backend.quant.calibrate import quality_gate
+    ok = dict(rmse=1.0, eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
+              n_quotes=385, median_half_spread_iv=1.0)
+    accepted, reasons = quality_gate(n_unpriceable=4, **ok)
+    assert accepted, reasons
+    accepted, reasons = quality_gate(n_unpriceable=60, **ok)
+    assert not accepted
+    assert any("no-arb" in r for r in reasons), reasons
+
+
+def test_market_width_can_only_raise_the_rmse_ceiling_never_lower_it():
+    """A wide book earns a looser ceiling. A TIGHT book must not earn a
+    stricter one.
+
+    The first version of this criterion was symmetric — RMSE had to sit within
+    1.5x the median half-spread either way — and a live SPY run showed why that
+    is wrong. Across 677 two-sided quotes in 8 expiries the median half-spread
+    was 0.052 vol points, i.e. a 3-cent market on a $3.96 option, which is
+    simply how SPY quotes. The symmetric rule demanded a 4-parameter rough
+    Bergomi surface price every strike and expiry to within 0.078 vp and threw
+    out a 1.579 vp fit for being "32x the spread". The bid-ask measures the
+    market's EXECUTION resolution, not the resolution at which four parameters
+    can describe a surface.
+    """
+    from backend.quant.calibrate import quality_gate, MAX_RMSE_VOLPTS
+    base = dict(eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
+                n_unpriceable=0, n_quotes=385)
+
+    # Tight book (SPY): the absolute floor governs, the spread does not tighten.
+    ok, why = quality_gate(rmse=1.579, median_half_spread_iv=0.052, **base)
+    assert ok, why
+    # ...and the floor still bites on a genuinely bad fit in the same book.
+    bad, why = quality_gate(rmse=MAX_RMSE_VOLPTS + 0.5,
+                            median_half_spread_iv=0.052, **base)
+    assert not bad and any("RMSE" in r for r in why), why
+
+    # Wide book (crypto / single names): the ceiling rises above the floor.
+    wide, why = quality_gate(rmse=MAX_RMSE_VOLPTS + 1.0,
+                             median_half_spread_iv=4.0, **base)
+    assert wide, why
+    # But not without limit — 1.5 x 4.0 = 6.0 vp is still a ceiling.
+    too_wide, why = quality_gate(rmse=7.0, median_half_spread_iv=4.0, **base)
+    assert not too_wide and any("half-spread" in r for r in why), why
+
+
+def test_xi_accepts_a_curve_and_pins_each_expiry_to_its_own_atm():
+    """xi_0(t) is a forward variance CURVE. Flattening it to a scalar forces one
+    ATM vol onto every maturity: measured live, ATM ran 9.18% to 11.75% across
+    six SPY expiries, a 2.57 vol point term structure a single number cannot
+    represent, and H then absorbed the residual (0.072 to 0.350 across expiries).
+    """
+    from backend.quant.calibrate import Calibrator, Quote
+    quotes = []
+    for expiry, tau, atm_iv in (("A", 2 / 365, 0.09), ("B", 10 / 365, 0.12)):
+        for k in (0.97, 1.00, 1.03):
+            quotes.append(Quote(tau=tau, strike=770.0 * k, mid_call=5.0,
+                                iv=atm_iv, vega=60.0, kind="C", expiry=expiry,
+                                fwd_pv=770.0, half_spread_iv=0.5))
+    cal = Calibrator(rate=0.0, quotes=quotes, n_paths=4_000)
+    assert len(cal.groups) == 2
+
+    # A scalar must still work (back-compatible), and a per-group vector must
+    # produce DIFFERENT prices from a scalar that cannot match both expiries.
+    flat = cal.model_prices(2.0, -0.4, 0.12, 0.01)
+    curve = cal.model_prices(2.0, -0.4, 0.12, np.array([0.008, 0.016]))
+    assert flat.shape == curve.shape == (len(quotes),)
+    assert not np.allclose(flat, curve)
+
+    with pytest.raises(ValueError, match="expiry groups"):
+        cal.model_prices(2.0, -0.4, 0.12, np.array([0.01, 0.01, 0.01]))
+
+
+def test_solve_xi_recovers_a_rising_forward_variance_curve():
+    """Given a rising ATM term structure, the profiled xi must rise with it."""
+    from backend.quant.calibrate import Calibrator, Quote, bs_call
+    F, rate = 770.0, 0.0
+    quotes = []
+    for expiry, tau, iv in (("A", 3 / 365, 0.09), ("B", 12 / 365, 0.13)):
+        for k in (0.98, 1.00, 1.02):
+            K = F * k
+            quotes.append(Quote(tau=tau, strike=K,
+                                mid_call=bs_call(F, K, tau, iv, rate), iv=iv,
+                                vega=60.0, kind="C", expiry=expiry, fwd_pv=F,
+                                half_spread_iv=0.5))
+    cal = Calibrator(rate=rate, quotes=quotes, n_paths=20_000)
+    xi = cal.solve_xi(1.5, -0.3, 0.12, n_paths=20_000, seed=3, iters=14)
+    assert xi.shape == (2,)
+    assert xi[1] > xi[0], f"forward variance must rise: {xi}"
+    assert 0.05 ** 2 < xi[0] < 1.2 ** 2

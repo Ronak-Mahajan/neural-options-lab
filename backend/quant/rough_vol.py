@@ -195,10 +195,28 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
     if seed is not None:
         gen = torch.Generator(device=device).manual_seed(seed)
 
+    # Group by the parameters that determine the TERMINAL DISTRIBUTION. Strike
+    # is not one of them: every contract sharing (spot, T, xi, eta, rho, rate)
+    # is priced against the same S_T and differs only in where the payoff is
+    # struck. This used to loop per contract, drawing an independent path set
+    # for every strike on a smile.
+    #
+    # Two consequences, both bad. Cost: a calibration objective over 439 quotes
+    # in 6 expiries ran 439 simulations where 6 suffice, which measured at
+    # 15.82 s per objective evaluation and 2,788 s for a single live SPY fit.
+    # Accuracy: independent draws per strike inject noise into the SMILE SHAPE,
+    # and shape is exactly what identifies rho and eta. Sharing one sample
+    # across a smile makes it monotone in the strike by construction, which is
+    # the common-random-numbers argument applied where it actually matters.
+    groups: dict[tuple, list[int]] = {}
     for b in range(B):
-        T = maturity[b].item()
+        key = (float(spot[b]), float(maturity[b]), float(xi[b]),
+               float(eta[b]), float(rho[b]), float(rate[b]))
+        groups.setdefault(key, []).append(b)
+
+    for (spot_g, T, xi_g, eta_g, rho_g, rate_g), members in groups.items():
         dt = T / n_steps
-        
+
         # Joint exact simulation of the driving increments and the Volterra
         # process. The factor is cached on (n_steps, H) and dimensionless, so
         # the 100x100 factorisation is built once rather than per batch element.
@@ -212,9 +230,9 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         # Volatility process (Rough Bergomi)
         t = torch.arange(1, n_steps + 1, dtype=torch.float32, device=device) * dt
         t_2H = t ** (2 * H)
-        eta_b = eta[b]
-        
-        V = xi[b] * torch.exp(eta_b * W_tilde - 0.5 * (eta_b ** 2) * t_2H)
+        eta_b = eta_g
+
+        V = xi_g * torch.exp(eta_b * W_tilde - 0.5 * (eta_b ** 2) * t_2H)
 
         # Left-point (predictable) variance: the variance applied over step i
         # must not contain step i's own innovation. Using the right-endpoint
@@ -223,24 +241,26 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         # longer offsets E[exp(sqrt(V) dW)]), which collapses prices at
         # negative correlation. This is the discrete analogue of the Ito
         # integral being left-point by construction.
-        V = torch.cat([xi[b].expand(n_paths, 1), V[:, :-1]], dim=1)
+        V = torch.cat([torch.full((n_paths, 1), xi_g, device=device),
+                       V[:, :-1]], dim=1)
 
         # Standard driving normals for the spot process (correlated with Z_vol)
         Z_indep = torch.randn(n_paths, n_steps, device=device, generator=gen)
-        Z_spot = rho[b] * Z_vol + math.sqrt(1 - rho[b].item()**2) * Z_indep
+        Z_spot = rho_g * Z_vol + math.sqrt(1 - rho_g ** 2) * Z_indep
         dW_spot = Z_spot * math.sqrt(dt)
-        
+
         # Euler scheme for the log spot process
-        integral_drift = torch.sum((rate[b] - 0.5 * V) * dt, dim=1)
+        integral_drift = torch.sum((rate_g - 0.5 * V) * dt, dim=1)
         integral_vol = torch.sum(torch.sqrt(V) * dW_spot, dim=1)
-        
-        S_T = spot[b] * torch.exp(integral_drift + integral_vol)
-        
-        # European Call Payoff
-        payoff = torch.clamp(S_T - strike[b], min=0.0)
-        disc = math.exp(-rate[b].item() * T)
-        prices[b] = payoff.mean() * disc
-        std_errors[b] = payoff.std() * disc / math.sqrt(n_paths)
+
+        S_T = spot_g * torch.exp(integral_drift + integral_vol)
+        disc = math.exp(-rate_g * T)
+
+        # Every strike in this group is evaluated against the SAME S_T sample.
+        for b in members:
+            payoff = torch.clamp(S_T - strike[b], min=0.0)
+            prices[b] = payoff.mean() * disc
+            std_errors[b] = payoff.std() * disc / math.sqrt(n_paths)
 
     if return_std_error:
         return prices, std_errors
