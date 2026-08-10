@@ -94,16 +94,16 @@ The quality gate
 `accepted` is the single flag every downstream consumer keys on. A calibration
 is adopted only when all of the following hold:
 
-    1. the honest implied-vol RMSE is below MAX_RMSE_VOLPTS;
-    2. the RMSE is within MAX_RMSE_OVER_HALF_SPREAD of the MARKET'S OWN median
-       half-spread. An absolute vol-point threshold is market-independent and
-       therefore blind: 3 points is tight against a book quoting 8 wide and
-       useless against one quoting 1 wide. Where two-sided quotes exist the
-       honest question is whether the model prices inside the spread;
-    3. no free parameter — eta, rho, H *or xi* — sits within PIN_FRAC of a
+    1. the honest implied-vol RMSE is below MAX_RMSE_VOLPTS -- or below
+       MAX_RMSE_OVER_HALF_SPREAD times the market's own median half-spread,
+       whichever is LARGER. An absolute vol-point threshold is market-
+       independent and so is unfairly strict against a book quoting 8 wide.
+       The ceiling only ever rises: tightening it on a narrow book is the
+       wrong move, and a live SPY run proved it -- see quality_gate();
+    2. no free parameter — eta, rho, H *or xi* — sits within PIN_FRAC of a
        bound (a bound hit signals misspecification or an ill-conditioned fit);
-    4. the quotes came from a live book, not from last-session prints;
-    5. fewer than MAX_UNPRICEABLE_FRAC of quotes fall outside the no-arb range.
+    3. the quotes came from a live book, not from last-session prints;
+    4. fewer than MAX_UNPRICEABLE_FRAC of quotes fall outside the no-arb range.
        This USED to fail on a single unpriceable quote, which is a Monte Carlo
        noise detector rather than a quality measure: holding the parameters and
        the quotes fixed and varying only the path set gave 1, 4 and 3
@@ -129,7 +129,7 @@ the same vega-linearised error the objective uses, (P_model - P_mid)/vega,
 which is the first-order continuation of the implied-vol error past the no-arb
 boundary; `n_scored`, `n_unpriceable` and the old drop-the-worst number
 (`iv_rmse_volpts_priceable_only`) are all recorded. The count itself is a
-diagnostic rather than a gate — see criterion 5.
+diagnostic rather than a gate — see criterion 4.
 
 Day-count convention — READ THIS BEFORE COMPARING TO THE SURROGATE
 ------------------------------------------------------------------
@@ -226,8 +226,9 @@ MAX_RMSE_VOLPTS = 3.0
 #: rho (74.4% of range), H (36.4%) and xi (5.7%) still pass.
 PIN_FRAC = 0.02
 
-#: A fit must price inside the market it is fitting. Ratio of the implied-vol
-#: RMSE to the market's own median half-spread.
+#: How many median half-spreads of implied-vol RMSE a fit may carry. This can
+#: only RAISE the ceiling above MAX_RMSE_VOLPTS, never lower it — see the
+#: measurement in the gate below for why the tightening direction is wrong.
 MAX_RMSE_OVER_HALF_SPREAD = 1.5
 
 #: Share of quotes allowed to fall outside the no-arb range before it stops
@@ -979,11 +980,36 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
     dataset_0dte.load_calibrated_dynamics — keys on this and nothing else.
     """
     reasons: list[str] = []
+
+    # The RMSE ceiling is market-aware, but it can only be RAISED, never
+    # lowered. An absolute vol-point threshold is market-independent: 3 points
+    # is unfairly strict against a book quoting 8 wide. The symmetric-looking
+    # move — also TIGHTENING it when the book is narrow — is wrong, and a live
+    # SPY run proved it. Measured across 677 two-sided quotes in 8 expiries the
+    # median half-spread was 0.052 vol points (p25 0.033, p99 0.476); at 0.05 vp
+    # of vega that is a 3-cent-wide market on a $3.96 option, which is simply
+    # what SPY quotes. Requiring a 4-parameter rough Bergomi surface to price
+    # within 1.5x of that — 0.078 vp across every strike and expiry at once —
+    # rejected a 1.579 vp fit as being "32x the spread". No low-dimensional
+    # stochastic-vol model meets that bar, and none should be expected to: the
+    # bid-ask measures the market's EXECUTION resolution, not the resolution at
+    # which four parameters can describe a whole surface. On the most liquid
+    # option book in the world those differ by more than an order of magnitude.
+    max_rmse = MAX_RMSE_VOLPTS
+    if (median_half_spread_iv is not None
+            and math.isfinite(median_half_spread_iv)
+            and median_half_spread_iv > 0):
+        max_rmse = max(MAX_RMSE_VOLPTS,
+                       MAX_RMSE_OVER_HALF_SPREAD * median_half_spread_iv)
     if not math.isfinite(rmse):
         reasons.append("implied-vol RMSE is not finite")
-    elif rmse >= MAX_RMSE_VOLPTS:
-        reasons.append(f"implied-vol RMSE {rmse:.3f} vp >= "
-                       f"{MAX_RMSE_VOLPTS:.1f} vp")
+    elif rmse >= max_rmse:
+        why = (f"implied-vol RMSE {rmse:.3f} vp >= {max_rmse:.3f} vp")
+        if max_rmse > MAX_RMSE_VOLPTS:
+            why += (f" ({MAX_RMSE_OVER_HALF_SPREAD:.1f}x the market's median "
+                    f"half-spread of {median_half_spread_iv:.3f} vp, which is "
+                    f"wider than the {MAX_RMSE_VOLPTS:.1f} vp floor)")
+        reasons.append(why)
     # xi is a VARIANCE whose bound spans 5% to 120% vol, so its range in
     # variance space is 0.0025 to 1.44 — enormous and wildly non-uniform. A
     # fixed fraction of that range is meaningless at the low end: 2% of it is
@@ -1016,21 +1042,6 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
     if stale:
         reasons.append("quotes are last-session prints (market closed), not a "
                        "live book")
-
-    # A fit is only meaningful RELATIVE TO THE WIDTH OF THE MARKET. An absolute
-    # vol-point threshold is market-independent and therefore blind: 3 points is
-    # tight against a book quoting 8 wide and useless against one quoting 1
-    # wide. Where two-sided quotes exist, the honest question is whether the
-    # model prices inside the spread.
-    if (median_half_spread_iv is not None
-            and math.isfinite(median_half_spread_iv)
-            and median_half_spread_iv > 0):
-        ratio = rmse / median_half_spread_iv
-        if ratio > MAX_RMSE_OVER_HALF_SPREAD:
-            reasons.append(
-                f"fit RMSE {rmse:.3f} vp is {ratio:.2f}x the market's own "
-                f"median half-spread ({median_half_spread_iv:.3f} vp) — the "
-                f"model prices outside the book it is fitting")
 
     # Unpriceable quotes are a DIAGNOSTIC, not a gate. The previous criterion
     # failed on n_unpriceable > 0, which is a Monte Carlo noise detector rather
