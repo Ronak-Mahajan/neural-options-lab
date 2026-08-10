@@ -1110,30 +1110,44 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
     # (eta, rho, H) it is solved exactly against every expiry's ATM quote, so
     # the optimizer searches a 3-parameter SHAPE problem.
     #
-    # WHEN THIS IS WORTH 14x THE WALL TIME — and when it is not. Two live SPY
-    # surfaces, same code, opposite verdicts:
+    # WHAT IT ACTUALLY BUYS. Measured PAIRED — both arms run end to end against
+    # ONE snapshot (679 quotes, 8 expiries, 2-11 days), reported at 200,000
+    # paths. Earlier comparisons here used two snapshots minutes apart at 64,000
+    # paths, where the objective's own noise floor (+-0.5) exceeded the effect,
+    # and I twice drew a conclusion the data could not support.
     #
-    #   6 expiries, 385 quotes, RMSE ~4.4 vp (a poorly conditioned surface)
-    #     scalar  eta 3.889  rho -0.629  H 0.3394   RMSE 4.353
-    #     curve   eta 2.141  rho -0.362  H 0.1080   RMSE 4.444
-    #   8 expiries, 677 quotes, RMSE ~1.6 vp (a well conditioned one)
-    #     scalar  eta 2.688  rho -0.328  H 0.1038   RMSE 1.553   101s
-    #     curve   eta 2.406  rho -0.326  H 0.1020   RMSE 1.593  1442s
+    #                       objective (minimised)   IV RMSE (gated)   wall
+    #     scalar xi                       0.1633           1.239 vp    96s
+    #     xi curve                        0.0926           1.283 vp  1547s
     #
-    # On the first, the scalar fit railed eta at 96.8% of its [0.5, 4.0] range
-    # and H ran to 0.339; profiling xi out moved both to sane values, and I
-    # concluded the curve fixes identification. It does not, in general. On the
-    # second surface the SCALAR fit already finds H = 0.104 on its own and the
-    # two arms agree to within the objective's own MC noise (+-0.59), so there
-    # is nothing left for the curve to fix. What actually mattered was the
-    # surface: 8 expiries and 677 quotes identify H, 6 and 385 did not.
+    # The two metrics DISAGREE, and the disagreement is the finding. Splitting
+    # the residual by size explains it:
     #
-    # So this is a diagnostic for an ILL-CONDITIONED fit — reach for it when the
-    # scalar arm rails a parameter — not a default. Hence off by default. The
-    # parameterization is still the correct one (xi_0(t) IS a curve in Bergomi's
-    # formulation, and the fitted curve is not flat: 12.92% at 2d down to 11.40%
-    # at 7d and back to 12.53% at 11d), it simply does not change the answer
-    # when the surface is rich enough to identify the shape parameters anyway.
+    #     median |err|   0.552 -> 0.335 vp   (-39%)
+    #     p75  |err|     0.954 -> 0.864 vp   ( -9%)
+    #     p90  |err|     1.787 -> 1.993 vp   (+12%)
+    #     RMSE           1.125 -> 1.159 vp   ( +3%)
+    #
+    # The curve fits the TYPICAL quote much better and gives a little back in
+    # the extreme tail. The search minimises a Huber loss that goes linear past
+    # HUBER_DELTA = 2 vol points, so it sees the body and rewards the curve by
+    # 43%; the gate scores RMSE, which squares, so it is tail-dominated and
+    # reads the same change as a 3% loss.
+    #
+    # The mechanism is a SHORT-MATURITY LEVEL bias that one scalar xi cannot
+    # avoid. At matched standardised moneyness the <=4 day expiries sat below
+    # the rest in every band (-0.44 to -1.29 vp); uniform across the smile means
+    # level, not skew, and one forward variance cannot give the 2-4 day expiries
+    # more variance than the 7-11 day ones. Holding (eta, rho, H) fixed and
+    # swapping only xi cut the 4-day expiry's mean error from -1.69 to -0.57 vp.
+    # See scripts/fit_diagnostics.py, which reproduces all of this.
+    #
+    # Off by default because the GATE scores RMSE, by which this is a wash at
+    # 16x the wall time. Turn it on when the short end matters more than the
+    # wings, or when the scalar arm rails a parameter. What it does NOT fix is
+    # the far-left-tail skew failure: at 2-3 sigma into the put wing the model
+    # sits ~2.1 vp below the market at EVERY maturity, and that is genuine
+    # misspecification of single-factor rough Bergomi, still open.
     objective = cal.loss_shape if xi_curve else cal.loss
     if xi_curve:
         bounds = bounds[:3]
@@ -1318,14 +1332,17 @@ def main() -> None:
     p.add_argument("--xi-curve", action="store_true",
                    help="profile the forward variance out per expiry instead "
                         "of fitting one scalar. xi_0(t) is a CURVE in Bergomi's "
-                        "formulation, so this is the correct parameterisation, "
-                        "but measured on a well-conditioned live surface it "
-                        "changes nothing (H 0.104 -> 0.102, RMSE 1.553 -> 1.593 "
-                        "vp, both inside MC noise) for 14x the wall time. It "
-                        "earns its keep only when the scalar arm RAILS a "
-                        "parameter: on a poorer 6-expiry surface it moved eta "
-                        "off its bound (3.889 -> 2.141) and H from 0.339 to "
-                        "0.108. Reach for it as a diagnostic, not a default.")
+                        "formulation, and one number cannot give the 2-4 day "
+                        "expiries more variance than the 7-11 day ones, so the "
+                        "short end sits low as a whole. Measured paired on one "
+                        "snapshot: it cuts the MEDIAN quote error 39% (0.55 -> "
+                        "0.34 vp) and the search objective 43%, while costing "
+                        "12% at p90 and 3% on RMSE -- it fits the typical quote "
+                        "better and the extreme tail slightly worse. Off by "
+                        "default because the gate scores RMSE, which squares "
+                        "and so is tail-dominated, and this costs 16x the wall "
+                        "time. Turn it on when the short end matters more than "
+                        "the wings.")
     p.add_argument("--search-paths", type=int, default=8_000)
     p.add_argument("--polish-paths", type=int, default=None,
                    help="paths for the stage-3 re-polish (default: "
