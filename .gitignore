@@ -49,3 +49,12 @@ _*.log
 diagnose*.py
 artifacts/dataset_gpu_*.npz
 artifacts/ablation_probe.json
+
+# Personal documents. This repository is PUBLIC. A resume with a phone number
+# and address lived untracked in the working tree for four days, one `git add
+# -A` away from being pushed -- and `git add -A` did get run here once, sweeping
+# in unrelated files that had to be unpicked with a soft reset. Keep personal
+# documents out of the directory entirely; this is only the backstop.
+*resume*
+*cv.pdf
+*.tex
