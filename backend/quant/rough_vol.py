@@ -171,6 +171,7 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
                      xi: torch.Tensor, eta: torch.Tensor, rho: torch.Tensor, rate: torch.Tensor,
                      n_paths: int = 50000, n_steps: int = 50, H: float = 0.1,
                      seed: int | None = None,
+                     jumps: tuple[float, float, float] | None = None,
                      return_std_error: bool = False):
     """Prices European Call options using the Rough Bergomi model.
     
@@ -183,6 +184,24 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         n_paths: number of MC paths per contract
         n_steps: number of time steps (high resolution for intraday)
         H: Hurst parameter (H < 0.5 is rough, typically ~0.1 in markets)
+        jumps: optional (lam, mu_j, sig_j) adding lognormal (Merton) jumps to
+            the spot: N_T ~ Poisson(lam*T) jumps over the horizon, each with
+            log-size ~ Normal(mu_j, sig_j^2), drift-compensated by
+            -lam*(e^{mu_j+sig_j^2/2}-1)*T so E[S_T] is unchanged EXACTLY.
+            None (the default) draws nothing extra, so seeded results are
+            bit-identical to the pure-diffusion model — and because the jump
+            draws happen after the diffusion draws, two calls with the same
+            seed and different jump parameters share the SAME diffusion
+            sample (common random numbers across the jump axis).
+
+            Why jumps at all: measured on live SPY (fit_diagnostics), the
+            diffusive model sits ~2.1 vol points BELOW the market at 2-3
+            sigma into the put wing at EVERY maturity. At 2-11 days a
+            continuous-path model cannot make the left tail fat enough,
+            because crash risk does not scale with sqrt(tau). Jumps are the
+            standard mechanism, and only S_T matters for a European payoff,
+            so their placement within the horizon is irrelevant — one
+            compensated Poisson draw per path is exact, not a scheme.
         
     Returns:
         prices: (B,) tensor of European call prices
@@ -254,6 +273,16 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         integral_vol = torch.sum(torch.sqrt(V) * dW_spot, dim=1)
 
         S_T = spot_g * torch.exp(integral_drift + integral_vol)
+        if jumps is not None:
+            lam, mu_j, sig_j = (float(v) for v in jumps)
+            if lam > 0.0:
+                n_jumps = torch.poisson(
+                    torch.full((n_paths,), lam * T, device=device),
+                    generator=gen)
+                eps_j = torch.randn(n_paths, device=device, generator=gen)
+                total_j = n_jumps * mu_j + torch.sqrt(n_jumps) * sig_j * eps_j
+                kappa_bar = math.exp(mu_j + 0.5 * sig_j ** 2) - 1.0
+                S_T = S_T * torch.exp(total_j - lam * kappa_bar * T)
         disc = math.exp(-rate_g * T)
 
         # Every strike in this group is evaluated against the SAME S_T sample.
