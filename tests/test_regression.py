@@ -442,17 +442,33 @@ def test_pin_tolerance_is_wide_enough_to_actually_fire():
     assert PIN_FRAC >= 0.01
 
 
-def test_fit_quality_is_judged_against_the_market_width():
-    """An absolute vol-point threshold is market-independent and therefore
-    blind: 3 vol points is tight against a market quoting 8 wide and useless
-    against one quoting 1 wide. Deribit publishes two-sided books, so the
-    honest question is whether the model prices INSIDE the spread.
+def test_deribit_gate_is_the_shared_gate_not_a_divergent_copy():
+    """calibrate_deribit.py used to carry its OWN symmetric market-width rule
+    while calibrate.py's gate had been corrected to one-directional (the
+    ceiling is max(3 vp, 1.5x median half-spread); a tight book cannot lower
+    it). Two gates with different semantics for the same question is how the
+    same bug gets fixed once and shipped twice.
+
+    Semantic change, stated rather than hidden: the historic BTC fit
+    (2.812 vp RMSE against a ~1 vp median half-spread) was rejected by the old
+    local rule as "2.9x outside the spread" and is ACCEPTED by the unified
+    gate, because 2.812 is under the 3.0 vp absolute floor. That is the
+    deliberate trade adopted on live SPY data: the bid-ask measures the
+    market's execution resolution, not the resolution at which four
+    parameters can describe a whole surface, so a narrow book must not
+    tighten the ceiling below what a low-dimensional model can ever meet.
     """
-    from backend.quant.calibrate_deribit import MAX_RMSE_OVER_HALF_SPREAD
-    assert 1.0 <= MAX_RMSE_OVER_HALF_SPREAD <= 3.0
-    # The measured BTC fit: 2.812 vp RMSE against a 0.976 vp median
-    # half-spread on the fitted quotes.
-    assert 2.812 / 0.976 > MAX_RMSE_OVER_HALF_SPREAD
+    from backend.quant.calibrate import quality_gate
+    base = dict(eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
+                n_unpriceable=0, n_quotes=300)
+    ok, why = quality_gate(rmse=2.812, median_half_spread_iv=0.976, **base)
+    assert ok, why
+    # The absolute floor still bites on the same book...
+    bad, why = quality_gate(rmse=3.2, median_half_spread_iv=0.976, **base)
+    assert not bad
+    # ...and a genuinely wide crypto book raises the ceiling above the floor.
+    wide, why = quality_gate(rmse=4.5, median_half_spread_iv=4.0, **base)
+    assert wide, why
 
 
 def test_deribit_quotes_convert_into_calibrator_quotes():
@@ -667,3 +683,70 @@ def test_solve_xi_recovers_a_rising_forward_variance_curve():
     assert xi.shape == (2,)
     assert xi[1] > xi[0], f"forward variance must rise: {xi}"
     assert 0.05 ** 2 < xi[0] < 1.2 ** 2
+
+
+def test_load_calibrated_dynamics_is_market_aware(tmp_path, monkeypatch):
+    """A passing BTC fit could never be adopted: calibrate_deribit.py writes
+    rough_calibration_btc.json, but the loader read only the SPY file. The
+    plumbing existed end to end EXCEPT the last join."""
+    import json
+    from backend.quant import dataset_0dte as d
+    monkeypatch.setattr(d, "ARTIFACTS", tmp_path)
+    btc = dict(accepted=True, eta=2.4, rho=-0.5, H=0.09, kernel=d.KERNEL_ID,
+               quote_source="live_two_sided_book", market="BTC-DERIBIT")
+    (tmp_path / "rough_calibration_btc.json").write_text(json.dumps(btc))
+
+    # BTC is adopted from its own file...
+    assert d.load_calibrated_dynamics("BTC") == {"eta": 2.4, "rho": -0.5,
+                                                 "H": 0.09}
+    # ...the SPY default is NOT cross-contaminated by it...
+    assert d.load_calibrated_dynamics() == {"eta": 1.5, "rho": -0.7, "H": 0.1}
+    # ...and a typo'd market fails loudly instead of silently defaulting.
+    with pytest.raises(ValueError, match="unknown market"):
+        d.load_calibrated_dynamics("DOGE")
+
+
+# --------------------------------------------------------------------------- #
+#  rough_vol.py — compensated Merton jumps (the left-tail hypothesis)
+# --------------------------------------------------------------------------- #
+
+def test_jumps_off_is_bit_identical():
+    """jumps=None must not consume generator state: any extra draw would
+    silently change every seeded result in the project."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    t = lambda v: torch.tensor([float(v)])
+    args = (t(770.0), t(770.0), t(4 / 365), t(0.011), t(2.69), t(-0.33),
+            t(0.037))
+    a = rough_bergomi_mc(*args, n_paths=5_000, seed=7)
+    b = rough_bergomi_mc(*args, n_paths=5_000, seed=7, jumps=None)
+    assert torch.equal(a, b)
+
+
+def test_jumps_preserve_the_martingale_exactly():
+    """The compensator -lam*(e^{mu+sig^2/2}-1)*T must hold E[S_T] fixed. A
+    call struck at 0 IS disc*E[S_T] = spot, so it checks the drift directly."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    t = lambda v: torch.tensor([float(v)])
+    args = (t(770.0), t(0.0), t(4 / 365), t(0.011), t(2.69), t(-0.33),
+            t(0.037))
+    c0, se = rough_bergomi_mc(*args, n_paths=200_000, seed=11,
+                              jumps=(25.0, -0.02, 0.03),
+                              return_std_error=True)
+    assert abs(float(c0) - 770.0) < 4.0 * float(se), (
+        f"disc*E[S_T] = {float(c0):.4f} vs 770, SE {float(se):.4f}")
+
+
+def test_jumps_fatten_the_left_tail():
+    """The reason they exist: at 4 days the diffusive model prices a K/F=0.94
+    put at ~half a cent while the market carries real premium there (the
+    measured -2.1 vp wing bias). Jumps must move that put materially."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    t = lambda v: torch.tensor([float(v)])
+    K = 0.94 * 770
+    args = (t(770.0), t(K), t(4 / 365), t(0.011), t(2.69), t(-0.33), t(0.037))
+    disc = math.exp(-0.037 * 4 / 365)
+    put = lambda c: float(c) - (770 - K * disc)
+    p_nj = put(rough_bergomi_mc(*args, n_paths=100_000, seed=11))
+    p_j = put(rough_bergomi_mc(*args, n_paths=100_000, seed=11,
+                               jumps=(25.0, -0.02, 0.03)))
+    assert p_j > 3.0 * max(p_nj, 1e-4), f"{p_nj:.5f} -> {p_j:.5f}"

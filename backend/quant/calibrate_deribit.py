@@ -92,12 +92,11 @@ ETA_MAX_BTC = 8.0
 #: calibrate.MAX_RMSE_VOLPTS is an absolute 3.0 vol points, which is
 #: market-independent and therefore blind: 3 vol points is a tight fit to a
 #: market quoting 8 points wide and a bad one to a market quoting 1 point wide.
-#: Deribit publishes two-sided books, so the market's own half-spread is
-#: observable and the honest question is whether the model prices INSIDE it.
-#: Measured on the first accepted BTC fit: RMSE 2.812 vp against a median
-#: half-spread of 1.063 vp on the fitted quotes, i.e. 2.65x outside the market.
-#: That fit passed the absolute threshold and should not have.
-MAX_RMSE_OVER_HALF_SPREAD = 1.5
+# The market-width criterion lives inside calibrate.quality_gate now (see the
+# call in main()), and it is one-directional: the wide crypto book RAISES the
+# RMSE ceiling above the 3 vp floor, a tight book cannot lower it. A local
+# symmetric copy used to live here; it was the same mistake the shared gate
+# corrected against live SPY data, kept alive in a second place.
 
 
 def quotes_from_surface(surface) -> tuple[list[Quote], dict]:
@@ -263,19 +262,20 @@ def main() -> int:
 
     # The shared gate keys eta on calibrate.BOUNDS; this path widened it, so
     # check eta against the bound actually used and let the gate handle the rest.
+    # The spread criterion lives INSIDE the shared gate now, and it is
+    # one-directional: the ceiling is max(3 vp, 1.5x median half-spread), so a
+    # wide crypto book loosens it and a tight book cannot tighten it. This
+    # call site used to re-implement the criterion symmetrically -- the exact
+    # mistake the main gate corrected on live SPY data -- and it also passed
+    # no n_quotes, which silently disabled the unpriceable-fraction check
+    # (the gate skips it when n_quotes is 0).
+    half_spread = drops.get("median_iv_spread_volpts", float("nan")) / 2.0
     accepted, reasons = quality_gate(
         rmse=r["rmse"], eta=2.0, rho=r["rho"], H=r["H"], xi=r["xi"],
         stale=False,                      # Deribit books are live 24/7
-        n_unpriceable=r["n_unpriceable"])
-    half_spread = drops.get("median_iv_spread_volpts", float("nan")) / 2.0
-    if math.isfinite(half_spread) and half_spread > 0:
-        ratio = r["rmse"] / half_spread
-        if ratio > MAX_RMSE_OVER_HALF_SPREAD:
-            accepted = False
-            reasons = list(reasons) + [
-                f"fit RMSE {r['rmse']:.3f} vp is {ratio:.2f}x the market's own "
-                f"median half-spread ({half_spread:.3f} vp) — the model prices "
-                f"outside the book it is fitting"]
+        n_unpriceable=r["n_unpriceable"], n_quotes=len(quotes),
+        median_half_spread_iv=(half_spread if math.isfinite(half_spread)
+                               and half_spread > 0 else None))
 
     lo_e, hi_e = r["eta_bounds"]
     tol_e = PIN_FRAC * (hi_e - lo_e)

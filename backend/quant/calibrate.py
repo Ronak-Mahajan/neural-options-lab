@@ -800,6 +800,7 @@ class Calibrator:
         self.n_paths = n_paths
         self.seed = seed
         self.n_evals = 0
+        self.jumps: tuple[float, float, float] | None = None
         # group quotes by expiry so each MC call shares one maturity, and store
         # the quotes in that grouped order so model_prices() and self.quotes
         # cannot fall out of alignment
@@ -845,7 +846,13 @@ class Calibrator:
                 torch.full((b,), rho, device=dev),
                 torch.full((b,), self.rate, device=dev),
                 n_paths=n_paths or self.n_paths, n_steps=50, H=H,
-                seed=self.seed if seed is None else seed)
+                seed=self.seed if seed is None else seed,
+                # None for the production diffusive model. scripts/fit_jumps.py
+                # sets this to (lam, mu_j, sig_j) to measure whether Merton
+                # jumps close the left-tail bias fit_diagnostics located; a
+                # jump fit is a DIFFERENT driver and must never be adopted by
+                # the jump-free surrogate, which the kernel stamp enforces.
+                jumps=self.jumps)
             out.append(prices.cpu().numpy())
         return np.concatenate(out)
 
