@@ -23,8 +23,17 @@ ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
 KERNEL_ID = "riemann_liouville_volterra_joint_v1"
 
 
-def load_calibrated_dynamics() -> dict:
-    """Calibrated rough-vol dynamics from calibrate.py, if they are USABLE.
+#: One calibration artifact per market. SPY comes from calibrate.py
+#: (yfinance, delayed, subject to the staleness gate); BTC from
+#: calibrate_deribit.py (live two-sided books, 24/7, so staleness cannot
+#: occur). Adopting a market is an explicit choice by the caller -- the two
+#: fits describe DIFFERENT underlyings and are not interchangeable.
+CAL_FILES = {"SPY": "rough_calibration.json",
+             "BTC": "rough_calibration_btc.json"}
+
+
+def load_calibrated_dynamics(market: str = "SPY") -> dict:
+    """Calibrated rough-vol dynamics for `market`, if they are USABLE.
 
     Three ways a calibration is rejected, all of which the previous version
     accepted:
@@ -41,7 +50,11 @@ def load_calibrated_dynamics() -> dict:
     3. Not accepted by calibrate.py's own gate.
     """
     import json
-    cal_file = ARTIFACTS / "rough_calibration.json"
+    try:
+        cal_file = ARTIFACTS / CAL_FILES[market.upper()]
+    except KeyError:
+        raise ValueError(f"unknown market {market!r}; one of "
+                         f"{sorted(CAL_FILES)}") from None
     defaults = {"eta": 1.5, "rho": -0.7, "H": 0.1}
     if not cal_file.exists():
         return defaults
@@ -133,4 +146,10 @@ def generate_0dte_dataset(n_samples: int = 25000, batch_size: int = 5000, seed: 
 
 
 if __name__ == "__main__":
-    generate_0dte_dataset(**load_calibrated_dynamics())
+    import argparse
+    _p = argparse.ArgumentParser()
+    _p.add_argument("--market", default="SPY", choices=sorted(CAL_FILES),
+                    help="which market's accepted calibration to adopt "
+                         "(default SPY). BTC comes from calibrate_deribit.py "
+                         "and is never stale -- Deribit books are live 24/7.")
+    generate_0dte_dataset(**load_calibrated_dynamics(_p.parse_args().market))
