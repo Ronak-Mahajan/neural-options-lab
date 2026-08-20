@@ -58,3 +58,6 @@ artifacts/ablation_probe.json
 *resume*
 *cv.pdf
 *.tex
+
+# Recorded market surfaces: grows without bound, never belongs in history.
+data/
