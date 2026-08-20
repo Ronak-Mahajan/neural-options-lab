@@ -12,6 +12,7 @@ pricer's recipe.
 Usage:  python -m backend.quant.train_0dte --ensemble 5 --epochs 500
 """
 import argparse
+import json
 import math
 import time
 from pathlib import Path
@@ -53,6 +54,31 @@ def main():
     # older datasets predate this field and used the historical defaults
     dyn = ds.get("params", {"eta": 1.5, "rho": -0.7, "H": 0.1})
     print(f"dataset dynamics: {dyn}")
+
+    # Whether these dynamics came from a market calibration is a FACT ABOUT THE
+    # DATASET, so read it from the calibration the same way dataset_0dte did,
+    # and check the parameters actually match. The alternative — trusting the
+    # artifact to still describe reality — is how the checkpoint ended up
+    # announcing "uncalibrated defaults" while carrying eta=2.688 from a live
+    # SPY fit.
+    calibrated, note = False, (
+        "Historical defaults (eta 1.5, rho -0.7, H 0.1); no market calibration "
+        "was adopted. Run 'python -m backend.quant.calibrate --retrain' during "
+        "market hours to fit and adopt live dynamics.")
+    cal_file = ARTIFACTS / "rough_calibration.json"
+    if cal_file.exists():
+        cal = json.loads(cal_file.read_text())
+        same = all(abs(float(dyn[k]) - float(cal[k])) < 1e-9
+                   for k in ("eta", "rho", "H") if k in cal and k in dyn)
+        if same and cal.get("accepted") and cal.get("kernel") == dyn.get("kernel"):
+            calibrated = True
+            note = (f"Calibrated to {cal.get('ticker', '?')} on "
+                    f"{cal.get('as_of', '?')}: {cal.get('n_quotes', '?')} "
+                    f"quotes ({cal.get('quote_source', '?')}) across "
+                    f"{len(cal.get('expiries', []))} expiries, implied-vol "
+                    f"RMSE {cal.get('iv_rmse_volpts', '?')} vol points, "
+                    f"accepted by calibrate.quality_gate.")
+    print(f"calibrated: {calibrated} — {note}")
 
     # Exclude any NaNs
     valid = ~torch.isnan(y)
@@ -138,13 +164,15 @@ def main():
                          "H": float(dyn["H"]), "eta": float(dyn["eta"]),
                          "rho": float(dyn["rho"]),
                          "kernel": dyn.get("kernel", "type_I_fbm_LEGACY"),
-                         "calibrated": False,
-                         "calibration_note": (
-                             "Uncalibrated defaults. The previous calibration "
-                             "was fitted under the Type-I fBm kernel (not "
-                             "rough Bergomi) from market-closed quotes, so it "
-                             "carries no information under the corrected "
-                             "driver. Re-run calibrate.py in market hours."),
+                         # DERIVED from the dataset, never hardcoded. This was
+                         # pinned to False with a note explaining that the then
+                         # current calibration was unusable — true when written,
+                         # and silently false the moment a good fit was adopted.
+                         # A checkpoint carrying eta=2.688 from a live SPY fit
+                         # while announcing "uncalibrated defaults" misinforms
+                         # exactly the person who thought to check.
+                         "calibrated": calibrated,
+                         "calibration_note": note,
                          "epochs": args.epochs, "lr": args.lr,
                          "batch": args.batch, "seed": args.seed}},
                ARTIFACTS / "model_0dte.pt")
