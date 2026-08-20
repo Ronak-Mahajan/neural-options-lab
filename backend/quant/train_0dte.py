@@ -65,19 +65,27 @@ def main():
         "Historical defaults (eta 1.5, rho -0.7, H 0.1); no market calibration "
         "was adopted. Run 'python -m backend.quant.calibrate --retrain' during "
         "market hours to fit and adopt live dynamics.")
-    cal_file = ARTIFACTS / "rough_calibration.json"
-    if cal_file.exists():
-        cal = json.loads(cal_file.read_text())
+    # There is one calibration artifact per market (SPY via calibrate.py, BTC
+    # via calibrate_deribit.py); whichever one these dynamics came from is the
+    # one that gets named. Checking only the SPY file would stamp a BTC-driven
+    # retrain "uncalibrated" -- the same lie in a new costume.
+    from backend.quant.dataset_0dte import CAL_FILES
+    for cal_path in (ARTIFACTS / f for f in CAL_FILES.values()):
+        if not cal_path.exists():
+            continue
+        cal = json.loads(cal_path.read_text())
         same = all(abs(float(dyn[k]) - float(cal[k])) < 1e-9
                    for k in ("eta", "rho", "H") if k in cal and k in dyn)
         if same and cal.get("accepted") and cal.get("kernel") == dyn.get("kernel"):
             calibrated = True
-            note = (f"Calibrated to {cal.get('ticker', '?')} on "
+            market = cal.get("ticker") or cal.get("market", "?")
+            note = (f"Calibrated to {market} on "
                     f"{cal.get('as_of', '?')}: {cal.get('n_quotes', '?')} "
                     f"quotes ({cal.get('quote_source', '?')}) across "
                     f"{len(cal.get('expiries', []))} expiries, implied-vol "
                     f"RMSE {cal.get('iv_rmse_volpts', '?')} vol points, "
-                    f"accepted by calibrate.quality_gate.")
+                    f"accepted by the quality gate ({cal_path.name}).")
+            break
     print(f"calibrated: {calibrated} — {note}")
 
     # Exclude any NaNs
