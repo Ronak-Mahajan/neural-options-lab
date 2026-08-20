@@ -125,21 +125,29 @@ def main() -> None:
     p.add_argument("--n-sets", type=int, default=200_000)
     p.add_argument("--paths", type=int, default=131_072)
     p.add_argument("--seed", type=int, default=20260820)
+    p.add_argument("--out-dir", type=Path, default=OUT_DIR,
+                   help="shard destination. A second run with the SAME seed "
+                        "and a higher --paths into a different directory "
+                        "relabels the identical parameter sets more "
+                        "precisely: paired label sets average into lower-"
+                        "noise targets, which is the cheapest use of an "
+                        "otherwise idle final GPU night.")
     p.add_argument("--stride", type=int, default=1,
                    help="process every stride-th shard (parallel workers)")
     p.add_argument("--offset", type=int, default=0,
                    help="this worker's shard offset in [0, stride)")
     args = p.parse_args()
 
+    out_dir = args.out_dir
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
         print("WARNING: no CUDA device — this generator exists precisely "
               "because CPU is ~200x slower. Proceeding anyway.", flush=True)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     thetas = sample_sets(args.n_sets, args.seed)
     n_shards = math.ceil(args.n_sets / SHARD)
-    done = {int(f.stem.split("_")[1]) for f in OUT_DIR.glob("shard_*.npz")}
+    done = {int(f.stem.split("_")[1]) for f in out_dir.glob("shard_*.npz")}
     print(f"{args.n_sets:,} parameter sets in {n_shards} shards of {SHARD}; "
           f"{len(done)} shards already on disk; device {device}; "
           f"{args.paths:,} paths x 50 steps x {len(K_GRID)} strikes each",
@@ -159,7 +167,7 @@ def main() -> None:
         ivs = np.empty((len(block), len(K_GRID)), dtype=np.float32)
         for i, th in enumerate(block):
             ivs[i] = price_one(th, args.paths, args.seed + lo + i, device)
-        np.savez_compressed(OUT_DIR / f"shard_{s:04d}.npz",
+        np.savez_compressed(out_dir / f"shard_{s:04d}.npz",
                             theta=block.astype(np.float32), iv=ivs,
                             k_grid=K_GRID.astype(np.float32),
                             paths=args.paths)
