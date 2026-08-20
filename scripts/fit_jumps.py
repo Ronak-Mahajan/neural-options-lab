@@ -48,10 +48,22 @@ from backend.quant.calibrate import (BOUNDS, Calibrator, MIN_TAU_HOURS,
 
 SEARCH, POLISH, REPORT = 8_000, 64_000, 200_000
 SEED, REPORT_SEED = 7, 20260820
-#: lam jumps/year (0DTE markets price surprisingly frequent small jumps),
-#: mu_j mean log-jump (negative: crashes), sig_j log-jump dispersion.
-JUMP_BOUNDS = {"lam": (0.1, 60.0), "mu_j": (-0.06, 0.0),
-               "sig_j": (0.003, 0.06)}
+#: Per-market bounds. lam jumps/year, mu_j mean log-jump (negative: crashes),
+#: sig_j log-jump dispersion. SPY: small frequent jumps. BTC: crypto realizes
+#: 5-10% daily moves routinely, so the jump-size box must reach -25% or the
+#: optimizer rails against an assumption instead of the data. BTC also gets
+#: the widened eta ceiling calibrate_deribit uses: the diffusive fit on
+#: 2026-08-20 railed BOTH eta (at 4.0) and H (at 0.5) trying to reach the
+#: surface, which is the motivating observation for this experiment.
+JUMP_BOUNDS = {
+    "SPY": {"lam": (0.1, 60.0), "mu_j": (-0.06, 0.0), "sig_j": (0.003, 0.06)},
+    # mu_j is SYMMETRIC for BTC. The first run bounded it at (-0.25, 0] --
+    # an equity prior (crashes go down) imposed on a market that prices
+    # upward jump risk too: the diffusive residuals show the CALL wing bid
+    # (+1..+3 sigma bucket at -3.2 vp, model under market), and mu_j railed
+    # against the zero bound trying to reach it.
+    "BTC": {"lam": (0.1, 150.0), "mu_j": (-0.25, 0.25), "sig_j": (0.005, 0.25)},
+}
 D_BANDS = [(-3.0, -2.0), (-2.0, -1.0), (-1.0, -0.25), (-0.25, 0.25),
            (0.25, 1.0), (1.0, 3.0)]
 
@@ -84,10 +96,30 @@ def bucket_table(tag, d, e):
               f"|mean|/rmse {abs(e[m].mean()) / rmse if rmse else 0:5.2f}")
 
 
-def fit_arm(cal, jumps: bool):
-    bounds = [BOUNDS["eta"], BOUNDS["rho"], BOUNDS["H"], BOUNDS["xi"]]
+def fetch_market(market: str):
+    """(snapshot-ish meta, quotes, rate, jump bounds, diffusive bounds)."""
+    if market == "SPY":
+        snap = fetch_calibration_set("SPY", 17, min_tau_hours=MIN_TAU_HOURS)
+        diff_bounds = [BOUNDS["eta"], BOUNDS["rho"], BOUNDS["H"], BOUNDS["xi"]]
+        return (f"{snap.pricing_time.isoformat()} spot {snap.spot:.2f} "
+                f"stale={snap.stale}"), snap.quotes, snap.rate, diff_bounds
+    from backend.quant.calibrate_deribit import (ETA_MAX_BTC,
+                                                 quotes_from_surface)
+    from backend.quant.deribit import DeribitClient
+    from backend.quant.surface import build_surface
+    snap = DeribitClient().snapshot("BTC")
+    quotes, drops = quotes_from_surface(build_surface(snap))
+    diff_bounds = [(BOUNDS["eta"][0], ETA_MAX_BTC), BOUNDS["rho"],
+                   BOUNDS["H"], BOUNDS["xi"]]
+    return (f"{snap.captured_at_iso} index {snap.index_price:,.0f} "
+            f"(live 24/7)"), quotes, 0.0, diff_bounds
+
+
+def fit_arm(cal, jumps: bool, diff_bounds, jump_bounds,
+            warm_start: np.ndarray | None = None):
+    bounds = list(diff_bounds)
     if jumps:
-        bounds += list(JUMP_BOUNDS.values())
+        bounds += list(jump_bounds.values())
 
     def objective(theta):
         cal.jumps = tuple(map(float, theta[4:7])) if jumps else None
@@ -99,29 +131,59 @@ def fit_arm(cal, jumps: bool):
                                 popsize=6, tol=1e-3, mutation=(0.4, 0.9),
                                 recombination=0.8, polish=False, init="sobol",
                                 updating="deferred")
-    r2 = minimize(objective, de.x, method="Powell", bounds=bounds,
-                  options={"xtol": 1e-3, "ftol": 1e-4, "maxfev": 200})
-    cal.n_paths = POLISH
-    r3 = minimize(objective, r2.x, method="Powell", bounds=bounds,
-                  options={"xtol": 1e-3, "ftol": 1e-4, "maxfev": 200})
+    starts = [de.x]
+    if jumps and warm_start is not None:
+        # The jump model CONTAINS the diffusive one (lam -> 0), so any jump
+        # fit worse than the diffusive fit is a search failure, not a result.
+        # The first BTC run proved this the hard way: the 7-param DE landed in
+        # a basin at 6.4 vp while the 4-param arm sat at 2.8. Seeding a second
+        # polish from (diffusive optimum, tiny jumps) makes the comparison
+        # structurally fair: the jump arm can only ever lose by refusing to
+        # use its extra parameters, never by failing to find the subspace.
+        lam0 = jump_bounds["lam"][0]
+        mid = lambda b: 0.5 * (b[0] + b[1])
+        starts.append(np.array([*warm_start[:4], lam0,
+                                mid(jump_bounds["mu_j"]),
+                                mid(jump_bounds["sig_j"])]))
+    best = None
+    for x0 in starts:
+        r2 = minimize(objective, x0, method="Powell", bounds=bounds,
+                      options={"xtol": 1e-3, "ftol": 1e-4, "maxfev": 200})
+        cal.n_paths = POLISH
+        r3 = minimize(objective, r2.x, method="Powell", bounds=bounds,
+                      options={"xtol": 1e-3, "ftol": 1e-4, "maxfev": 200})
+        cal.n_paths = SEARCH
+        if best is None or r3.fun < best.fun:
+            best = r3
     secs = time.perf_counter() - t0
-    theta = np.asarray(r3.x, dtype=float)
+    theta = np.asarray(best.x, dtype=float)
     cal.jumps = tuple(theta[4:7]) if jumps else None
     return theta, secs
 
 
 def main() -> None:
-    snap = fetch_calibration_set("SPY", 17, min_tau_hours=MIN_TAU_HOURS)
-    print(f"\nONE SNAPSHOT {snap.pricing_time.isoformat()}  "
-          f"spot {snap.spot:.2f}  {len(snap.quotes)} quotes  "
-          f"{len(snap.expiries)} expiries  stale={snap.stale}", flush=True)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--market", default="SPY", choices=("SPY", "BTC"))
+    market = ap.parse_args().market
+    meta, all_quotes, rate, diff_bounds = fetch_market(market)
+    jump_bounds = JUMP_BOUNDS[market]
+    expiries = sorted({q.expiry for q in all_quotes})
+    print(f"\nONE SNAPSHOT [{market}] {meta}  {len(all_quotes)} quotes  "
+          f"{len(expiries)} expiries", flush=True)
+
+    class _Snap:                       # the one field residuals() reads
+        pass
+    snap = _Snap()
+    snap.rate = rate
+    snap.quotes = all_quotes
 
     results = {}
     for jumps in (False, True):
         tag = "jumps" if jumps else "diffusive"
         cal = Calibrator(snap.rate, snap.quotes, n_paths=SEARCH)
         print(f"\n--- {tag} arm ({4 + 3 * jumps} parameters) ---", flush=True)
-        theta, secs = fit_arm(cal, jumps)
+        theta, secs = fit_arm(cal, jumps, diff_bounds, jump_bounds)
         eta, rho, H, xi = theta[:4]
         print(f"  eta={eta:.4f} rho={rho:.4f} H={H:.4f} "
               f"sqrt(xi)={math.sqrt(xi):.2%}  ({secs:.0f}s)", flush=True)
@@ -131,9 +193,9 @@ def main() -> None:
                   f"(expected jump {math.exp(mu_j + sig_j**2 / 2) - 1:+.2%}, "
                   f"~{lam * 10 / 252:.2f} jumps per 10 trading days)",
                   flush=True)
-            for name, v, (lo, hi) in (("lam", lam, JUMP_BOUNDS["lam"]),
-                                      ("mu_j", mu_j, JUMP_BOUNDS["mu_j"]),
-                                      ("sig_j", sig_j, JUMP_BOUNDS["sig_j"])):
+            for name, v, (lo, hi) in (("lam", lam, jump_bounds["lam"]),
+                                      ("mu_j", mu_j, jump_bounds["mu_j"]),
+                                      ("sig_j", sig_j, jump_bounds["sig_j"])):
                 frac = (v - lo) / (hi - lo)
                 if not 0.02 < frac < 0.98:
                     print(f"  WARNING: {name} at {frac:.1%} of its bound "
@@ -169,9 +231,9 @@ def main() -> None:
           f"({a['left_tail_bias']} -> {b['left_tail_bias']} vp on "
           f"{a['left_tail_n']} quotes)")
 
-    out = Path(__file__).with_name("_fit_jumps_last.json")
-    out.write_text(json.dumps({"as_of": snap.pricing_time.isoformat(),
-                               "n_quotes": len(snap.quotes), **results},
+    out = Path(__file__).with_name(f"_fit_jumps_last_{market.lower()}.json")
+    out.write_text(json.dumps({"market": market, "as_of": meta,
+                               "n_quotes": len(all_quotes), **results},
                               indent=2))
     print(f"saved -> {out}")
 
