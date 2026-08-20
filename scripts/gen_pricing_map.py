@@ -69,7 +69,13 @@ BOX = {
     "H":     (0.01, 0.5),
     "ln_xi": (math.log(0.05 ** 2), math.log(1.2 ** 2)),
     "lam":   (0.0, 150.0),
-    "mu_j":  (-0.25, 0.0),
+    # SYMMETRIC: the live BTC experiment found the market pricing POSITIVE
+    # jumps (call wing bid, fitted mu_j +1.4%) after a mu_j <= 0 bound railed.
+    # The 7 shards banked before this change carry mu_j <= 0 thetas; each
+    # shard stores its own thetas, so mixing boxes only thins coverage of
+    # mu_j > 0 by 7/100 -- harmless. Regeneration is impossible post-GPU, so
+    # the box errs wide.
+    "mu_j":  (-0.25, 0.25),
     "sig_j": (0.003, 0.25),
     "ln_tau": (math.log(0.8 / 365.0), math.log(17.0 / 365.0)),
 }
@@ -119,6 +125,10 @@ def main() -> None:
     p.add_argument("--n-sets", type=int, default=200_000)
     p.add_argument("--paths", type=int, default=131_072)
     p.add_argument("--seed", type=int, default=20260820)
+    p.add_argument("--stride", type=int, default=1,
+                   help="process every stride-th shard (parallel workers)")
+    p.add_argument("--offset", type=int, default=0,
+                   help="this worker's shard offset in [0, stride)")
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -136,8 +146,13 @@ def main() -> None:
           flush=True)
 
     t0 = time.perf_counter()
+    # Measured single-process: GPU 3% utilized, CPU 15% -- the bottleneck is
+    # the sequential Python implied-vol inversion between GPU batches, so the
+    # dataset parallelizes across PROCESSES almost linearly. Workers stripe
+    # the shard index (s % stride == offset): disjoint files, no locks, and
+    # the same resume semantics as a single worker.
     for s in range(n_shards):
-        if s in done:
+        if s % args.stride != args.offset or s in done:
             continue
         lo, hi = s * SHARD, min((s + 1) * SHARD, args.n_sets)
         block = thetas[lo:hi]
