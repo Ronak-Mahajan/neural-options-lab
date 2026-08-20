@@ -704,3 +704,49 @@ def test_load_calibrated_dynamics_is_market_aware(tmp_path, monkeypatch):
     # ...and a typo'd market fails loudly instead of silently defaulting.
     with pytest.raises(ValueError, match="unknown market"):
         d.load_calibrated_dynamics("DOGE")
+
+
+# --------------------------------------------------------------------------- #
+#  rough_vol.py — compensated Merton jumps (the left-tail hypothesis)
+# --------------------------------------------------------------------------- #
+
+def test_jumps_off_is_bit_identical():
+    """jumps=None must not consume generator state: any extra draw would
+    silently change every seeded result in the project."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    t = lambda v: torch.tensor([float(v)])
+    args = (t(770.0), t(770.0), t(4 / 365), t(0.011), t(2.69), t(-0.33),
+            t(0.037))
+    a = rough_bergomi_mc(*args, n_paths=5_000, seed=7)
+    b = rough_bergomi_mc(*args, n_paths=5_000, seed=7, jumps=None)
+    assert torch.equal(a, b)
+
+
+def test_jumps_preserve_the_martingale_exactly():
+    """The compensator -lam*(e^{mu+sig^2/2}-1)*T must hold E[S_T] fixed. A
+    call struck at 0 IS disc*E[S_T] = spot, so it checks the drift directly."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    t = lambda v: torch.tensor([float(v)])
+    args = (t(770.0), t(0.0), t(4 / 365), t(0.011), t(2.69), t(-0.33),
+            t(0.037))
+    c0, se = rough_bergomi_mc(*args, n_paths=200_000, seed=11,
+                              jumps=(25.0, -0.02, 0.03),
+                              return_std_error=True)
+    assert abs(float(c0) - 770.0) < 4.0 * float(se), (
+        f"disc*E[S_T] = {float(c0):.4f} vs 770, SE {float(se):.4f}")
+
+
+def test_jumps_fatten_the_left_tail():
+    """The reason they exist: at 4 days the diffusive model prices a K/F=0.94
+    put at ~half a cent while the market carries real premium there (the
+    measured -2.1 vp wing bias). Jumps must move that put materially."""
+    from backend.quant.rough_vol import rough_bergomi_mc
+    t = lambda v: torch.tensor([float(v)])
+    K = 0.94 * 770
+    args = (t(770.0), t(K), t(4 / 365), t(0.011), t(2.69), t(-0.33), t(0.037))
+    disc = math.exp(-0.037 * 4 / 365)
+    put = lambda c: float(c) - (770 - K * disc)
+    p_nj = put(rough_bergomi_mc(*args, n_paths=100_000, seed=11))
+    p_j = put(rough_bergomi_mc(*args, n_paths=100_000, seed=11,
+                               jumps=(25.0, -0.02, 0.03)))
+    assert p_j > 3.0 * max(p_nj, 1e-4), f"{p_nj:.5f} -> {p_j:.5f}"
