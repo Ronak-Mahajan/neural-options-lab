@@ -71,8 +71,11 @@ class MapPricer:
     def usable(self, quotes: list[Quote]) -> tuple[list[Quote], int]:
         """Quotes whose (k, tau) the map was trained on. The map REFUSES to
         extrapolate: outside the box its output is unconstrained by data."""
-        tau_lo = math.exp(self.box["ln_tau"][0])
-        tau_hi = math.exp(self.box["ln_tau"][1])
+        if "tau_range" in self.meta:
+            tau_lo, tau_hi = self.meta["tau_range"]
+        else:
+            tau_lo = math.exp(self.box["ln_tau"][0])
+            tau_hi = math.exp(self.box["ln_tau"][1])
         keep = [q for q in quotes
                 if self.k_lo <= math.log(q.strike / q.fwd_pv) <= self.k_hi
                 and tau_lo <= q.tau <= tau_hi]

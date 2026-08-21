@@ -51,7 +51,8 @@ HQ_DIR = ROOT / "data" / "pricing_map_hq"
 #: Standalone draws (own seeds), so they append rather than merge.
 EXTRA_DIRS = [ROOT / "data" / "pricing_map_jumpcorner",
               ROOT / "data" / "pricing_map_crypto",
-              ROOT / "data" / "pricing_map_lowvol"]
+              ROOT / "data" / "pricing_map_lowvol",
+              ROOT / "data" / "pricing_map_longtau"]
 
 
 def load_dataset() -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
@@ -226,7 +227,12 @@ def main() -> None:
                 "width": args.width, "depth": args.depth,
                 "val_rmse_volpts": best * 100,
                 "n_sets": n_sets, "n_rows": int(len(y)),
-                "k_range": [float(k_grid.min()), float(k_grid.max())],
+                # TRUE data ranges, not the last shard's grid or the module
+                # BOX: shards now carry different k grids and tau boxes, and
+                # the pricer's refuse-to-extrapolate check must reflect what
+                # the network actually saw.
+                "k_range": [float(X[:, 8].min()), float(X[:, 8].max())],
+                "tau_range": [float(X[:, 7].min()), float(X[:, 7].max())],
                 "box": {k: list(v) for k, v in BOX.items()},
                 "inputs": "eta rho H xi lam mu_j sig_j tau k (raw; "
                           "features() handles transforms)",

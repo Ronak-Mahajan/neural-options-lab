@@ -99,6 +99,16 @@ PRESETS = {
     "diffusive-lowvol": ({**BOX,
                           "ln_xi": (math.log(0.05 ** 2), math.log(0.30 ** 2))},
                          1.0),
+    # the maturity extension: everything banked before this covered 0.8-17
+    # days (the 0DTE surrogate's box), so post-GPU the map could never touch
+    # weeklies, monthlies, or Deribit's quarterlies -- most of the liquid
+    # surface. 15-120 days, full vol and jump mix; overlaps 15-17d with the
+    # base box so the seam is learned, not extrapolated. Pair with a wider
+    # k grid (--k-lo/--k-hi) and --n-steps 100: at 120 days, 50 steps is a
+    # 2.4-day step, too coarse for an H ~ 0.1 kernel.
+    "longtau": ({**BOX,
+                 "ln_tau": (math.log(15.0 / 365.0), math.log(120.0 / 365.0))},
+                0.35),
 }
 
 
@@ -121,16 +131,17 @@ def sample_sets(n: int, seed: int, box: dict = BOX,
 
 
 def price_one(theta: np.ndarray, n_paths: int, seed: int,
-              device: str) -> np.ndarray:
-    """IVs for the whole K_GRID under one parameter set. NaN = no inversion."""
+              device: str, k_grid: np.ndarray = K_GRID,
+              n_steps: int = 50) -> np.ndarray:
+    """IVs for the whole k grid under one parameter set. NaN = no inversion."""
     eta, rho, H, xi, lam, mu_j, sig_j, tau = (float(v) for v in theta)
-    strikes = np.exp(K_GRID)
+    strikes = np.exp(k_grid)
     b = len(strikes)
     t = lambda v: torch.full((b,), float(v), device=device)
     prices = rough_bergomi_mc(
         t(1.0), torch.tensor(strikes, dtype=torch.float32, device=device),
         t(tau), t(xi), t(eta), t(rho), t(0.0),
-        n_paths=n_paths, n_steps=50, H=H, seed=seed,
+        n_paths=n_paths, n_steps=n_steps, H=H, seed=seed,
         jumps=(lam, mu_j, sig_j) if lam > 0.0 else None,
     ).cpu().numpy()
     ivs = np.full(b, np.nan)
@@ -156,6 +167,10 @@ def main() -> None:
                         "precisely: paired label sets average into lower-"
                         "noise targets, which is the cheapest use of an "
                         "otherwise idle final GPU night.")
+    p.add_argument("--k-lo", type=float, default=float(K_GRID[0]))
+    p.add_argument("--k-hi", type=float, default=float(K_GRID[-1]))
+    p.add_argument("--k-n", type=int, default=len(K_GRID))
+    p.add_argument("--n-steps", type=int, default=50)
     p.add_argument("--stride", type=int, default=1,
                    help="process every stride-th shard (parallel workers)")
     p.add_argument("--offset", type=int, default=0,
@@ -170,12 +185,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     box, dfrac = PRESETS[args.preset]
+    k_grid = np.linspace(args.k_lo, args.k_hi, args.k_n)
     thetas = sample_sets(args.n_sets, args.seed, box, dfrac)
     n_shards = math.ceil(args.n_sets / SHARD)
     done = {int(f.stem.split("_")[1]) for f in out_dir.glob("shard_*.npz")}
     print(f"{args.n_sets:,} parameter sets in {n_shards} shards of {SHARD}; "
           f"{len(done)} shards already on disk; device {device}; "
-          f"{args.paths:,} paths x 50 steps x {len(K_GRID)} strikes each",
+          f"{args.paths:,} paths x {args.n_steps} steps x {len(k_grid)} "
+          f"strikes each",
           flush=True)
 
     t0 = time.perf_counter()
@@ -189,12 +206,14 @@ def main() -> None:
             continue
         lo, hi = s * SHARD, min((s + 1) * SHARD, args.n_sets)
         block = thetas[lo:hi]
-        ivs = np.empty((len(block), len(K_GRID)), dtype=np.float32)
+        ivs = np.empty((len(block), len(k_grid)), dtype=np.float32)
         for i, th in enumerate(block):
-            ivs[i] = price_one(th, args.paths, args.seed + lo + i, device)
+            ivs[i] = price_one(th, args.paths, args.seed + lo + i,
+                               device, k_grid=k_grid,
+                               n_steps=args.n_steps)
         np.savez_compressed(out_dir / f"shard_{s:04d}.npz",
                             theta=block.astype(np.float32), iv=ivs,
-                            k_grid=K_GRID.astype(np.float32),
+                            k_grid=k_grid.astype(np.float32),
                             paths=args.paths)
         done.add(s)
         rate = (len(done) * SHARD) / max(time.perf_counter() - t0, 1e-9)
