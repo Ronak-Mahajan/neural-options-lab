@@ -1,26 +1,27 @@
 {
   "market": "BTC-DERIBIT",
   "currency": "BTC",
-  "as_of": "2026-08-05T21:48:15Z",
+  "as_of": "2026-08-20T17:21:47Z",
   "venue": "deribit-public-v2",
-  "index_price": 64631.3,
-  "eta": 4.2179,
-  "rho": -0.2363,
-  "H": 0.2522,
-  "xi": 0.099355,
-  "sqrt_xi": 0.3152,
-  "n_quotes": 63,
-  "n_scored": 63,
-  "n_unpriceable": 0,
+  "index_price": 72632.34,
+  "eta": 0.5005,
+  "rho": -0.3931,
+  "H": 0.4994,
+  "xi": 0.156455,
+  "sqrt_xi": 0.3955,
+  "n_quotes": 121,
+  "n_scored": 121,
+  "n_unpriceable": 2,
   "expiries": [
-    "2026-08-08T08:00:00Z",
-    "2026-08-09T08:00:00Z",
-    "2026-08-14T08:00:00Z",
-    "2026-08-21T08:00:00Z"
+    "2026-08-22T08:00:00Z",
+    "2026-08-23T08:00:00Z",
+    "2026-08-24T08:00:00Z",
+    "2026-08-28T08:00:00Z",
+    "2026-09-04T08:00:00Z"
   ],
-  "iv_rmse_volpts": 2.47,
-  "objective_value": 2.551853,
-  "objective_mc_sd": 0.000945,
+  "iv_rmse_volpts": 9.852,
+  "objective_value": 5.339316,
+  "objective_mc_sd": 0.018767,
   "search_paths": 8000,
   "polish_paths": 64000,
   "final_paths": 200000,
@@ -33,11 +34,13 @@
     0.5,
     8.0
   ],
-  "median_iv_half_spread_volpts": 0.9759,
-  "rmse_over_half_spread": 2.531,
+  "median_iv_half_spread_volpts": 1.0983,
+  "rmse_over_half_spread": 8.97,
   "accepted": false,
   "reject_reasons": [
-    "fit RMSE 2.470 vp is 2.53x the market's own median half-spread (0.976 vp) \u2014 the model prices outside the book it is fitting"
+    "implied-vol RMSE 9.852 vp >= 3.000 vp",
+    "H = 0.4994 is pinned at its bound [0.01, 0.5]",
+    "eta = 0.5005 is pinned at its bound [0.5, 8.0] (0.0% of range) \u2014 the model cannot reach this surface without extreme vol-of-vol"
   ],
-  "fit_seconds": 485.9
+  "fit_seconds": 18.4
 }

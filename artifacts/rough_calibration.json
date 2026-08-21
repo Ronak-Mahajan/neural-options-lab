@@ -1,21 +1,21 @@
 {
   "ticker": "SPY",
-  "as_of": "2026-08-20T15:47:12.799275-04:00",
-  "run_at": "2026-08-20T15:47:12.799275-04:00",
+  "as_of": "2026-08-21T11:00:07.925435-04:00",
+  "run_at": "2026-08-21T11:00:07.925435-04:00",
   "session_date": null,
   "snapshot_spread_min": null,
-  "spot": 762.9600219726562,
-  "rate": 0.03702999830245972,
+  "spot": 765.739990234375,
+  "rate": 0.03713000059127808,
   "rate_source": "^IRX",
-  "eta": 3.6573,
-  "rho": -0.628,
-  "H": 0.2554,
-  "xi": 0.01639,
-  "sqrt_xi": 0.128,
+  "eta": 3.9352,
+  "rho": -0.5363,
+  "H": 0.2613,
+  "xi": 0.012773,
+  "sqrt_xi": 0.113,
   "xi_curve": null,
-  "n_quotes": 618,
-  "n_scored": 618,
-  "n_unpriceable": 6,
+  "n_quotes": 585,
+  "n_scored": 585,
+  "n_unpriceable": 0,
   "expiries": [
     "2026-08-24",
     "2026-08-25",
@@ -27,55 +27,55 @@
   ],
   "forwards": {
     "2026-08-24": {
-      "F": 763.6503,
+      "F": 764.6299,
       "source": "parity",
-      "strike": 763.0,
-      "implied_carry": -0.045303
+      "strike": 765.0,
+      "implied_carry": 0.202184
     },
     "2026-08-25": {
-      "F": 763.6948,
+      "F": 764.7599,
       "source": "parity",
-      "strike": 764.0,
-      "implied_carry": -0.033119
+      "strike": 765.0,
+      "implied_carry": 0.148215
     },
     "2026-08-26": {
-      "F": 763.8123,
+      "F": 764.8049,
       "source": "parity",
-      "strike": 760.0,
-      "implied_carry": -0.030789
+      "strike": 765.0,
+      "implied_carry": 0.122763
     },
     "2026-08-27": {
-      "F": 763.8892,
+      "F": 765.025,
       "source": "parity",
       "strike": 765.0,
-      "implied_carry": -0.026354
+      "implied_carry": 0.092051
     },
     "2026-08-28": {
-      "F": 764.0993,
-      "source": "parity",
-      "strike": 765.0,
-      "implied_carry": -0.030971
-    },
-    "2026-08-31": {
-      "F": 764.1251,
-      "source": "parity",
-      "strike": 764.0,
-      "implied_carry": -0.013563
-    },
-    "2026-09-04": {
-      "F": 764.678,
+      "F": 765.1144,
       "source": "parity",
       "strike": 766.0,
-      "implied_carry": -0.017668
+      "implied_carry": 0.078519
+    },
+    "2026-08-31": {
+      "F": 765.2553,
+      "source": "parity",
+      "strike": 765.0,
+      "implied_carry": 0.059771
+    },
+    "2026-09-04": {
+      "F": 765.7217,
+      "source": "parity",
+      "strike": 768.0,
+      "implied_carry": 0.037743
     }
   },
   "skipped_exdiv": [],
   "ex_dividend_check": "ok",
-  "iv_rmse_volpts": 1.568,
-  "iv_rmse_volpts_priceable_only": 1.536,
+  "iv_rmse_volpts": 1.741,
+  "iv_rmse_volpts_priceable_only": 1.741,
   "objective": "vega-weighted price Huber (CRN)",
-  "objective_value": 0.514771,
-  "objective_mc_sd": 0.359842,
+  "objective_value": 0.836345,
+  "objective_mc_sd": 0.408897,
   "objective_noise_reps": 4,
   "search_paths": 8000,
   "polish_paths": 64000,
@@ -83,9 +83,11 @@
   "day_count": "ACT/365 calendar (surrogate trains on k/252 trading days \u2014 see the module docstring)",
   "min_tau_hours": 34.8,
   "quote_source": "live_mid",
-  "median_half_spread_iv_volpts": 0.0575,
-  "rmse_over_half_spread": 27.282,
+  "median_half_spread_iv_volpts": 0.0477,
+  "rmse_over_half_spread": 36.477,
   "kernel": "riemann_liouville_volterra_joint_v1",
-  "accepted": true,
-  "reject_reasons": []
+  "accepted": false,
+  "reject_reasons": [
+    "eta = 3.9352 is pinned at its bound [0.5, 4]"
+  ]
 }
