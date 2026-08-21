@@ -45,6 +45,13 @@ ARTIFACTS = ROOT / "artifacts"
 
 
 HQ_DIR = ROOT / "data" / "pricing_map_hq"
+#: Targeted refinement sets from the final GPU night (see gen_pricing_map
+#: PRESETS): the thin jump corner the optimizer exploited, the crypto vol
+#: regime, and the diffusive production manifold at 4x label precision.
+#: Standalone draws (own seeds), so they append rather than merge.
+EXTRA_DIRS = [ROOT / "data" / "pricing_map_jumpcorner",
+              ROOT / "data" / "pricing_map_crypto",
+              ROOT / "data" / "pricing_map_lowvol"]
 
 
 def load_dataset() -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
@@ -91,10 +98,24 @@ def load_dataset() -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
         keep = ~np.isnan(y)
         xs.append(X[keep]); ys.append(y[keep]); set_ids.append(sid[keep])
         base += n
+    n_extra = 0
+    for extra in EXTRA_DIRS:
+        for sh in sorted(extra.glob("shard_*.npz")):
+            d = np.load(sh)
+            theta, iv = d["theta"], d["iv"]
+            n, m = iv.shape
+            X = np.concatenate([np.repeat(theta, m, axis=0),
+                                np.tile(d["k_grid"], n)[:, None]], axis=1)
+            y = iv.reshape(-1)
+            sid_e = np.repeat(np.arange(base, base + n), m)
+            keep = ~np.isnan(y)
+            xs.append(X[keep]); ys.append(y[keep]); set_ids.append(sid_e[keep])
+            base += n
+            n_extra += 1
     X = np.concatenate(xs); y = np.concatenate(ys)
     sid = np.concatenate(set_ids)
-    print(f"loaded {len(shards)} shards ({n_merged} precision-merged with HQ "
-          f"relabels)")
+    print(f"loaded {len(shards)} base shards ({n_merged} precision-merged "
+          f"with HQ relabels) + {n_extra} refinement shards")
     return (torch.from_numpy(X.astype(np.float32)),
             torch.from_numpy(y.astype(np.float32)),
             sid), k_grid, base
