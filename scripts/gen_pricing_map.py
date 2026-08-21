@@ -81,12 +81,34 @@ BOX = {
 }
 
 
-def sample_sets(n: int, seed: int) -> np.ndarray:
+#: Targeted refinement boxes, added after the live BTC experiment caught the
+#: map being exploitable: a deterministic optimizer pushed into (lam ~87% of
+#: bound, sig_j on its floor) where the base LHS leaves ~one sample per
+#: hypercube cell, and mined the map's error there as if it were structure
+#: (map said the fit improved to 1.17 vp; MC repriced it at 2.76). Each preset
+#: spends GPU labels where the base run was thin.
+PRESETS = {
+    "base": (BOX, DIFFUSIVE_FRAC),
+    # the exploited corner: dense jumps, small jump sizes, no lam=0 mass
+    "jump-corner": ({**BOX, "lam": (20.0, 150.0), "sig_j": (0.003, 0.05)},
+                    0.0),
+    # crypto regime: 50-120% vol where BTC actually lives, jumps on and off
+    "crypto": ({**BOX, "ln_xi": (math.log(0.25 ** 2), math.log(1.2 ** 2))},
+               0.30),
+    # the production manifold: diffusive only, equity-vol range
+    "diffusive-lowvol": ({**BOX,
+                          "ln_xi": (math.log(0.05 ** 2), math.log(0.30 ** 2))},
+                         1.0),
+}
+
+
+def sample_sets(n: int, seed: int, box: dict = BOX,
+                diffusive_frac: float = DIFFUSIVE_FRAC) -> np.ndarray:
     """(n, 8) parameter sets: eta, rho, H, xi, lam, mu_j, sig_j, tau."""
-    keys = list(BOX)
+    keys = list(box)
     lhs = qmc.LatinHypercube(d=len(keys), seed=seed).random(n)
-    lo = np.array([BOX[k][0] for k in keys])
-    hi = np.array([BOX[k][1] for k in keys])
+    lo = np.array([box[k][0] for k in keys])
+    hi = np.array([box[k][1] for k in keys])
     raw = lo + lhs * (hi - lo)
     out = np.empty_like(raw)
     for j, k in enumerate(keys):
@@ -94,7 +116,7 @@ def sample_sets(n: int, seed: int) -> np.ndarray:
     # Exact-diffusive share: the production model IS lam=0, so cover it
     # densely instead of relying on samples near zero.
     rng = np.random.default_rng(seed)
-    out[rng.random(n) < DIFFUSIVE_FRAC, 4] = 0.0
+    out[rng.random(n) < diffusive_frac, 4] = 0.0
     return out
 
 
@@ -125,6 +147,8 @@ def main() -> None:
     p.add_argument("--n-sets", type=int, default=200_000)
     p.add_argument("--paths", type=int, default=131_072)
     p.add_argument("--seed", type=int, default=20260820)
+    p.add_argument("--preset", default="base", choices=sorted(PRESETS),
+                   help="which sampling box to draw from (see PRESETS)")
     p.add_argument("--out-dir", type=Path, default=OUT_DIR,
                    help="shard destination. A second run with the SAME seed "
                         "and a higher --paths into a different directory "
@@ -145,7 +169,8 @@ def main() -> None:
               "because CPU is ~200x slower. Proceeding anyway.", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    thetas = sample_sets(args.n_sets, args.seed)
+    box, dfrac = PRESETS[args.preset]
+    thetas = sample_sets(args.n_sets, args.seed, box, dfrac)
     n_shards = math.ceil(args.n_sets / SHARD)
     done = {int(f.stem.split("_")[1]) for f in out_dir.glob("shard_*.npz")}
     print(f"{args.n_sets:,} parameter sets in {n_shards} shards of {SHARD}; "
