@@ -3,9 +3,16 @@
 The certified pricing-map surrogate (artifacts/pricing_map.pt) evaluates a
 whole surface in microseconds on CPU, where the Monte Carlo engine needs a
 GPU and ~0.5 s. This module is the calibration path built on it — the one
-that keeps working after the GPU is gone. Certified twice end-to-end against
-the MC engine on live SPY captures: parameters within +0.005 vp under MC
-repricing, 3 s vs 70 s.
+that keeps working after the GPU is gone. Certified five times end-to-end
+against the MC engine on live surfaces (SPY short-tau, SPY 3-56 days, BTC
+full surface): winning-arm parameters within 0.005-0.10 vp under MC
+repricing, seconds vs minutes.
+
+Faithfulness is REGIONAL, not unconditional -- the final audit measured it:
+the map matches MC within ~0.03-0.10 vp at fitted optima, but a rejected
+diffusive fit on BTC short-tau showed a 0.48 vp map-vs-MC gap. The honest
+form of the claim is "faithful at the optimum the fit selects; verify under
+MC when reading the map in regions the fit rejected".
 
 What the map additionally unlocks, beyond speed:
 
