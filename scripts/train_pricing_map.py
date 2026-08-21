@@ -44,18 +44,45 @@ DATA_DIR = ROOT / "data" / "pricing_map"
 ARTIFACTS = ROOT / "artifacts"
 
 
+HQ_DIR = ROOT / "data" / "pricing_map_hq"
+
+
 def load_dataset() -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
-    """(X, y, k_grid): X rows are (theta 8, k 1) -> y IV. NaN rows dropped."""
+    """(X, y, k_grid): X rows are (theta 8, k 1) -> y IV. NaN rows dropped.
+
+    When the high-precision relabel exists (same seed, same thetas, 4x the
+    paths into data/pricing_map_hq), each label becomes the PRECISION-WEIGHTED
+    average of the two independent simulations: weights proportional to path
+    count (1/variance), so 131k + 524k paths behave like one 655k-path label —
+    a ~2.2x noise reduction over the original labels. Where only one run
+    inverted (deep wings drift in and out of the no-arb region between path
+    counts), the defined one is used. Thetas are verified identical per shard.
+    """
     shards = sorted(DATA_DIR.glob("shard_*.npz"))
     if not shards:
         raise SystemExit(f"no shards in {DATA_DIR}; run gen_pricing_map first")
     xs, ys, set_ids = [], [], []
     base = 0
     k_grid = None
+    n_merged = 0
     for sh in shards:
         d = np.load(sh)
         theta, iv = d["theta"], d["iv"]
         k_grid = d["k_grid"]
+        hq = HQ_DIR / sh.name
+        # Shards 0000-0008 predate the mu_j box widening, so their thetas
+        # differ from the HQ run's (same LHS draw, different mu_j scaling).
+        # Those stay as-is -- their labels are valid for the thetas they
+        # store -- and only theta-identical shards merge.
+        if hq.exists() and np.allclose(theta, np.load(hq)["theta"], atol=1e-6):
+            d2 = np.load(hq)
+            w1, w2 = float(d["paths"]), float(d2["paths"])
+            iv2 = d2["iv"]
+            both = ~np.isnan(iv) & ~np.isnan(iv2)
+            merged = np.where(np.isnan(iv), iv2, iv)
+            merged[both] = (w1 * iv[both] + w2 * iv2[both]) / (w1 + w2)
+            iv = merged
+            n_merged += 1
         n, m = iv.shape
         X = np.concatenate([np.repeat(theta, m, axis=0),
                             np.tile(k_grid, n)[:, None]], axis=1)
@@ -66,6 +93,8 @@ def load_dataset() -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
         base += n
     X = np.concatenate(xs); y = np.concatenate(ys)
     sid = np.concatenate(set_ids)
+    print(f"loaded {len(shards)} shards ({n_merged} precision-merged with HQ "
+          f"relabels)")
     return (torch.from_numpy(X.astype(np.float32)),
             torch.from_numpy(y.astype(np.float32)),
             sid), k_grid, base
