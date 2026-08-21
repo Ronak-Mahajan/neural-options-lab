@@ -1,5 +1,7 @@
 # Neural Options Lab
 
+**Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)** — free-tier hosting, so the first load after an idle spell takes about a minute while the container wakes and PyTorch loads. Every number on the dashboard is computed live by the models described below.
+
 A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 33x more accurately than the standard closed-form approximation, wrapped in an interactive dashboard you can run locally in two commands.
 
 The project covers the full stack of a modern quant pricing system: the numerical methods that generate ground truth, the deep learning that learns to imitate them, a rough volatility model for same-day-expiry options, a reinforcement-style hedging agent, live market calibration, and a browser front end that ties it together. Trained model weights are included, so it runs the moment you clone it.
