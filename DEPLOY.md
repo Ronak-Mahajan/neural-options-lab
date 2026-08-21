@@ -10,10 +10,10 @@ The one thing that matters for hosting is memory. PyTorch plus the models
 needs more headroom than the smallest free tiers comfortably give, so the
 notes below are honest about which option fits.
 
-## Option 1: Hugging Face Spaces (no longer free — needs PRO)
+## Option 1: Hugging Face Spaces (no longer free; needs PRO)
 
 Update, August 2026: Hugging Face now requires a PRO subscription to host
-Docker (and Gradio) Spaces even on the basic CPU tier — repo creation fails
+Docker (and Gradio) Spaces even on the basic CPU tier. Repo creation fails
 with "requires a PRO subscription" on a free account, which is how this note
 got written. With PRO, the tier is 2 vCPUs and 16 GB of RAM, which is plenty
 for PyTorch and the Monte Carlo endpoints. You get a public URL like
@@ -41,7 +41,7 @@ app_port: 8000
 Once the code is pushed, the Space builds the Docker image and serves it. The
 first build takes a few minutes.
 
-## Option 2: Render (Docker) — the free path that works, and where the live demo runs
+## Option 2: Render (Docker), the free path that works and where the live demo runs
 
 The repo includes `render.yaml`, so Render can deploy it directly:
 
