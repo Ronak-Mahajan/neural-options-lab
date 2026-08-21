@@ -52,8 +52,19 @@ app = FastAPI(title="Deep Learning for Options Pricing",
               description="Neural surrogate vs Monte Carlo for arithmetic "
                           "Asian options (maturity > 12/252) and European "
                           "options under rough Bergomi (maturity <= 12/252)")
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
-                   allow_methods=["*"], allow_headers=["*"])
+# The dashboard is served by this same app, so browsers never need
+# cross-origin access at all. The old wildcard existed for local file://
+# testing and, once the app went public on a free-tier host, turned into an
+# invitation: any third-party page could fan its visitors' browsers out
+# against the Monte Carlo endpoints and burn the instance's CPU from anywhere.
+# Local dev on a separate frontend port stays possible via the explicit
+# localhost entries. Non-browser clients (curl, notebooks) are unaffected;
+# CORS only governs browsers.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000",
+                   "https://neural-options-lab.onrender.com"],
+    allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
 try:
     ENGINE: PricingEngine | None = PricingEngine()
