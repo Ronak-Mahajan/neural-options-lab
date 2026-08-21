@@ -1,6 +1,6 @@
 # Neural Options Lab
 
-**Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)** — free-tier hosting, so the first load after an idle spell takes about a minute while the container wakes and PyTorch loads. Every number on the dashboard is computed live by the models described below.
+**Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)**. Free-tier hosting, so the first load after an idle spell takes about a minute while the container wakes and PyTorch loads. Every number on the dashboard is computed live by the models described below.
 
 A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 33x more accurately than the standard closed-form approximation, wrapped in an interactive dashboard you can run locally in two commands.
 
@@ -59,13 +59,13 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 | Monte Carlo engine | Antithetic sampling with a geometric-Asian control variate (Kemna and Vorst, 1990). Cuts the standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications. An earlier version of this README claimed "about 30x"; that figure came from the reported standard error, which was computed as if antithetic pairs were independent and overstated the true error by ~45%. Both the estimator and the claim are fixed. |
 | Parameterization | The network prices the unit-strike call as a function of moneyness (spot over strike). Option prices scale linearly in spot and strike, so one model covers every strike exactly. Puts come from Asian put-call parity, which is exact. |
 | Architecture | A residual multilayer perceptron with SiLU activations and LayerNorm, about 134k parameters. Smooth activations matter here because the Greeks are computed by differentiating the network, and something like ReLU would give zero gamma almost everywhere. |
-| Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function, not just its level. |
+| Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function rather than only its level. |
 | Deep ensemble | Five independently initialized networks. Averaging them lowers error, and the Greeks average cleanly through the mean. |
 | Same-day-expiry (0DTE) model | Very short-dated option smiles show a power-law skew that classical models cannot reproduce. A rough Bergomi Monte Carlo engine generates training data for a separate ensemble serving maturities of 12 trading days or less. The driver is the Riemann-Liouville Volterra process (Bayer-Friz-Gatheral 2016) with Hurst index near 0.1, simulated exactly via the joint law of the driving Brownian motion and the Volterra integral. The 0DTE checkpoint has been regenerated against the corrected driver; it is currently UNCALIBRATED, because the prior calibration was fitted under the old kernel from market-closed quotes. |
 | Live calibration | `calibrate.py` fits the rough volatility parameters to the SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. |
-| Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under two measures. It loses to both out of sample — see the negative result below. |
+| Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under two measures. It loses to both out of sample; see the negative result below. |
 | Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, mapped onto the pricing measure by enforcing the terminal variance and the martingale condition. Known limitation: the shipped generator is mode-collapsed (participation ratio 4.66 of 30 factors), so its paths are forecastable and it is not a sound measure for evaluating a hedging policy. Quantified in `docs/hedging_findings.md`. |
-| Real market data | A live [Deribit](https://www.deribit.com) option chain — 836 BTC instruments across 12 expiries, fetched from public endpoints with no API key. Coin-denominated premiums are converted on the per-expiry forward, implied vol is inverted on BOTH bid and ask so the market shows as a band, and the surface is checked for butterfly, vertical, calendar and put-call-parity arbitrage. Everything downstream reads a committed snapshot, so it runs offline. See [`docs/real_market_data.md`](docs/real_market_data.md). |
+| Real market data | A live [Deribit](https://www.deribit.com) option chain: 836 BTC instruments across 12 expiries, fetched from public endpoints with no API key. Coin-denominated premiums are converted on the per-expiry forward, implied vol is inverted on BOTH bid and ask so the market shows as a band, and the surface is checked for butterfly, vertical, calendar and put-call-parity arbitrage. Everything downstream reads a committed snapshot, so it runs offline. See [`docs/real_market_data.md`](docs/real_market_data.md). |
 | Explainability | Integrated Gradients through the ensemble against an at-the-money baseline, with the completeness check (attributions sum to the price difference) reported alongside. |
 
 ## Results
@@ -80,7 +80,7 @@ Main pricer, 5-member ensemble, 600 test points:
 | Delta | 7.1e-4 |
 | Vega | 13e-4 |
 
-### That 1.4 bp is not a noise floor — it is a fixable bias
+### That 1.4 bp is not a noise floor, it is a fixable bias
 
 An earlier version of this README explained the 1.4 bp away as the label noise floor. That
 was wrong, and finding out why produced the most interesting result in the project.
@@ -93,13 +93,13 @@ the true price is below 0.01 bps the network still predicted ~1.08 bps and never
 about 1 bp and lifts the whole surface.
 
 Two fixes were tested at full scale (500,000 labels, 5,000 paths each, 400 epochs,
-5-member ensembles, both arms identical except for the one change under test — see
+5-member ensembles, both arms identical except for the one change under test; see
 `scripts/fullscale_ablation.py` and `artifacts/ablation.json`):
 
 | model | RMSE | bias | % positive | bias²/MSE |
 |---|---|---|---|---|
 | previous `model.pt` | 1.489 bps | +0.966 | 89.3% | 42.1% |
-| **conditioned head — now served** | **1.301 bps** | **+0.404** | 78.1% | **9.7%** |
+| **conditioned head (now served)** | **1.301 bps** | **+0.404** | 78.1% | **9.7%** |
 | residual over geometric Asian | 1.823 bps | +0.925 | 86.8% | 25.7% |
 
 The conditioned head is now the served checkpoint. Promotion is gated:
@@ -111,7 +111,7 @@ Swapping a served model on a training-time validation number is how the old one
 came to carry a +0.99 bp bias that this README described as an irreducible noise
 floor.
 
-**What the promotion actually bought — and cost.** Paired comparison, both
+**What the promotion actually bought, and what it cost.** Paired comparison, both
 models priced on the same 1,500 points against the same references:
 
 | | price RMSE | price bias | delta RMSE | vega RMSE |
@@ -131,7 +131,7 @@ The first version of the gate tested price only, so it did not see the Greeks
 regression at all. It now reports delta and vega alongside; they are reported,
 not blocking, and the reason is written into the script.
 
-Two further caveats. The gain is concentrated in the systematic component — p95
+Two further caveats. The gain is concentrated in the systematic component: p95
 absolute error is essentially unchanged (2.609 vs 2.595 bps) and the worst case
 is marginally wider (10.34 vs 10.20). And the absolute RMSE is heavy-tailed
 enough that it moves with the test draw: the same promoted checkpoint measures
@@ -139,8 +139,8 @@ enough that it moves with the test draw: the same promoted checkpoint measures
 *paired* comparison above is the meaningful one, because both models see
 identical points and identical references.
 
-*Head conditioning* — carrying the output magnitude in a fixed scale with the Softplus head
-initialized near unity — **halved the systematic bias**. The previous initialization started
+*Head conditioning*, which carries the output magnitude in a fixed scale with the Softplus head
+initialized near unity, **halved the systematic bias**. The previous initialization started
 every run at `softplus(0) = 0.693`, i.e. 6,930 bps against a mean price of 3,664 bps.
 
 *Residual over geometric* did **not** work, and that is a real result. Since AM–GM gives
@@ -159,28 +159,28 @@ honest comparison is not only against Monte Carlo. Against Levy (1992) moment ma
 |---|---|---|---|---|
 | neural ensemble | 1.329 bps | +0.548 | 2.376 | 714 µs p50 |
 | Levy moment matching | 44.344 bps | +19.813 | 103.300 | 56 µs |
-| Monte Carlo, 200k paths | (reference) | — | — | 357,000 µs |
+| Monte Carlo, 200k paths | (reference) | n/a | n/a | 357,000 µs |
 
 **33x more accurate** than the closed form at 13x its cost, and 500x faster than Monte
-Carlo — a genuine point on the speed/accuracy frontier that neither alternative occupies.
+Carlo, a genuine point on the speed/accuracy frontier that neither alternative occupies.
 
 The one regime where Levy still wins is where the true price is essentially zero
 (0.082 vs 0.310 bps), which is the Softplus floor seen from an independent direction. Note
-that gap narrowed by more than 3x when the head was conditioned — the floor shrank from
-1.050 to 0.310 bps — which is corroboration from a completely different measurement that
+that gap narrowed by more than 3x when the head was conditioned (the floor shrank from
+1.050 to 0.310 bps), which is corroboration from a completely different measurement that
 the bias diagnosis was right.
 
 ### Latency, honestly
 
 Measured on this machine, best of 200 calls: a single price **plus all Greeks** is
-**8.4 ms at p50** (9.3 ms p95, 9.8 ms p99) — the Greeks path does a double backward pass for
+**8.4 ms at p50** (9.3 ms p95, 9.8 ms p99). The Greeks path does a double backward pass for
 gamma across five ensemble members. An earlier README claim of "roughly a millisecond for a
 single price plus all Greeks" was off by 8x; ~714 µs is the price-only figure. Batch
 throughput does hold up: **487,843 prices/sec** at a batch of 10,000.
 
 Label generation runs on the GPU in float64 (`backend/quant/gpu_labels.py`): 0.85 G
 path-steps/s on an RTX 5080, so the full 500,000-label dataset takes 148 s instead of roughly
-80 minutes on CPU. float64 is not optional — running the same kernel at float32 with
+80 minutes on CPU. float64 is not optional: running the same kernel at float32 with
 identical seeds injects 10.03 bps of price RMSE at 5,000 paths, several times the entire
 error budget, because the control variate differences two deliberately near-identical
 quantities. Serving stays on CPU: at a batch of 1 the GPU is *slower* (1,813 µs vs 1,336 µs),
@@ -197,8 +197,8 @@ previously made.
 (Mandelbrot–Van Ness) fractional Brownian covariance
 `0.5(t_i^2H + t_j^2H − |t_i−t_j|^2H)`. Rough Bergomi is driven by the
 Riemann–Liouville Volterra process `W̃_t = √(2H)∫₀ᵗ(t−s)^(H−½)dW_s`. The two agree
-on the diagonal — both give `Var[W̃_t] = t^2H`, which is why the martingale property
-held and nothing looked wrong — and agree nowhere else: at H = 0.1172 the maximum
+on the diagonal (both give `Var[W̃_t] = t^2H`, which is why the martingale property
+held and nothing looked wrong) and agree nowhere else: at H = 0.1172 the maximum
 off-diagonal relative difference is **4.93**, and `corr(W̃_t1, W̃_t50)` was **+0.320**
 against a true **+0.054**.
 
@@ -206,7 +206,7 @@ There was a second half to it. `chol(C)` is not the Volterra kernel, because W̃
 continuous stochastic integral rather than a linear function of n coarse increments.
 Factorising C alone forces `corr(Z_1, W̃_t1) = 1` by construction when the truth is
 `√(2H)/(H+½) = 0.7844`, so the leverage correlation ρ was being applied to the wrong
-object — over-correlating spot and vol precisely at the short end where a 0DTE skew
+object, over-correlating spot and vol precisely at the short end where a 0DTE skew
 fit is identified. Both are now fixed with the exact joint-Gaussian scheme, verified
 against quadrature to 5.4e-08 and against 400,000 draws.
 
@@ -224,14 +224,14 @@ with the *wrong* teacher and has been replaced by a measurement against the righ
 
 The surrogate sits below its own per-label noise, which is what least-squares over
 25,000 noisy labels should achieve. Validation RMSE against those noisy labels is
-3.5 bps and overstates the true error by 2.4x — the same gap the main pricer shows,
+3.5 bps and overstates the true error by 2.4x, the same gap the main pricer shows,
 and the reason this project scores against high-precision references rather than
 against its own training targets.
 
 **The calibration was not live.** This README previously said the model was
 "calibrated to the live SPY smile ... about 2 volatility points across 72 quotes and
 two expiries." The committed `artifacts/rough_calibration.json` reads
-`as_of 2026-07-09T03:43:16-04:00` — 03:43 New York, market closed — with
+`as_of 2026-07-09T03:43:16-04:00` (03:43 New York, market closed) with
 `quote_source: "last_trade_market_closed"`, and `accepted: true`. Those exact
 parameters (H 0.1172, η 2.1384, ρ −0.7387) are what `model_0dte.pt` carries. A
 market-closed fit passed the quality gate and was trained into the served model,
@@ -259,7 +259,7 @@ Three problems, all measured:
 2. **The baseline was handicapped**, hedging at the requested σ while paths realized 1.28σ.
    On the old measure, vol-matching alone closed ~83% of the claimed gap.
 3. **The comparison was in-sample on a degenerate generator.** The WGAN is mode-collapsed
-   (participation ratio 4.66 of 30 factors), making its paths forecastable — R² = 0.8755
+   (participation ratio 4.66 of 30 factors), making its paths forecastable: R² = 0.8755
    regressing future returns on realized ones, versus 0.0006 for GBM. Minimizing CVaR there
    rewards market timing, not hedging.
 
@@ -289,17 +289,17 @@ Measured on the committed snapshot (836 BTC options, 12 expiries, 0.42 to 323 da
 per-expiry forward, not spot. Reading `price_usd = price_btc x forward` and inverting
 Black-76 reproduces Deribit's own published `mark_iv` to a median of **0.0028 vol points**.
 Reading the coin premium as a dollar price instead gives 4.62 vol points where the truth is
-32.88 — **wrong by 7.1x**, and wrong in a way that still produces a smooth, plausible
+32.88, **wrong by 7.1x**, and wrong in a way that still produces a smooth, plausible
 surface. The day count was pinned the same way: ACT/365 reproduces `mark_iv` to +0.0001 vol
 points, against -0.2727 for a 360-day year.
 
-**A real chain is mostly unusable.** 289 of 836 quotes are flagged and dropped — 199 with a
+**A real chain is mostly unusable.** 289 of 836 quotes are flagged and dropped: 199 with a
 bid below the no-arbitrage floor, 118 with no volume or open interest, 66 one-sided, 56 with
 vega too small for the IV inversion to mean anything. The IV bid-ask on what survives has a
 median of **1.36 vol points** and a 95th percentile of 9.79.
 
 **No static arbitrage survives the spread.** Of 499 butterfly triples, 523 vertical pairs, 11
-calendar pairs and 195 parity strikes, 51 violations appear on mid prices — and **zero are
+calendar pairs and 195 parity strikes, 51 violations appear on mid prices, and **zero are
 executable** once you require crossing the actual bid-ask, before fees. Reporting the
 mid-price count as "arbitrage found" would have been the easy, wrong answer.
 
