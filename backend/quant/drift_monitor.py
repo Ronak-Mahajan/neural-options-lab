@@ -166,7 +166,7 @@ def assess_drift(threshold_bps: float) -> DriftReport:
     # This previously constructed PricingEngine(ARTIFACTS / "model_0dte.pt")
     # and raised KeyError: 'width'. PricingEngine.__init__ reads meta['width'],
     # 'blocks', 'n_monitoring_steps' and 'param_ranges', none of which exist in
-    # the 0DTE checkpoint — its meta holds {'0dte','normalize','n_members',
+    # the 0DTE checkpoint - its meta holds {'0dte','normalize','n_members',
     # 'val_rmse_bps','model','H','eta','rho'}. The 0DTE ensemble is only ever
     # meant to be reached through the has_0dte side-path inside a default
     # engine, which hardcodes its own width/blocks and bounds.

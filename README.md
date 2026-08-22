@@ -143,7 +143,7 @@ identical points and identical references.
 initialized near unity, **halved the systematic bias**. The previous initialization started
 every run at `softplus(0) = 0.693`, i.e. 6,930 bps against a mean price of 3,664 bps.
 
-*Residual over geometric* did **not** work, and that is a real result. Since AM–GM gives
+*Residual over geometric* did **not** work, and that is a real result. Since AM-GM gives
 `C_arith ≥ C_geo` pathwise, learning only the residual should have shrunk what the Softplus
 floor can distort. It made things 37% worse, because the residual has a 3.8x wider relative
 dynamic range (p99/p50 of 12.46 versus 3.27) and that outweighs the 21x smaller output
@@ -194,9 +194,9 @@ Two defects here, both found by audit and both invalidating claims this README
 previously made.
 
 **The driver was the wrong process.** `rough_vol.py` built the Type-I
-(Mandelbrot–Van Ness) fractional Brownian covariance
+(Mandelbrot-Van Ness) fractional Brownian covariance
 `0.5(t_i^2H + t_j^2H − |t_i−t_j|^2H)`. Rough Bergomi is driven by the
-Riemann–Liouville Volterra process `W̃_t = √(2H)∫₀ᵗ(t−s)^(H−½)dW_s`. The two agree
+Riemann-Liouville Volterra process `W̃_t = √(2H)∫₀ᵗ(t−s)^(H−½)dW_s`. The two agree
 on the diagonal (both give `Var[W̃_t] = t^2H`, which is why the martingale property
 held and nothing looked wrong) and agree nowhere else: at H = 0.1172 the maximum
 off-diagonal relative difference is **4.93**, and `corr(W̃_t1, W̃_t50)` was **+0.320**
@@ -252,7 +252,7 @@ Three problems, all measured:
 1. **The simulated measure was not risk-neutral.** `risk_neutralize` matched per-step
    marginals but left cross-step covariance free, so paths realized 1.28x the requested
    volatility and discounted spot was not a martingale (E[S_T] exceeded e^{rT} by up to
-   147 bps). The option was booked at Black–Scholes while being worth ~30% more under the
+   147 bps). The option was booked at Black-Scholes while being worth ~30% more under the
    measure actually being simulated. Now fixed: terminal variance and the martingale
    condition are both enforced exactly, and the premium is priced under the simulated
    measure.
@@ -263,17 +263,17 @@ Three problems, all measured:
    regressing future returns on realized ones, versus 0.0006 for GBM. Minimizing CVaR there
    rewards market timing, not hedging.
 
-After fixing 1 and 2 and adding a cost-aware Whalley–Wilmott baseline, evaluated
+After fixing 1 and 2 and adding a cost-aware Whalley-Wilmott baseline, evaluated
 out-of-sample on risk-neutral GBM over a 12-cell (σ, cost) grid, 15,000 paths per cell:
 
-| policy | beats vol-matched delta | median ratio | beats Whalley–Wilmott |
+| policy | beats vol-matched delta | median ratio | beats Whalley-Wilmott |
 |---|---|---|---|
 | trained on the fixed GAN measure | 2 / 12 | 1.469 | 0 / 12 |
 | **trained on GBM (in-sample!)** | **5 / 12** | **1.085** | **1 / 12** |
 
 A ratio above 1 means worse tail loss. Even trained and evaluated on the same correct
 measure, the learned policy loses to a vol-matched delta hedge in 7 of 12 cells and to
-Whalley–Wilmott in 11 of 12. **As implemented, deep hedging here does not beat a properly
+Whalley-Wilmott in 11 of 12. **As implemented, deep hedging here does not beat a properly
 specified baseline.** `compare()` now reports both measures side by side with bootstrap
 standard errors and defaults its headline to the out-of-sample one.
 

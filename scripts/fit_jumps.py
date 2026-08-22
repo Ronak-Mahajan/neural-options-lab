@@ -199,7 +199,7 @@ def main() -> None:
                 frac = (v - lo) / (hi - lo)
                 if not 0.02 < frac < 0.98:
                     print(f"  WARNING: {name} at {frac:.1%} of its bound "
-                          f"[{lo}, {hi}] — treat this arm as unidentified",
+                          f"[{lo}, {hi}] - treat this arm as unidentified",
                           flush=True)
 
         model = cal.model_prices(eta, rho, H, xi, n_paths=REPORT,

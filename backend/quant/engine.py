@@ -101,8 +101,8 @@ class PricingEngine:
             return self._asian_call(m, mat, sig, r, member)
 
         # Mixed batch. This used to gate on .all(), so a batch spanning the
-        # cutoff sent EVERY element through the Asian net — including
-        # maturities below its 0.05 training floor, silently extrapolated —
+        # cutoff sent EVERY element through the Asian net - including
+        # maturities below its 0.05 training floor, silently extrapolated -
         # while price_batch then applied EUROPEAN parity to the short-dated
         # ones. Two different parity relations on one price vector. Route
         # per element instead, so each maturity is priced by the model that

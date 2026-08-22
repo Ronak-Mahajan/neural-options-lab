@@ -11,7 +11,7 @@ simulation:
 
 Each term is variance-normalized so lambda = 1 balances them regardless of
 units. Matching differentials teaches the network the shape of the pricing
-function between sample points — better Greeks *and* better prices per label.
+function between sample points - better Greeks *and* better prices per label.
 
 Usage (from the repo root):
     python -m backend.quant.train --ensemble 5    # full DML ensemble
@@ -141,7 +141,7 @@ def main() -> None:
     t_all = time.perf_counter()
 
     # ---------------------------------------------------------- deep ensemble
-    # Members share the data but differ in initialization and batch order —
+    # Members share the data but differ in initialization and batch order -
     # the standard deep-ensembles recipe. Averaging N members shrinks the
     # (decorrelated part of the) approximation error roughly like 1/sqrt(N).
     for member in range(args.ensemble):
@@ -214,7 +214,7 @@ def main() -> None:
     # ------------------------------------------------------------ checkpoint
     # Validation RMSE is on price/K; multiply by 1e4 to read it in
     # basis points of strike. Val labels are themselves MC-noisy, so this is
-    # an upper bound — run backend.quant.evaluate for error vs high-precision
+    # an upper bound - run backend.quant.evaluate for error vs high-precision
     # references.
     meta = {
         "width": args.width,

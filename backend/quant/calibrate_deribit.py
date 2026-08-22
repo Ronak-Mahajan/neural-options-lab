@@ -9,7 +9,7 @@ it carries three approximations this venue simply does not have:
 * SPY is American-exercise; Deribit options are European, which is exactly what
   `rough_vol.rough_bergomi_mc` prices. No early-exercise premium to wave away.
 * SPY pays a 1.1-1.3% dividend. The put-call parity map is applied only to puts,
-  so a dividend error is one-sided — a pure skew distortion, and rho is the
+  so a dividend error is one-sided - a pure skew distortion, and rho is the
   parameter that absorbs skew. An audit measured 0.37/0.28/0.31 vol points of
   bias at 0.5/1.5/3.0 DTE against a total fit residual of 1.969, i.e. 15-20% of
   the residual was a systematic shift of the put wing. Deribit BTC options have
@@ -18,7 +18,7 @@ it carries three approximations this venue simply does not have:
   with the current time. Deribit publishes live two-sided books 24/7.
 
 So this path is both always-available and better-posed. The trade is that it
-calibrates the model to BTC volatility dynamics, not equity-index dynamics —
+calibrates the model to BTC volatility dynamics, not equity-index dynamics -
 which is why the market is recorded in the calibration file, in the dataset and
 in the served checkpoint, and why the two calibrations live in separate files
 that cannot overwrite one another.
@@ -27,7 +27,7 @@ What is reused
 --------------
 Everything that matters: `Calibrator` (the CRN vega-weighted Huber objective),
 the three-stage differential-evolution + Powell + re-polish schedule, and
-`quality_gate`. Only the market snapshot differs. That is deliberate — two fits
+`quality_gate`. Only the market snapshot differs. That is deliberate - two fits
 that share an objective and a gate are comparable; two that do not are not.
 
 Domain
@@ -80,8 +80,8 @@ MIN_QUOTES = 8
 MIN_EXPIRIES = 2
 
 #: BTC needs more vol-of-vol headroom than an equity index. The first live fit
-#: ran eta to 3.936 against calibrate.BOUNDS' ceiling of 4.0 — 98.2% of the
-#: range — which is a bound hit, not a fit. Crypto smiles are far more convex
+#: ran eta to 3.936 against calibrate.BOUNDS' ceiling of 4.0 - 98.2% of the
+#: range - which is a bound hit, not a fit. Crypto smiles are far more convex
 #: than SPY's, so the equity-tuned ceiling is the wrong prior here. Widening it
 #: is only legitimate if the fit then lands INTERIOR; if it runs to the new
 #: ceiling too, that is model misspecification and the gate must say so rather
@@ -140,7 +140,7 @@ def quotes_from_surface(surface) -> tuple[list[Quote], dict]:
         if not math.isfinite(q.vega) or q.vega <= 0.0:
             drops["no_vega"] += 1
             continue
-        # The market's own width on exactly the quotes that enter the fit —
+        # The market's own width on exactly the quotes that enter the fit -
         # short-dated OTM books are wider than the surface median, so this must
         # be measured on the fitted subset, not on the whole chain.
         if math.isfinite(q.iv_spread):
@@ -283,7 +283,7 @@ def main() -> int:
         accepted = False
         reasons = list(reasons) + [
             f"eta = {r['eta']:.4f} is pinned at its bound [{lo_e}, {hi_e}] "
-            f"({(r['eta'] - lo_e) / (hi_e - lo_e) * 100:.1f}% of range) — the "
+            f"({(r['eta'] - lo_e) / (hi_e - lo_e) * 100:.1f}% of range) - the "
             f"model cannot reach this surface without extreme vol-of-vol"]
 
     payload = {

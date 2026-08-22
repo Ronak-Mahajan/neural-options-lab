@@ -8,7 +8,7 @@ real two-sided order book instead of a simulator. Everything here operates on a
 1. THE CONVENTION TRAP: a Deribit option premium is not a price in dollars
 ===========================================================================
 Deribit BTC options are European, cash-settled against the Deribit BTC index at
-08:00 UTC on the expiry date, and **inverse** — the API calls them
+08:00 UTC on the expiry date, and **inverse** - the API calls them
 ``instrument_type: "reversed"``. Contract size is 1.0 BTC, and both the premium
 and the settlement are denominated in BTC. A call struck at K settles for
 
@@ -20,13 +20,13 @@ economics are a plain USD vanilla; only the numeraire of the *quote* is unusual.
 The trap: the quoted premium ``p`` is a fraction of ONE COIN, not a dollar
 price and not a fraction of the strike. Measured on the committed snapshot,
 feeding ``p`` straight into a Black inversion as if it were a USD price leaves
-428 of 836 instruments with no solution at all — and, far worse, lets the other
+428 of 836 instruments with no solution at all - and, far worse, lets the other
 408 return a *plausible-looking* implied vol (median 12.19%, range 0.04% to
 63.3%) against a true median near 50%. It fails silently on half the chain.
 
 Which coin price converts it? Two candidates: the spot index S_0, or the future
 F_T for that expiry (the API gives it as ``underlying_price``). This was settled
-by measurement, not by argument — reproducing Deribit's own published
+by measurement, not by argument - reproducing Deribit's own published
 ``mark_iv`` from ``mark_price`` across all 836 instruments:
 
     conversion                year   n     rms      median    p95|err|
@@ -46,7 +46,7 @@ So the convention implemented here is:
 Undiscounted is not an approximation: ``interest_rate`` is exactly 0.0 on every
 book-summary row, and multiplying the coin premium by the *forward* rather than
 the spot is precisely what carries the premium to expiry in the BTC numeraire.
-It also makes the no-arbitrage algebra clean — with a discount factor of 1,
+It also makes the no-arbitrage algebra clean - with a discount factor of 1,
 put-call parity in coin terms is simply ``c - p = 1 - K/F``.
 
 Spot versus forward is not cosmetic. Measured on the snapshot, the futures basis
@@ -74,15 +74,15 @@ Real books violate static no-arbitrage constantly, and the interesting question
 is not *whether* but *by how much, and can you actually lift it*. Each test is
 therefore run twice:
 
-  * **mid** — the textbook condition on mid prices. This is what a surface
+  * **mid** - the textbook condition on mid prices. This is what a surface
     fitter sees and what breaks an interpolator.
-  * **executable** — the same condition with every leg crossed on the side you
+  * **executable** - the same condition with every leg crossed on the side you
     would actually pay (buy at ask, sell at bid). A violation that survives here
     is a live, liftable arbitrage, not a quoting artifact.
 
 and executable violations are additionally reported net of Deribit's taker fee
 (``taker_commission`` = 0.0003 of the underlying per contract, read from the
-instrument record — see `fee_usd`).
+instrument record - see `fee_usd`).
 
 The four tests, all in undiscounted forward-USD terms:
 
@@ -102,7 +102,7 @@ The four tests, all in undiscounted forward-USD terms:
       log-moneyness k = log(K/F_T) [Gatheral & Jacquier 2014]. Checked on a
       common k-grid between adjacent expiries by linear interpolation of w in k
       over the clean OTM quotes. The executable version asks whether the far
-      expiry's ASK variance still sits below the near expiry's BID variance —
+      expiry's ASK variance still sits below the near expiry's BID variance -
       i.e. whether the spread is violated even paying the offer and hitting the
       bid.
 
@@ -114,8 +114,8 @@ The four tests, all in undiscounted forward-USD terms:
       arbitrage exists only if the *futures* book sits outside that bracket:
       sell the future above F_hi and buy the synthetic, or buy the future below
       F_lo and sell the synthetic. Comparing against the independently quoted
-      BTC-<expiry> future — not against a forward backed out of the same option
-      quotes — is what makes this a real test.
+      BTC-<expiry> future - not against a forward backed out of the same option
+      quotes - is what makes this a real test.
 
 ===========================================================================
 4. QUOTE HYGIENE, AND AN HONEST NOTE ON "STALE"
@@ -136,15 +136,15 @@ measure it. What is observable, and what `build_surface` flags:
                       identified (a deep-ITM near-expiry quote moves 70 vol
                       points on one tick)
     wide              iv_ask - iv_bid above `max_iv_spread`
-    no_trade          zero 24h volume AND zero open interest — the closest
+    no_trade          zero 24h volume AND zero open interest - the closest
                       honest proxy for a stale, untested quote
 
 References
 ----------
 F. Black (1976), "The pricing of commodity contracts", J. Financial Economics.
 J. Gatheral & A. Jacquier (2014), "Arbitrage-free SVI volatility surfaces",
-    Quantitative Finance 14(1) — the total-variance calendar condition.
-M. Roper (2010), "Arbitrage free implied volatility surfaces" — the static
+    Quantitative Finance 14(1) - the total-variance calendar condition.
+M. Roper (2010), "Arbitrage free implied volatility surfaces" - the static
     butterfly / vertical / calendar conditions in the form used here.
 Deribit API v2 documentation, https://docs.deribit.com/.
 """
@@ -268,7 +268,7 @@ def implied_vol(price: float, forward: float, strike: float, tenor: float,
 
     Returning NaN rather than clamping is deliberate. A price outside
     ``[max(F-K,0), F]`` for a call (or ``[max(K-F,0), K]`` for a put) is not a
-    slightly-wrong volatility, it is a static arbitrage — and 19 of the 836
+    slightly-wrong volatility, it is a static arbitrage - and 19 of the 836
     marks on the committed snapshot are exactly that. Clamping would launder
     those into a plausible number and destroy the diagnostic.
     """
@@ -294,7 +294,7 @@ def fee_usd(forward: float, taker_commission: float, *,
 
     `taker_commission` (0.0003 on every option row of the snapshot) is a
     fraction of the underlying, so the fee is ``0.0003 * F`` ~ 19.4 USD per
-    contract at F = 64,631 — large enough to swallow most apparent edges, which
+    contract at F = 64,631 - large enough to swallow most apparent edges, which
     is exactly why the diagnostics report a net-of-fee count.
 
     Deribit additionally caps the option fee at 12.5% of the premium. That cap
@@ -858,7 +858,7 @@ def parity_violations(surface: VolSurface) -> list[Violation]:
 
     Fees here are four legs (call, put, future, and the future's own commission
     is charged on notional), so the net-of-fee test subtracts three option-side
-    taker fees as a deliberately conservative stand-in — Deribit's futures fee
+    taker fees as a deliberately conservative stand-in - Deribit's futures fee
     schedule is not in the API response and is not guessed at here.
     """
     out: list[Violation] = []
@@ -910,7 +910,7 @@ def parity_violations(surface: VolSurface) -> list[Violation]:
 def parity_forward_stats(surface: VolSurface) -> list[dict[str, Any]]:
     """Per-expiry synthetic-forward bracket width and its basis to the future.
 
-    Not a violation report — this is the microstructure summary that says how
+    Not a violation report - this is the microstructure summary that says how
     tightly the options book actually pins the forward.
     """
     out: list[dict[str, Any]] = []

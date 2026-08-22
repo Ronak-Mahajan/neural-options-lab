@@ -6,7 +6,7 @@ Architecture notes
   box, which keeps every feature on the same scale without a fitted scaler.
 - SiLU activations + LayerNorm residual blocks: smooth (C-infinity)
   activations matter here because we differentiate the network to obtain
-  Greeks — ReLU would give piecewise-constant delta and zero gamma a.e.
+  Greeks - ReLU would give piecewise-constant delta and zero gamma a.e.
 - Softplus output enforces price positivity while staying smooth.
 """
 

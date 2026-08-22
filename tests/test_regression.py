@@ -1,7 +1,7 @@
 """Regression tests: one per bug actually found and fixed in this codebase.
 
 Each test names the defect it guards against. They are written to FAIL against
-the code as it was, not merely to exercise the happy path — a test that would
+the code as it was, not merely to exercise the happy path - a test that would
 not have caught the bug is not a regression test.
 """
 
@@ -22,7 +22,7 @@ from backend.quant.monte_carlo import price_asian_mc
 
 
 # --------------------------------------------------------------------------- #
-#  monte_carlo.py — the reported standard error ignored antithetic dependence
+#  monte_carlo.py - the reported standard error ignored antithetic dependence
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("control_variate", [False, True])
@@ -32,7 +32,7 @@ def test_reported_standard_error_matches_empirical(control_variate):
     The old code computed se = x.std(ddof=1)/sqrt(n), treating negatively
     correlated antithetic pairs as independent. Measured, that overstated the
     true error by ~45% with the control variate off (ratio 1.44 at 5k paths,
-    1.49 at 20k) — and that inflated standard error is what produced the
+    1.49 at 20k) - and that inflated standard error is what produced the
     README's claimed "~30x" variance reduction, whose honest value is 23.8x.
 
     This compares the reported standard error against the empirical standard
@@ -71,7 +71,7 @@ def test_control_variate_actually_reduces_variance():
 
 
 # --------------------------------------------------------------------------- #
-#  engine.py — mixed-maturity batches were routed to the wrong model
+#  engine.py - mixed-maturity batches were routed to the wrong model
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture(scope="module")
@@ -84,7 +84,7 @@ def test_mixed_maturity_batch_matches_scalar(engine, option_type):
     """price_batch gated 0DTE routing on (mat <= cutoff).all() while masking the
     put parity adjustment per element. A batch spanning the cutoff therefore
     priced every call with the Asian net and then applied EUROPEAN parity to
-    the short-dated entries — two parity relations on one vector.
+    the short-dated entries - two parity relations on one vector.
 
     The scalar path was always self-consistent, so batch-vs-scalar agreement is
     the sharpest available check.
@@ -116,7 +116,7 @@ def test_in_domain_knows_about_both_surrogates(engine):
 
 
 # --------------------------------------------------------------------------- #
-#  generative.py — risk_neutralize produced a non-martingale measure
+#  generative.py - risk_neutralize produced a non-martingale measure
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture(scope="module")
@@ -166,7 +166,7 @@ def test_gbm_control_measure_is_risk_neutral():
 
 
 # --------------------------------------------------------------------------- #
-#  hedging.py — CVaR returned NaN on small samples
+#  hedging.py - CVaR returned NaN on small samples
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("n", [1, 5, 19, 20, 100])
@@ -221,7 +221,7 @@ def test_asian_call_dominates_geometric(engine):
 
 
 # --------------------------------------------------------------------------- #
-#  rough_vol.py — the wrong fractional kernel, and the wrong leverage object
+#  rough_vol.py - the wrong fractional kernel, and the wrong leverage object
 # --------------------------------------------------------------------------- #
 
 def test_volterra_covariance_matches_quadrature():
@@ -290,7 +290,7 @@ def test_old_fbm_covariance_fails_loudly():
 
 
 # --------------------------------------------------------------------------- #
-#  calibrate.py / dataset_0dte.py — a bad calibration must never be adopted
+#  calibrate.py / dataset_0dte.py - a bad calibration must never be adopted
 # --------------------------------------------------------------------------- #
 
 def _ok_fit(**over):
@@ -318,7 +318,7 @@ def test_quality_gate_rejects(bad, needle):
 
     The committed rough_calibration.json was stamped 03:43 New York with
     quote_source 'last_trade_market_closed' and accepted=true, because the gate
-    tested only RMSE and bound-pinning — never staleness, never xi, never
+    tested only RMSE and bound-pinning - never staleness, never xi, never
     unpriceable quotes. Those parameters were then trained into the served model.
     """
     from backend.quant.calibrate import quality_gate
@@ -331,8 +331,8 @@ def test_calibration_is_refused_when_it_predates_the_current_kernel(tmp_path,
                                                                     monkeypatch):
     """A fit is only valid for the driver it was fitted under.
 
-    The shipped calibration was fitted against the Type-I fBm covariance — a
-    process that is not rough Bergomi — so its (eta, rho, H) carry no
+    The shipped calibration was fitted against the Type-I fBm covariance - a
+    process that is not rough Bergomi - so its (eta, rho, H) carry no
     information now. Such files have no `kernel` field.
     """
     import json
@@ -370,7 +370,7 @@ def test_calibrate_stamps_the_kernel_it_was_fitted_under():
 
 
 # --------------------------------------------------------------------------- #
-#  engine.py — the served checkpoint carries a fixed output scale
+#  engine.py - the served checkpoint carries a fixed output scale
 # --------------------------------------------------------------------------- #
 
 def test_output_scale_is_loaded_and_legacy_checkpoints_default_to_one(engine):
@@ -387,7 +387,7 @@ def test_output_scale_is_loaded_and_legacy_checkpoints_default_to_one(engine):
 
 
 def test_greeks_flow_through_the_output_scale(engine):
-    """A constant output factor must pass cleanly into every derivative — if it
+    """A constant output factor must pass cleanly into every derivative - if it
     were applied outside the autograd graph the price would move and the Greeks
     would not, which is the kind of error that only shows up when someone hedges
     with it."""
@@ -417,11 +417,11 @@ def test_served_model_beats_its_predecessor_on_price(engine):
 
 
 # --------------------------------------------------------------------------- #
-#  calibrate.py — the quality gate had two blind spots a live run exposed
+#  calibrate.py - the quality gate had two blind spots a live run exposed
 # --------------------------------------------------------------------------- #
 
 def test_pin_tolerance_is_wide_enough_to_actually_fire():
-    """PIN_FRAC was 1e-3 — 0.1% of a parameter's range — so tight it could
+    """PIN_FRAC was 1e-3 - 0.1% of a parameter's range - so tight it could
     essentially never trigger. The first live Deribit BTC calibration returned
     eta = 3.936 against an upper bound of 4.0, i.e. 98.2% of the way across the
     range, and the gate ACCEPTED it. A bound hit is the signal that the model
@@ -496,7 +496,7 @@ def test_deribit_quotes_convert_into_calibrator_quotes():
 
 
 # --------------------------------------------------------------------------- #
-#  rough_vol.py / calibrate.py — one simulation per smile, and on the GPU
+#  rough_vol.py / calibrate.py - one simulation per smile, and on the GPU
 # --------------------------------------------------------------------------- #
 
 def test_strikes_on_one_smile_share_a_single_path_set():
@@ -561,7 +561,7 @@ def test_calibration_runs_on_the_gpu_when_one_is_available():
 def test_max_dte_default_admits_a_term_structure():
     """H is identified by the term structure of the skew. The old default of 3
     calendar days retained a SINGLE expiry after the tau floor, so the shipped
-    default could not identify one of the four parameters it fits — a live SPY
+    default could not identify one of the four parameters it fits - a live SPY
     run said so in its own output and then reported an H anyway.
 
     Reads the real default out of the module source rather than restating it.
@@ -586,13 +586,13 @@ def test_max_dte_default_admits_a_term_structure():
 
 
 # --------------------------------------------------------------------------- #
-#  calibrate.py — xi is a curve, and the gate is not a coin flip
+#  calibrate.py - xi is a curve, and the gate is not a coin flip
 # --------------------------------------------------------------------------- #
 
 def test_a_few_unpriceable_quotes_are_noise_not_a_failure():
     """The gate used to fail on a single unpriceable quote. Holding the
     parameters AND the quotes fixed and varying only the Monte Carlo path set
-    gave 1, 4 and 3 unpriceable at 64,000 paths and 1, 0 and 0 at 200,000 — so
+    gave 1, 4 and 3 unpriceable at 64,000 paths and 1, 0 and 0 at 200,000 - so
     a calibration passed or failed on the random draw, not on fit quality."""
     from backend.quant.calibrate import quality_gate
     ok = dict(rmse=1.0, eta=2.0, rho=-0.5, H=0.12, xi=0.03, stale=False,
@@ -608,8 +608,8 @@ def test_market_width_can_only_raise_the_rmse_ceiling_never_lower_it():
     """A wide book earns a looser ceiling. A TIGHT book must not earn a
     stricter one.
 
-    The first version of this criterion was symmetric — RMSE had to sit within
-    1.5x the median half-spread either way — and a live SPY run showed why that
+    The first version of this criterion was symmetric - RMSE had to sit within
+    1.5x the median half-spread either way - and a live SPY run showed why that
     is wrong. Across 677 two-sided quotes in 8 expiries the median half-spread
     was 0.052 vol points, i.e. a 3-cent market on a $3.96 option, which is
     simply how SPY quotes. The symmetric rule demanded a 4-parameter rough
@@ -634,7 +634,7 @@ def test_market_width_can_only_raise_the_rmse_ceiling_never_lower_it():
     wide, why = quality_gate(rmse=MAX_RMSE_VOLPTS + 1.0,
                              median_half_spread_iv=4.0, **base)
     assert wide, why
-    # But not without limit — 1.5 x 4.0 = 6.0 vp is still a ceiling.
+    # But not without limit - 1.5 x 4.0 = 6.0 vp is still a ceiling.
     too_wide, why = quality_gate(rmse=7.0, median_half_spread_iv=4.0, **base)
     assert not too_wide and any("half-spread" in r for r in why), why
 
@@ -707,7 +707,7 @@ def test_load_calibrated_dynamics_is_market_aware(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-#  rough_vol.py — compensated Merton jumps (the left-tail hypothesis)
+#  rough_vol.py - compensated Merton jumps (the left-tail hypothesis)
 # --------------------------------------------------------------------------- #
 
 def test_jumps_off_is_bit_identical():

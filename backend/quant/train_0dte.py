@@ -5,7 +5,7 @@ Trains the same architecture as the main pricer but specifically on the
 Because rough vol pathwise Greeks are complex, this uses standard price MSE.
 
 The near-expiry price surface has a sharp ATM kink, which a single short
-run underfits badly (~30 bps true error vs ~2 bps label noise) — so this
+run underfits badly (~30 bps true error vs ~2 bps label noise) - so this
 trains a deep ensemble with a longer cosine schedule, mirroring the main
 pricer's recipe.
 
@@ -57,8 +57,8 @@ def main():
 
     # Whether these dynamics came from a market calibration is a FACT ABOUT THE
     # DATASET, so read it from the calibration the same way dataset_0dte did,
-    # and check the parameters actually match. The alternative — trusting the
-    # artifact to still describe reality — is how the checkpoint ended up
+    # and check the parameters actually match. The alternative - trusting the
+    # artifact to still describe reality - is how the checkpoint ended up
     # announcing "uncalibrated defaults" while carrying eta=2.688 from a live
     # SPY fit.
     calibrated, note = False, (
@@ -86,7 +86,7 @@ def main():
                     f"RMSE {cal.get('iv_rmse_volpts', '?')} vol points, "
                     f"accepted by the quality gate ({cal_path.name}).")
             break
-    print(f"calibrated: {calibrated} — {note}")
+    print(f"calibrated: {calibrated} - {note}")
 
     # Exclude any NaNs
     valid = ~torch.isnan(y)
@@ -174,7 +174,7 @@ def main():
                          "kernel": dyn.get("kernel", "type_I_fbm_LEGACY"),
                          # DERIVED from the dataset, never hardcoded. This was
                          # pinned to False with a note explaining that the then
-                         # current calibration was unusable — true when written,
+                         # current calibration was unusable - true when written,
                          # and silently false the moment a good fit was adopted.
                          # A checkpoint carrying eta=2.688 from a live SPY fit
                          # while announcing "uncalibrated defaults" misinforms

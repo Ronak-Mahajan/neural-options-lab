@@ -57,12 +57,12 @@ def risk_neutralize(log_returns: torch.Tensor, sigma: torch.Tensor,
     What the previous implementation got wrong
     ------------------------------------------
     It standardized cross-sectionally PER TIME STEP, which pins each step's
-    marginal mean and sd exactly — but a pricing measure is a property of the
+    marginal mean and sd exactly - but a pricing measure is a property of the
     JOINT law, not the marginals. Cross-step covariance was left unconstrained,
     and the generator has plenty of it. Measured on 40,000 paths at rate=0.03:
 
       * terminal variance was wrong. Var[log S_T] = 0.00786788 against
-        sigma^2 T = 0.00476190 at sigma=0.20 — the paths realized 25.71% vol
+        sigma^2 T = 0.00476190 at sigma=0.20 - the paths realized 25.71% vol
         when the caller asked for 20.00%. The inflation was stable across the
         whole training box (1.286, 1.286, 1.285, 1.282, 1.273, 1.256 for
         sigma = 0.08, 0.15, 0.20, 0.30, 0.45, 0.65).
@@ -90,7 +90,7 @@ def risk_neutralize(log_returns: torch.Tensor, sigma: torch.Tensor,
     would require constraining the full covariance structure and would destroy
     the dependence the generator exists to provide.
 
-    Requires a batch homogeneous in (sigma, rate) — the cross-sectional
+    Requires a batch homogeneous in (sigma, rate) - the cross-sectional
     statistics are meaningless otherwise. The training loop enforces this by
     drawing one (sigma, rate, cost) triple per mini-batch.
     """
@@ -120,7 +120,7 @@ def risk_neutralize(log_returns: torch.Tensor, sigma: torch.Tensor,
 def gbm_log_returns(n_paths: int, sigma: float, rate: float, n_steps: int = N_STEPS,
                     generator: torch.Generator | None = None,
                     dtype: torch.dtype = torch.float32) -> torch.Tensor:
-    """Exact risk-neutral GBM log-returns — the out-of-sample control measure.
+    """Exact risk-neutral GBM log-returns - the out-of-sample control measure.
 
     The deep hedger is trained on the WGAN measure, so evaluating it there is
     in-sample with respect to the data-generating process. This provides an

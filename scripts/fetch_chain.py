@@ -1,7 +1,6 @@
 """Fetch a live Deribit option chain, build the surface, and report on it.
 
-Everything downstream of this script — the surface, the arbitrage tests, the
-whole test suite — reads a COMMITTED snapshot rather than the network, so the
+Everything downstream of this script (the surface, the arbitrage tests, the whole test suite) reads a COMMITTED snapshot rather than the network, so the
 repository stays deterministic and runnable offline. This is the one place that
 touches the internet, and it is opt-in.
 
@@ -64,7 +63,7 @@ def main() -> int:
 
     stats = surface.iv_spread_stats()
     if stats:
-        # iv_spread_stats already returns vol points — do not rescale.
+        # iv_spread_stats already returns vol points - do not rescale.
         print(f"\nIV bid-ask spread on {stats['n']} clean quotes (vol points):")
         for k in ("p05", "p25", "median", "p75", "p95", "mean", "max"):
             if k in stats:
