@@ -49,7 +49,7 @@ bucket:
 So the surrogate is ~28x more accurate than the closed form and ~500x faster than
 Monte Carlo: a genuine point on the speed/accuracy frontier that neither alternative
 occupies. The single regime where Levy wins is where the true price is essentially
-zero — Levy returns ~0 correctly, while the Softplus output floor of the surrogate
+zero - Levy returns ~0 correctly, while the Softplus output floor of the surrogate
 cannot. That is the same architectural bias documented in scripts/fullscale_ablation.py,
 observed here from an independent direction.
 """

@@ -1,13 +1,11 @@
 """Train the pricing-map surrogate on the banked GPU labels.
 
 Companion to gen_pricing_map.py. Input (9): eta, rho, H, ln xi, lam/150,
-mu_j, sig_j, ln tau, k. Output: Black IV. The network is small on purpose —
-the map is smooth, and a calibration objective evaluates it tens of thousands
-of times, so inference cost matters more than the last basis point of fit.
+mu_j, sig_j, ln tau, k. Output: Black IV. The network is small on purpose: the map is smooth, and a calibration objective evaluates it tens of thousands of times, so inference cost matters more than the last basis point of fit.
 
 The acceptance metric, revised once and the revision recorded: the original
 pre-registered bar (held-out RMSE < ~0.3 vp) was WRONG, because it compared
-the network against single noisy MC labels — measured, the labels themselves
+the network against single noisy MC labels - measured, the labels themselves
 carry ~2.2 vp of Monte Carlo noise in the production region at 131k paths, so
 no network can score below the noise of its own validation targets. The
 binding criterion is validate_pricing_map.py's END-TO-END test: calibrate a
@@ -61,7 +59,7 @@ def load_dataset() -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
     When the high-precision relabel exists (same seed, same thetas, 4x the
     paths into data/pricing_map_hq), each label becomes the PRECISION-WEIGHTED
     average of the two independent simulations: weights proportional to path
-    count (1/variance), so 131k + 524k paths behave like one 655k-path label —
+    count (1/variance), so 131k + 524k paths behave like one 655k-path label -
     a ~2.2x noise reduction over the original labels. Where only one run
     inverted (deep wings drift in and out of the no-arb region between path
     counts), the defined one is used. Thetas are verified identical per shard.
@@ -131,7 +129,7 @@ def features(X: torch.Tensor) -> torch.Tensor:
     Two engineered inputs carry the geometry the first version forced the
     network to rediscover (and it didn't, at 5.15 vp):
 
-      d = k / sqrt(xi * tau)   standardised moneyness — smiles are functions
+      d = k / sqrt(xi * tau)   standardised moneyness - smiles are functions
                                of d far more than of raw k, so this one
                                feature linearises most of the surface;
       ln(xi * tau)             total variance, the natural time-scale.
@@ -153,8 +151,8 @@ class PricingMap(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, feats: torch.Tensor) -> torch.Tensor:
-        # The network predicts ln(IV); exp keeps IV positive and — the real
-        # point — makes the training loss RELATIVE. Labels span 9% to 440%
+        # The network predicts ln(IV); exp keeps IV positive and - the real
+        # point - makes the training loss RELATIVE. Labels span 9% to 440%
         # vol (the box is log-uniform in xi), and an absolute-IV MSE spends
         # its capacity on the 300%-vol corners while calibration lives at
         # 10-30%. In log space a 1% relative error costs the same everywhere.
@@ -246,7 +244,7 @@ def main() -> None:
           f"{ARTIFACTS / 'pricing_map.pt'}")
     print("NOTE: this number includes the validation labels' own MC noise "
           "(~2.2 vp in the production region) and is a diagnostic, not the "
-          "gate. The gate is scripts/validate_pricing_map.py — end-to-end "
+          "gate. The gate is scripts/validate_pricing_map.py - end-to-end "
           "parameter recovery on a real surface, repriced under MC.")
 
 

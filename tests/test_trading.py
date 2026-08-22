@@ -1,6 +1,6 @@
 """Offline tests for the testnet execution layer.
 
-Everything runs against a FakeExchange transport — no network, no credentials.
+Everything runs against a FakeExchange transport - no network, no credentials.
 The exchange fake is deliberately stateful (orders rest, fills mutate
 positions) because the OMS's whole job is reconciling against a venue whose
 state moves without telling you.
@@ -103,7 +103,7 @@ def test_order_lifecycle_place_fill_reconcile(oms, venue):
     assert oms.orders[o.order_id].state == "filled"
     assert oms.position_amount == pytest.approx(0.5)
 
-    # A second sync reports nothing new — fills must not double-count.
+    # A second sync reports nothing new - fills must not double-count.
     assert oms.sync() == []
     assert oms.position_amount == pytest.approx(0.5)
 
@@ -121,7 +121,7 @@ def test_kill_switch_is_one_way(venue):
     risk = RiskManager(RiskLimits(max_order_size=1.0))
     with pytest.raises(KillSwitch):
         risk.pre_trade(side="buy", amount=5.0, position=0.0, n_open_orders=0)
-    # Once tripped, even a well-formed order is refused — forever.
+    # Once tripped, even a well-formed order is refused - forever.
     with pytest.raises(KillSwitch):
         risk.pre_trade(side="buy", amount=0.1, position=0.0, n_open_orders=0)
     assert risk.tripped
@@ -149,7 +149,7 @@ def test_session_loss_trips_on_equity_drift():
 
 def test_as_quotes_is_dimensionless():
     """Found live: absolute-unit A-S with dollar-scale defaults quoted
-    0.0001/0.4521 around a 0.0058 BTC mark — a 77x-the-price half-spread.
+    0.0001/0.4521 around a 0.0058 BTC mark - a 77x-the-price half-spread.
     In relative units the SAME parameters must produce the same relative
     spread at any price scale, lean against inventory, and stay ordered."""
     for mark in (0.0058, 100.0, 72_000.0):

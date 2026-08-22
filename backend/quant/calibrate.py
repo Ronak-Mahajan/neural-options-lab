@@ -1,6 +1,6 @@
 """Live market calibration of the rough Bergomi 0DTE engine.
 
-Fits (eta, rho, H) — plus the forward-variance nuisance parameter xi — to the
+Fits (eta, rho, H) - plus the forward-variance nuisance parameter xi - to the
 short-dated (<= max_dte) SPY option smile, using the same PyTorch Monte Carlo
 teacher (rough_vol.rough_bergomi_mc) that generates the 0DTE surrogate's
 training data.
@@ -19,7 +19,7 @@ Objective
 * Huber (delta = 2 vol points, Huber 1964): stale or crossed quotes get linear,
   not quadratic, influence.
 * Common random numbers (Glasserman 2004, ch. 4.2): a frozen seed makes the MC
-  objective a deterministic, near-smooth function of the parameters — the
+  objective a deterministic, near-smooth function of the parameters - the
   optimizer never chases resampling noise. It does NOT make the objective
   noise-free: the CRN surface has its own MC-induced ripples, which is what the
   reported noise floor measures (see below).
@@ -37,14 +37,14 @@ Stage 3  Powell RE-polish at `polish_paths` (default: `final_paths`).
 
 Stage 3 exists because H is not identifiable at 8k paths: the calibrator used
 to build one Calibrator with n_paths=search_paths, and both the global stage and
-the polish therefore optimised the *cheap* objective — `final_paths` only ever
+the polish therefore optimised the *cheap* objective - `final_paths` only ever
 entered the printed report. An audit profiling the real loss in H (with eta
 re-fitted at each H) over six CRN seeds found the argmin wandering across the
 entire test grid, 0.030 to 0.200, with co-fitted eta running to its upper bound;
 at 64,000 paths the same profile recovers the truth. So the fit is now polished
 at the precision it is reported at, and every run prints the objective's own
-Monte Carlo standard deviation — measured by re-evaluating the fitted point
-under `noise_reps` independent path sets — so a reader can see whether a loss
+Monte Carlo standard deviation - measured by re-evaluating the fitted point
+under `noise_reps` independent path sets - so a reader can see whether a loss
 improvement is signal or resampling.
 
 Everything is quoted off the market's own forward
@@ -63,7 +63,7 @@ call/put pair is tightest (the Cboe VIX methodology):
 
 and the discounted forward, fwd_pv = F e^{-r tau}, replaces `spot` everywhere:
 in the OTM split, in the parity map, in bs_call/bs_vega/implied_vol (which are
-then Black-76 in disguise — Black 1976), and as the initial value of the Monte
+then Black-76 in disguise - Black 1976), and as the initial value of the Monte
 Carlo, so that model and market share one forward by construction. Expiries
 that span an ex-dividend date are skipped outright: SPY is American-exercise and
 the early-exercise boundary bites hardest just before an ex-dividend date, where
@@ -78,7 +78,7 @@ live    >= MIN_QUOTES two-sided books survive the spread/liquidity filters. Mids
         book are REJECTED as unquoted; they do not silently fall back to a stale
         print stamped with the current time.
 closed  no live book. Mids are the previous session's last trades, and tau is
-        measured from the *median print time of that session*, not from now —
+        measured from the *median print time of that session*, not from now -
         measuring tau from now while pricing off yesterday's prints understates
         every maturity by up to a full session, which shortens the lever arm
         (log tau2/tau1) that identifies H and inflates the fitted xi. Prints
@@ -100,7 +100,7 @@ is adopted only when all of the following hold:
        independent and so is unfairly strict against a book quoting 8 wide.
        The ceiling only ever rises: tightening it on a narrow book is the
        wrong move, and a live SPY run proved it -- see quality_gate();
-    2. no free parameter — eta, rho, H *or xi* — sits within PIN_FRAC of a
+    2. no free parameter - eta, rho, H *or xi* - sits within PIN_FRAC of a
        bound (a bound hit signals misspecification or an ill-conditioned fit);
     3. the quotes came from a live book, not from last-session prints;
     4. fewer than MAX_UNPRICEABLE_FRAC of quotes fall outside the no-arb range.
@@ -114,7 +114,7 @@ is adopted only when all of the following hold:
 The gate is enforced HERE, at the point of use: `main --retrain` refuses to
 regenerate the dataset or retrain the surrogate on a rejected fit and exits 2.
 It previously only lived inside dataset_0dte.load_calibrated_dynamics(), which
-the --retrain path does not call — so drift_monitor.run_recalibration(), which
+the --retrain path does not call - so drift_monitor.run_recalibration(), which
 shells out to `calibrate --retrain` whenever drift is detected, would adopt a
 rejected calibration automatically. The rejected fit is still written to disk,
 with `reject_reasons`, for inspection.
@@ -129,9 +129,9 @@ the same vega-linearised error the objective uses, (P_model - P_mid)/vega,
 which is the first-order continuation of the implied-vol error past the no-arb
 boundary; `n_scored`, `n_unpriceable` and the old drop-the-worst number
 (`iv_rmse_volpts_priceable_only`) are all recorded. The count itself is a
-diagnostic rather than a gate — see criterion 4.
+diagnostic rather than a gate - see criterion 4.
 
-Day-count convention — READ THIS BEFORE COMPARING TO THE SURROGATE
+Day-count convention - READ THIS BEFORE COMPARING TO THE SURROGATE
 ------------------------------------------------------------------
 This module measures tau in ACT/365 *calendar* time. dataset_0dte.py trains the
 surrogate on k/252 *trading-day* maturities with k >= 1, i.e. its shortest
@@ -139,8 +139,8 @@ trained maturity is 1/252 yr = 34.76 h of ACT/365 time, while one calendar day
 is 24 h: the two conventions disagree by 365/252 = 1.45x at the short end. The
 calibration therefore drops every quote below MIN_TAU_HOURS so that no fitted
 maturity lies outside the surrogate's trained domain. The conventions are still
-not reconciled — a 1 DTE quote enters this fit as tau = 24/8760 yr and would
-enter the surrogate as 1/252 yr — and that reconciliation is a separate change.
+not reconciled - a 1 DTE quote enters this fit as tau = 24/8760 yr and would
+enter the surrogate as 1/252 yr - and that reconciliation is a separate change.
 
 Usage (from the repo root):
     python -m backend.quant.calibrate                    # calibrate SPY live
@@ -160,7 +160,7 @@ References
 Bayer, Friz & Gatheral (2016), "Pricing under rough volatility",
     Quantitative Finance 16(6), 887-904.
 Black (1976), "The pricing of commodity contracts", J. Financial Economics 3.
-Cboe (2019), "Cboe Volatility Index Methodology" — the forward is taken from
+Cboe (2019), "Cboe Volatility Index Methodology" - the forward is taken from
     the strike with the smallest |C - P|, F = K + e^{rT}(C - P).
 Glasserman (2004), "Monte Carlo Methods in Financial Engineering", Springer.
 Huber (1964), "Robust estimation of a location parameter",
@@ -216,10 +216,10 @@ MAX_RMSE_VOLPTS = 3.0
 # (width 1.4375). An absolute 1e-3, as used before, is 0.03% of the eta range
 # but 40% of the lower xi bound.
 #: How close to a bound counts as pinned, as a fraction of that parameter's
-#: range. This was 1e-3, i.e. 0.1% — so tight it could essentially never fire.
+#: range. This was 1e-3, i.e. 0.1% - so tight it could essentially never fire.
 #: Caught empirically: the first live Deribit BTC calibration returned
-#: eta = 3.936 against an upper bound of 4.0 — 98.2% of the way across the
-#: range, pinned in any practical sense — and the gate ACCEPTED it. A bound hit
+#: eta = 3.936 against an upper bound of 4.0 - 98.2% of the way across the
+#: range, pinned in any practical sense - and the gate ACCEPTED it. A bound hit
 #: is the signal that the model cannot reach the market without an extreme
 #: parameter, which is exactly what the gate exists to catch, so the tolerance
 #: has to be wide enough to notice. At 2% that fit is correctly rejected while
@@ -227,7 +227,7 @@ MAX_RMSE_VOLPTS = 3.0
 PIN_FRAC = 0.02
 
 #: How many median half-spreads of implied-vol RMSE a fit may carry. This can
-#: only RAISE the ceiling above MAX_RMSE_VOLPTS, never lower it — see the
+#: only RAISE the ceiling above MAX_RMSE_VOLPTS, never lower it - see the
 #: measurement in the gate below for why the tightening direction is wrong.
 MAX_RMSE_OVER_HALF_SPREAD = 1.5
 
@@ -246,7 +246,7 @@ MIN_OPEN_INTEREST = 100
 MIN_LAST = 0.05             # closed market: stricter, no spread to check
 MIN_LAST_VOLUME = 50
 MONEYNESS_BAND = (0.90, 1.10)
-# 1/252 yr — the surrogate's shortest trained maturity — expressed in ACT/365
+# 1/252 yr - the surrogate's shortest trained maturity - expressed in ACT/365
 # hours is 365*24/252 = 34.76 h; round up so the floor is unambiguous.
 SURROGATE_MIN_TAU_YEARS = 1.0 / 252.0
 MIN_TAU_HOURS = 34.8
@@ -269,7 +269,7 @@ def rule(title: str = "") -> None:
     print(f"{DIM}{pad}{'═' * max(8, 74 - len(title))}{RS}")
 
 
-# ── Black-76 helpers (calls only — puts are parity-mapped) ─────────────
+# ── Black-76 helpers (calls only - puts are parity-mapped) ─────────────
 # `fwd_pv` is the present value of the forward, F * e^{-r tau}. Substituting it
 # for the spot turns the Black-Scholes formulas below into Black (1976):
 #   C = e^{-r tau} [F N(d1) - K N(d2)] = fwd_pv N(d1) - K e^{-r tau} N(d2),
@@ -296,8 +296,8 @@ def implied_vol(price: float, fwd_pv: float, strike: float, tau: float,
     """Bisection BS inversion; None if the quote is out of no-arb range.
 
     The no-arb range for a call on a forward F is
-    (max(fwd_pv - K e^{-r tau}, 0), fwd_pv). Returning None is deliberate — a
-    price outside it has no implied vol — but a None must never be silently
+    (max(fwd_pv - K e^{-r tau}, 0), fwd_pv). Returning None is deliberate - a
+    price outside it has no implied vol - but a None must never be silently
     dropped from an error metric; see iv_fit_report().
     """
     if price <= max(fwd_pv - strike * math.exp(-rate * tau), 0.0) + 1e-10:
@@ -392,7 +392,7 @@ class MarketSnapshot:
 
 
 def _safe_float(value: Any) -> float | None:
-    """Parse a Yahoo chain cell; None — never 0.0 — when it is not a number.
+    """Parse a Yahoo chain cell; None - never 0.0 - when it is not a number.
 
     Mapping a MISSING ask to 0.0 (the previous behaviour) makes `ask >= bid`
     false and pushes the row into the last-trade branch: an *unquoted* contract
@@ -468,7 +468,7 @@ def _session_snapshot(rows: Sequence[RawRow]
                                  float | None, int]:
     """(session date, snapshot time, print spread in minutes, rows dropped).
 
-    The session is the latest NY calendar date any usable print carries — read
+    The session is the latest NY calendar date any usable print carries - read
     off the data rather than off a holiday calendar we do not have. The
     snapshot time is the median print time within that session: a joint fit
     across expiries needs ONE pricing instant, and the median is the robust
@@ -494,7 +494,7 @@ def implied_forward(calls: dict[float, tuple[float, float]],
     K* is the strike whose call/put pair is tightest (Cboe VIX methodology),
     tie-broken towards the money. Put-call parity is model-free, so this F
     carries the dividend, the borrow and the market's own funding assumption
-    without any of them being specified — which is the point, since
+    without any of them being specified - which is the point, since
     spot * e^{r tau} silently assumes a zero dividend yield on a ticker paying
     over 1%, and the resulting error lands entirely on the put wing (the only
     side that gets parity-mapped), i.e. on the skew, i.e. on rho.
@@ -617,7 +617,7 @@ def build_expiry_quotes(rows: Sequence[RawRow], *, tau: float, rate: float,
 
     quotes: list[Quote] = []
     for row, mid in usable:
-        # OTM only — the liquid half of each smile wing, split at the market's
+        # OTM only - the liquid half of each smile wing, split at the market's
         # own forward rather than at spot * e^{r tau}.
         if (row.kind == "C" and row.strike <= fwd.f) or \
                 (row.kind == "P" and row.strike >= fwd.f):
@@ -673,7 +673,7 @@ def fetch_calibration_set(ticker: str, max_dte: int,
     exdiv, exdiv_check = _ex_dividend_dates(tk)
 
     # Pass 1: pull the raw chains for every candidate expiry. tau is NOT known
-    # yet — it depends on the pricing time, which depends on all the rows.
+    # yet - it depends on the pricing time, which depends on all the rows.
     raw: dict[str, list[RawRow]] = {}
     exp_dts: dict[str, datetime] = {}
     for expiry in expiries:
@@ -713,13 +713,13 @@ def fetch_calibration_set(ticker: str, max_dte: int,
               f"pricing off the {session} session's last trades, "
               f"tau measured from the median print at "
               f"{pricing_time:%Y-%m-%d %H:%M %Z}{RS}")
-        print(f"  {RD}this run will NOT be adopted downstream — a "
+        print(f"  {RD}this run will NOT be adopted downstream - a "
               f"market-closed fit is indicative only{RS}")
         if dropped_sessions:
             print(f"  {DIM}{dropped_sessions} print(s) from an earlier "
                   f"session dropped{RS}")
         if spread_min is not None and spread_min > MAX_SNAPSHOT_SPREAD_MIN:
-            print(f"  {RD}prints span {spread_min:.0f} min — the snapshot is "
+            print(f"  {RD}prints span {spread_min:.0f} min - the snapshot is "
                   f"not synchronous{RS}")
 
     drops: dict[str, int] = {}
@@ -760,7 +760,7 @@ def fetch_calibration_set(ticker: str, max_dte: int,
         print(f"  {RD}skipped (ex-dividend inside the window, American "
               f"early exercise): {', '.join(skipped_exdiv)}{RS}")
     if exdiv_check != "ok":
-        print(f"  {RD}ex-dividend calendar unavailable — expiries were NOT "
+        print(f"  {RD}ex-dividend calendar unavailable - expiries were NOT "
               f"checked for an ex-dividend date{RS}")
     if drops:
         print(f"  {DIM}rows dropped: "
@@ -768,7 +768,7 @@ def fetch_calibration_set(ticker: str, max_dte: int,
     print(f"  {DIM}tau floor {min_tau_hours:.1f}h (= the surrogate's shortest "
           f"trained maturity, 1/252 yr, in ACT/365 hours); note this module "
           f"measures ACT/365 calendar time while the surrogate trains on "
-          f"k/252 trading days — 365/252 = 1.45x apart at the short end{RS}")
+          f"k/252 trading days - 365/252 = 1.45x apart at the short end{RS}")
 
     return MarketSnapshot(
         spot=spot, rate=rate, rate_source=rate_src, quotes=quotes,
@@ -820,7 +820,7 @@ class Calibrator:
         # formulation (and Bayer-Friz-Gatheral's rough version) xi_0(t) is a
         # forward variance CURVE; flattening it to one number forces a single
         # ATM volatility onto every maturity. Measured on a live SPY surface,
-        # ATM implied vol ran 9.18% to 11.75% across six expiries — a 2.57 vol
+        # ATM implied vol ran 9.18% to 11.75% across six expiries - a 2.57 vol
         # point term structure a scalar cannot represent, so a joint fit's
         # sqrt(xi) = 11.93% simply split the difference. Worse, H then absorbed
         # the residual level error: fitted per expiry it ranged 0.072 to 0.350,
@@ -875,8 +875,8 @@ class Calibrator:
 
         xi is a nuisance parameter: it sets the LEVEL of each smile, while
         (eta, rho, H) set its SHAPE. Searching all four jointly lets H trade
-        against the level and destroys its identification. Profiling xi out —
-        solving it exactly for each candidate (eta, rho, H) — leaves the outer
+        against the level and destroys its identification. Profiling xi out -
+        solving it exactly for each candidate (eta, rho, H) - leaves the outer
         optimizer a 3-parameter shape problem, which is the quantity the skew
         term structure actually identifies.
 
@@ -922,8 +922,8 @@ class Calibrator:
 
         CRN freezes the noise, it does not remove it: the frozen surface sits a
         random distance from the true one. The spread across seeds is the floor
-        below which any loss difference — between two parameter vectors, or
-        between two stages — is not evidence of anything.
+        below which any loss difference - between two parameter vectors, or
+        between two stages - is not evidence of anything.
         """
         keep = self.seed
         vals: list[float] = []
@@ -942,7 +942,7 @@ def iv_fit_report(quotes: Sequence[Quote], model: np.ndarray,
     """Per-quote implied-vol error, with nothing dropped.
 
     implied_vol() returns None when a model price lands outside the no-arb
-    range — and those are exactly the worst-fitting quotes, so filtering them
+    range - and those are exactly the worst-fitting quotes, so filtering them
     out understates the error precisely where the fit is failing. Such quotes
     are scored instead by the vega-linearised error (P_model - P_mid)/vega,
     the first-order continuation of the implied-vol error past the no-arb
@@ -983,20 +983,20 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
                  ) -> tuple[bool, list[str]]:
     """The one gate. Returns (accepted, reasons it was not).
 
-    Downstream adoption — dataset regeneration, surrogate retraining,
-    dataset_0dte.load_calibrated_dynamics — keys on this and nothing else.
+    Downstream adoption - dataset regeneration, surrogate retraining,
+    dataset_0dte.load_calibrated_dynamics - keys on this and nothing else.
     """
     reasons: list[str] = []
 
     # The RMSE ceiling is market-aware, but it can only be RAISED, never
     # lowered. An absolute vol-point threshold is market-independent: 3 points
     # is unfairly strict against a book quoting 8 wide. The symmetric-looking
-    # move — also TIGHTENING it when the book is narrow — is wrong, and a live
+    # move - also TIGHTENING it when the book is narrow - is wrong, and a live
     # SPY run proved it. Measured across 677 two-sided quotes in 8 expiries the
     # median half-spread was 0.052 vol points (p25 0.033, p99 0.476); at 0.05 vp
     # of vega that is a 3-cent-wide market on a $3.96 option, which is simply
     # what SPY quotes. Requiring a 4-parameter rough Bergomi surface to price
-    # within 1.5x of that — 0.078 vp across every strike and expiry at once —
+    # within 1.5x of that - 0.078 vp across every strike and expiry at once -
     # rejected a 1.579 vp fit as being "32x the spread". No low-dimensional
     # stochastic-vol model meets that bar, and none should be expected to: the
     # bid-ask measures the market's EXECUTION resolution, not the resolution at
@@ -1018,7 +1018,7 @@ def quality_gate(*, rmse: float, eta: float, rho: float, H: float, xi: float,
                     f"wider than the {MAX_RMSE_VOLPTS:.1f} vp floor)")
         reasons.append(why)
     # xi is a VARIANCE whose bound spans 5% to 120% vol, so its range in
-    # variance space is 0.0025 to 1.44 — enormous and wildly non-uniform. A
+    # variance space is 0.0025 to 1.44 - enormous and wildly non-uniform. A
     # fixed fraction of that range is meaningless at the low end: 2% of it is
     # 0.029, which would flag every fit with an ATM vol below ~17.7% as pinned,
     # including perfectly ordinary equity-index calibrations. Pinning is
@@ -1076,7 +1076,7 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
     quotes = snap.quotes
     if len(quotes) < MIN_QUOTES:
         raise SystemExit(f"{RD}only {len(quotes)} clean quotes survived "
-                         f"filtering — market closed or chain illiquid; "
+                         f"filtering - market closed or chain illiquid; "
                          f"try --max-dte 5{RS}")
     n_c = sum(q.kind == "C" for q in quotes)
     taus = sorted({round(q.tau * 365 * 24, 2) for q in quotes})
@@ -1117,7 +1117,7 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
     # (eta, rho, H) it is solved exactly against every expiry's ATM quote, so
     # the optimizer searches a 3-parameter SHAPE problem.
     #
-    # WHAT IT ACTUALLY BUYS. Measured PAIRED — both arms run end to end against
+    # WHAT IT ACTUALLY BUYS. Measured PAIRED - both arms run end to end against
     # ONE snapshot (679 quotes, 8 expiries, 2-11 days), reported at 200,000
     # paths. Earlier comparisons here used two snapshots minutes apart at 64,000
     # paths, where the objective's own noise floor (+-0.5) exceeded the effect,
@@ -1213,7 +1213,7 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
                                                   n_reps=noise_reps)
     print(f"  {BOLD}objective noise floor{RS}: {noise_mean:.4f} ± "
           f"{noise_sd:.4f} (1 s.d. over {noise_reps} independent path sets at "
-          f"{polish_paths:,} paths) — loss differences below this are "
+          f"{polish_paths:,} paths) - loss differences below this are "
           f"resampling, not fit")
 
     rule("FIT QUALITY · SMILE (high-precision repricing)")
@@ -1296,7 +1296,7 @@ def calibrate(ticker: str, max_dte: int, search_paths: int, final_paths: int,
         "search_paths": search_paths, "polish_paths": polish_paths,
         "final_paths": final_paths,
         "day_count": "ACT/365 calendar (surrogate trains on k/252 trading "
-                     "days — see the module docstring)",
+                     "days - see the module docstring)",
         "min_tau_hours": min_tau_hours,
         "quote_source": snap.quote_source,
         "median_half_spread_iv_volpts": (round(median_half_spread, 4)
@@ -1332,7 +1332,7 @@ def main() -> None:
     p.add_argument("--max-dte", type=int, default=17,
                    help="calendar days to expiry to retain. The default used "
                         "to be 3, which after the tau floor retained a SINGLE "
-                        "expiry — and H is identified by the TERM STRUCTURE of "
+                        "expiry - and H is identified by the TERM STRUCTURE of "
                         "the skew, so a one-expiry surface cannot identify it "
                         "at all. 17 days is the surrogate's own maturity "
                         "ceiling (12/252 yr in ACT/365 terms).")
@@ -1399,7 +1399,7 @@ def main() -> None:
     subprocess.run([sys.executable, "-m", "backend.quant.train_0dte",
                     "--ensemble", "5", "--epochs", "500"], check=True,
                    cwd=Path(__file__).resolve().parents[2])
-    print(f"{GN}0DTE surrogate resynced to calibrated dynamics — "
+    print(f"{GN}0DTE surrogate resynced to calibrated dynamics - "
           f"restart the API server to serve it.{RS}")
 
 

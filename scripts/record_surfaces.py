@@ -1,20 +1,18 @@
 """Record option surfaces on a schedule, building the dataset money can't buy.
 
-Historical option-surface data is the expensive ingredient in every options
-research question this project can ask next — out-of-sample calibration tests,
-hedging on real paths, fill-model validation. Vendors charge thousands for it.
+Historical option-surface data is the expensive ingredient in every options research question this project can ask next: out-of-sample calibration tests, hedging on real paths, fill-model validation. Vendors charge thousands for it.
 The free alternative is to record it FORWARD: capture the live surfaces this
 project already knows how to fetch, every few minutes, and let time compound.
 
 Two sources, both free:
 
-    Deribit (BTC, ETH)   real-time, 24/7, public API — the primary asset
-    yfinance (SPY, ...)  delayed ~15 min — fine for surface research, useless
+    Deribit (BTC, ETH)   real-time, 24/7, public API - the primary asset
+    yfinance (SPY, ...)  delayed ~15 min - fine for surface research, useless
                          for execution; captures are tagged stale when the
                          market is closed so nothing downstream mistakes
                          last-session prints for a live book
 
-Files land under data/surfaces/ (gitignored — this grows without bound and
+Files land under data/surfaces/ (gitignored - this grows without bound and
 does not belong in history), gzipped JSON, named to sort chronologically:
 
     data/surfaces/deribit/btc_20260820T171500Z.json.gz
@@ -24,8 +22,8 @@ Each equity capture stores the CLEANED quotes (the same filtering the
 calibrator applies: two-sided, liquid, OTM, moneyness-banded) plus the
 snapshot metadata needed to re-run a fit against it later: spot, rate,
 per-expiry forwards, staleness, drop counts. Deribit captures reuse
-deribit.Snapshot.to_dict() verbatim — raw book summaries, instruments,
-futures — because the screener and fill-model work downstream want raw books,
+deribit.Snapshot.to_dict() verbatim - raw book summaries, instruments,
+futures - because the screener and fill-model work downstream want raw books,
 not pre-filtered quotes.
 
 Run one capture (cron-friendly, exits nonzero if every source failed):

@@ -77,7 +77,7 @@ class OMS:
         Any order we track that the venue no longer lists is either filled or
         cancelled; the venue's filled_amount decides which, and the position
         is ALWAYS overwritten with the venue's number rather than accumulated
-        locally — accumulate and you eventually double-count a fill you also
+        locally - accumulate and you eventually double-count a fill you also
         inferred, which is how a hedger ends up twice as long as it thinks.
         """
         open_now = {o["order_id"]: o
