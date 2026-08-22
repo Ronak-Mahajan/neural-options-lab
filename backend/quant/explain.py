@@ -9,8 +9,8 @@ line from baseline to target:
     IG_j = (x_j - b_j) * integral_0^1  dF/dx_j (b + a (x - b))  da
 
 approximated with a midpoint Riemann sum, batched into a single forward pass
-through the ensemble. IG satisfies *completeness* — the attributions sum to
-F(x) - F(b) — which we compute and return as the compliance check
+through the ensemble. IG satisfies *completeness* - the attributions sum to
+F(x) - F(b) - which we compute and return as the compliance check
 (`completeness_error` should be ~1e-3 of the price or less).
 
 Everything runs through the engine's normalized forward (and the put-parity

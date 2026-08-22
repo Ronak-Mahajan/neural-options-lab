@@ -5,7 +5,7 @@ WHY THIS EXISTS
 Every other number in this repository is synthetic: GBM paths, Monte Carlo
 labels, a WGAN path generator, and (in `market_data.py`) retail equity quotes
 from Yahoo, which give one last price and no book at all. None of that exercises
-market *microstructure* — a two-sided book, a tick size, a fee schedule, a
+market *microstructure* - a two-sided book, a tick size, a fee schedule, a
 forward curve, or the no-arbitrage violations that real quotes actually contain.
 
 Deribit's public v2 REST API serves live institutional crypto-options data with
@@ -13,12 +13,12 @@ no API key, no auth header, and no licensing wall. This module is the read path.
 It NEVER sends credentials and only ever touches `/api/v2/public/*`; there is no
 code here that could place an order.
 
-THE SNAPSHOT CACHE — AND WHY IT IS THE POINT
+THE SNAPSHOT CACHE - AND WHY IT IS THE POINT
 --------------------------------------------
 This project's ethos is reproducible offline execution. A live REST call is the
 opposite: the answer changes every second, so a test written against it either
 asserts nothing or fails at random. So the client's real product is a
-`Snapshot` — a single JSON document holding the exact payloads the exchange
+`Snapshot` - a single JSON document holding the exact payloads the exchange
 returned at one instant, plus the wall-clock at which they were captured.
 
 Everything downstream (`surface.py`, `tests/test_market.py`) consumes a
@@ -30,7 +30,7 @@ SNAPSHOT SCHEMA (version 1)
 ---------------------------
     {
       "schema_version": 1,
-      "captured_at":    <float, unix seconds UTC — see below>,
+      "captured_at":    <float, unix seconds UTC - see below>,
       "captured_at_iso":<str, human-readable>,
       "currency":       "BTC",
       "index_price":    <float, USD per coin, from /public/get_index_price>,
@@ -57,7 +57,7 @@ All four bulk endpoints answered HTTP 200 in 119-258 ms from this machine.
       call and a put. Every row: contract_size 1.0, tick_size 0.0001,
       maker_commission == taker_commission == 0.0003, quote_currency "BTC",
       settlement_currency "BTC", counter_currency "USD",
-      instrument_type "reversed" (i.e. inverse — see surface.py for what that
+      instrument_type "reversed" (i.e. inverse - see surface.py for what that
       does to the premium). settlement_period splits 130 day / 120 week /
       586 month. Expiries are all at 08:00:00 UTC.
 
@@ -65,7 +65,7 @@ All four bulk endpoints answered HTTP 200 in 119-258 ms from this machine.
       836 rows, one per instrument, in ONE request. Carries bid_price,
       ask_price, mark_price, mark_iv, underlying_price, underlying_index,
       open_interest, volume, interest_rate. Does NOT carry bid_iv/ask_iv (those
-      exist only on /public/ticker) — which is fine, because inverting the book
+      exist only on /public/ticker) - which is fine, because inverting the book
       ourselves is the entire exercise. `interest_rate` was 0.0 on every row.
 
   /public/get_instruments?currency=BTC&kind=future    -> 13 rows (12 dated + PERPETUAL)
@@ -472,7 +472,7 @@ def save_snapshot(snapshot: Snapshot, path: str | Path | None = None, *,
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Compact separators: the raw payloads are ~1.1 MB pretty-printed and this
-    # file is committed. No indent, no sorting — byte-for-byte stability across
+    # file is committed. No indent, no sorting - byte-for-byte stability across
     # writes matters more than readability for a fixture.
     with path.open("w", encoding="utf-8") as handle:
         json.dump(snapshot.to_dict(), handle, separators=(",", ":"))

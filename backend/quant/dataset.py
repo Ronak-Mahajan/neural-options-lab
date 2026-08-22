@@ -13,7 +13,7 @@ Key design decisions
 
 3. **Noisy labels are fine.** Each label is a control-variate MC estimate
    with a modest path budget. The noise is (asymptotically) unbiased, and
-   least-squares regression averages it out across the dataset — so we spend
+   least-squares regression averages it out across the dataset - so we spend
    the simulation budget on *many parameter points* rather than ultra-precise
    labels at few points.
 
@@ -23,7 +23,7 @@ Key design decisions
 
 5. **Pathwise differentials (Differential ML).** Alongside each price label
    we compute the *pathwise* sensitivities of the discounted payoff
-   X = e^{-rT}(A - K)+ on the same paths — essentially free once the paths
+   X = e^{-rT}(A - K)+ on the same paths - essentially free once the paths
    exist (Huge & Savine, "Differential Machine Learning", 2020):
 
        dX/dS0    = e^{-rT} 1{A>K} A/S0            (S_i is linear in S0)
@@ -62,7 +62,7 @@ def _simulate_chunk(params: np.ndarray, n_paths: int, n_steps: int,
 
     Prices the unit-strike call at spot=m. Antithetic everywhere; the
     geometric control variate is applied to the *price* estimator (the
-    differential estimators are left plain — their noise is averaged out by
+    differential estimators are left plain - their noise is averaged out by
     the differential regression, per Huge & Savine).
     Returns (price, dprice/dm, dprice/dsigma), each shape (B,).
     """
@@ -118,7 +118,7 @@ def generate_dataset(n_samples: int = 40_000, n_paths: int = 2_000,
                      chunk_size: int = 64, verbose: bool = True
                      ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return (X, y, dydx): LHS parameters (N, 4), CV-MC call prices/K (N,)
-    and pathwise differentials (N, 2) — columns (dprice/dm, dprice/dsigma).
+    and pathwise differentials (N, 2) - columns (dprice/dm, dprice/dsigma).
     """
     lows = np.array([lo for lo, _ in PARAM_RANGES.values()])
     highs = np.array([hi for _, hi in PARAM_RANGES.values()])

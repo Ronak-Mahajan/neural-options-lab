@@ -10,8 +10,8 @@ The gate is the point. Swapping the model a pricing service serves on the
 strength of a training-time validation number is exactly how the previously
 shipped model came to carry a +0.985 bp systematic bias while its README
 described that bias as an irreducible label-noise floor. So promotion re-prices
-a fresh Latin-hypercube test set against high-precision Monte Carlo references —
-a seed used by neither training nor the ablation's own evaluation — and only
+a fresh Latin-hypercube test set against high-precision Monte Carlo references -
+a seed used by neither training nor the ablation's own evaluation - and only
 writes the checkpoint if the candidate genuinely beats the incumbent on BOTH
 RMSE and |bias|.
 
@@ -21,7 +21,7 @@ the incumbent's (7.338e-4 -> 7.768e-4 on a paired 1,500-point set) without
 noticing. Conditioning the output head helps the level and slightly hurts the
 shape. Delta and vega are now reported on every run and flagged when they
 regress, but they do not block by default, because whether that trade is
-acceptable is a product decision — a pricing service and a hedging service
+acceptable is a product decision - a pricing service and a hedging service
 should answer differently. Pass --require-greeks to make it blocking.
 
 Usage:
@@ -82,7 +82,7 @@ def evaluate(engine: PricingEngine, X: np.ndarray, ref: np.ndarray,
 
     The first version of this gate scored price only, and promoted a checkpoint
     whose delta was 5.9% WORSE than the incumbent's without noticing. The
-    conditioned head helps the level and slightly hurts the shape — expected,
+    conditioned head helps the level and slightly hurts the shape - expected,
     since it moves where the magnitude lives in a network trained on a joint
     price-and-derivative loss. Greeks are therefore reported here but do NOT
     block: price accuracy is this model's primary claim, and a blocking Greeks
@@ -168,7 +168,7 @@ def main() -> int:
         lo_, hi_ = incumbent[f"{greek}_rmse"], challenger[f"{greek}_rmse"]
         if hi_ > lo_:
             print(f"  NOTE: {greek} RMSE regresses {(hi_ / lo_ - 1) * 100:+.1f}% "
-                  f"({lo_:.3f} -> {hi_:.3f}) — reported, not blocking; "
+                  f"({lo_:.3f} -> {hi_:.3f}) - reported, not blocking; "
                   f"pass --require-greeks to make it blocking")
 
     wins = (challenger["rmse"] < incumbent["rmse"]
@@ -182,7 +182,7 @@ def main() -> int:
 
     if not wins:
         print("candidate does not beat the incumbent on both RMSE and |bias| "
-              "— NOT promoting.")
+              "- NOT promoting.")
         return 1
     if not args.write:
         print("candidate wins. Re-run with --write to promote.")

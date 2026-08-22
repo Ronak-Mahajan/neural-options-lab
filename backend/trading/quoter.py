@@ -79,7 +79,7 @@ def as_quotes(mark: float, inventory: float, sigma: float, tau: float,
 
     The textbook formulas are written in absolute price units, which makes
     gamma and kappa scale-dependent: parameters tuned for a $100 asset produce
-    a 0.45 half-spread on a 0.006 BTC option — 77x the price. (Found live: the
+    a 0.45 half-spread on a 0.006 BTC option - 77x the price. (Found live: the
     first dry run against the real ticker quoted 0.0001/0.4521 around a 0.0058
     mark.) Working on the price normalized by the mark makes both parameters
     dimensionless: kappa is the fill-intensity decay per unit RELATIVE spread,

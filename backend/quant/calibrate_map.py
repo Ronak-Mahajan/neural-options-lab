@@ -2,7 +2,7 @@
 
 The certified pricing-map surrogate (artifacts/pricing_map.pt) evaluates a
 whole surface in microseconds on CPU, where the Monte Carlo engine needs a
-GPU and ~0.5 s. This module is the calibration path built on it — the one
+GPU and ~0.5 s. This module is the calibration path built on it - the one
 that keeps working after the GPU is gone. Certified five times end-to-end
 against the MC engine on live surfaces (SPY short-tau, SPY 3-56 days, BTC
 full surface): winning-arm parameters within 0.005-0.10 vp under MC
@@ -25,9 +25,9 @@ What the map additionally unlocks, beyond speed:
     same code path (--capture), so the surface archive becomes a parameter
     time series.
 
-Same objective semantics as calibrate.Calibrator.loss — vega-weighted price
+Same objective semantics as calibrate.Calibrator.loss - vega-weighted price
 error is ~ IV error, so the map's IV-space Huber with the same knee is the
-same objective — and the same quality gate at the end.
+same objective - and the same quality gate at the end.
 
     python -m backend.quant.calibrate_map --market SPY            # live
     python -m backend.quant.calibrate_map --market BTC --jumps    # live, 7p

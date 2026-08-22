@@ -7,7 +7,7 @@ Deep Hedging CVaR, and XAI outputs. Streams the response token-by-token.
 Configuration (environment):
     GROQ_API_KEY   required for live LLM output (free tier at console.groq.com)
     GROQ_MODEL     optional override; defaults to "llama-3.1-8b-instant"
-                   (Groq retired the original "llama3-8b-8192" id — the
+                   (Groq retired the original "llama3-8b-8192" id - the
                    3.1-8B-instant model is its direct successor)
 
 If GROQ_API_KEY is not set, a deterministic offline template built from the

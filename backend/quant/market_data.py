@@ -1,13 +1,13 @@
 """Real-world market data adapter (yfinance).
 
 Fetches, for a given equity ticker:
-    spot   — last traded price
-    sigma  — 1-year realized volatility (std of daily log returns x sqrt(252))
-    rate   — risk-free proxy: 13-week T-bill yield (^IRX), falling back to
+    spot   - last traded price
+    sigma  - 1-year realized volatility (std of daily log returns x sqrt(252))
+    rate   - risk-free proxy: 13-week T-bill yield (^IRX), falling back to
              the 10-year Treasury (^TNX); both are quoted in percent on Yahoo
 
 Values are clamped into the surrogate's trained domain and the response says
-so explicitly (`clamped`) — a model should never silently extrapolate.
+so explicitly (`clamped`) - a model should never silently extrapolate.
 Results are cached for 5 minutes to be polite to Yahoo and keep the UI snappy.
 """
 

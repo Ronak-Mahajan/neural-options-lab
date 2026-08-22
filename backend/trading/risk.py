@@ -6,7 +6,7 @@ mis-priced quote for 100x the intended size fills instantly (max_order_size);
 a re-quote loop that never cancels leaves a ladder of stale orders working
 (max_open_orders); and a strategy that is simply wrong bleeds until stopped
 (max_session_loss). The kill switch is one-way BY DESIGN: once tripped, the
-only permitted action is cancelling — a limit that un-trips itself is a limit
+only permitted action is cancelling - a limit that un-trips itself is a limit
 the next bug walks straight through. Re-arming requires constructing a new
 session, i.e. a human restarting the process.
 """
@@ -30,7 +30,7 @@ class KillSwitch(Exception):
 class OrderBlocked(Exception):
     """A soft refusal: skip THIS order, keep running. Position and open-order
     caps are soft because hitting them is the risk system working, not a
-    malfunction — a maker at its inventory cap should stop growing the
+    malfunction - a maker at its inventory cap should stop growing the
     position, not shut down."""
 
 
@@ -44,7 +44,7 @@ class RiskManager:
         """Feed the account equity each tick; the first call sets the anchor.
 
         Session P&L is measured as equity drift from the anchor, which charges
-        the strategy for fees and mark moves on inventory — the two costs a
+        the strategy for fees and mark moves on inventory - the two costs a
         realized-only P&L conveniently forgets.
         """
         if self._equity_start is None:
