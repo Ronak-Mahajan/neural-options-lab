@@ -145,6 +145,17 @@ class MapCalibrator:
             lo = JUMP_BOUNDS[self.market]
             starts.append(np.array([*warm_start[:4], lo["lam"][0],
                                     sum(lo["mu_j"]) / 2, sum(lo["sig_j"]) / 2]))
+            # The diffusive-adjacent start alone can trap Powell in the
+            # diffusive basin when DE also lands there. Observed on the
+            # 2026-08-22 12:45Z BTC surface: a jump basin 0.44 vp better
+            # existed and both starts missed it, so the fit reported "no
+            # jump premium" for a surface that had one. Seed the interior
+            # of the jump box from both mu signs; the best polish wins.
+            lam_mid = 0.5 * (lo["lam"][0] + lo["lam"][1])
+            sig_mid = 0.5 * (lo["sig_j"][0] + lo["sig_j"][1])
+            for mu_seed in (0.5 * lo["mu_j"][1], 0.5 * lo["mu_j"][0]):
+                starts.append(np.array([*warm_start[:4], lam_mid, mu_seed,
+                                        sig_mid]))
         best = None
         for x0 in starts:
             r = minimize(self.loss, x0, method="Powell", bounds=self.bounds,

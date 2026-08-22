@@ -109,7 +109,21 @@ def buckets(quotes, errs, tag):
 
 
 def main() -> None:
-    snap = DeribitClient().snapshot("BTC")
+    import argparse
+    import gzip
+    import json
+
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--capture", type=Path, default=None,
+                    help="replay an archived Deribit capture instead of "
+                         "fetching live (the MC verdict still runs)")
+    args = ap.parse_args()
+    if args.capture:
+        from backend.quant.deribit import Snapshot
+        with gzip.open(args.capture, "rt", encoding="utf-8") as fh:
+            snap = Snapshot.from_dict(json.load(fh))
+    else:
+        snap = DeribitClient().snapshot("BTC")
     quotes, dropped = wide_quotes(build_surface(snap))
     exps = sorted({q.expiry for q in quotes})
     taus = sorted({round(q.tau * 365) for q in quotes})
