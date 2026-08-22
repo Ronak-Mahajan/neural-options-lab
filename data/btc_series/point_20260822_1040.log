@@ -1,0 +1,18 @@
+BTC 2026-08-22T15:40:27Z  index 76,997  265 quotes in the WIDE box (773 dropped)  8 expiries, 2-69 days
+
+diffusive (map, 3s CPU): eta=2.716 rho=-0.002 H=0.044 sqrt(xi)=46.82%  map-RMSE 2.207 vp
+  MC verdict:
+      <= 17d  n= 145  mean  -0.253  rmse  1.786 vp
+      17-45d  n=  69  mean  +1.541  rmse  2.175 vp
+     45-120d  n=  51  mean  +0.928  rmse  1.809 vp
+         ALL  n= 265  rmse  1.899 vp
+
+jumps (map, 14s CPU): eta=3.913 rho=-0.123 H=0.094 sqrt(xi)=37.94%  lam=90.4 mu_j=+0.0293 sig_j=0.0050  map-RMSE 1.550 vp
+  WARNING: sig_j at 0% of bound
+  MC verdict:
+      <= 17d  n= 145  mean  +0.003  rmse  1.755 vp
+      17-45d  n=  69  mean  +1.174  rmse  1.453 vp
+     45-120d  n=  51  mean  -0.066  rmse  1.034 vp
+         ALL  n= 265  rmse  1.562 vp
+
+jumps vs diffusive under MC on the FULL surface: +0.337 vp (jumps HELP)
