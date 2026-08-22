@@ -1,7 +1,6 @@
 """The sim-to-real test: hedge on HISTORY instead of on a model.
 
-Every number the hedging module reports comes from simulated paths — GBM
-(out-of-sample control) or the WGAN (in-sample). Both are models, and a
+Every number the hedging module reports comes from simulated paths: GBM (out-of-sample control) or the WGAN (in-sample). Both are models, and a
 hedger that only ever beats baselines inside models has not been tested. This
 replays the SAME hedgers over windows of real daily closes (free, via
 yfinance): the deep policy, the Black-Scholes delta hedge, and the
@@ -10,21 +9,21 @@ Whalley-Wilmott no-trade band, on identical windows.
 Protocol, chosen to be attackable in the right places:
 
   - windows of N_STEPS=30 consecutive trading-day returns, spot normalized to
-    1.0 at entry — the contract the policy was trained on (short one ATM
+    1.0 at entry - the contract the policy was trained on (short one ATM
     30-day call, daily rebalances);
   - the vol fed to every hedger is the trailing 60-day realized vol at entry,
     i.e. information available AT THE TIME, clipped to the policy's training
     box. Nobody gets the window's own realized vol: hedging with the answer
     is the classic backtest sin;
-  - the premium is booked at Black-Scholes under that ex-ante vol — the price
-    a desk quoting off this forecast would actually have collected — so P&L
+  - the premium is booked at Black-Scholes under that ex-ante vol - the price
+    a desk quoting off this forecast would actually have collected - so P&L
     includes the vol-forecast error, as it does on a real desk;
   - windows overlap with a 5-day stride. Overlap inflates the effective
     sample: consecutive windows share 25 of 30 days, so the CVaR standard
     errors printed here are OPTIMISTIC and the honest unit of independence is
     closer to n_windows/6. Both counts are printed.
 
-What this cannot show: one historical path per asset is a single draw — a
+What this cannot show: one historical path per asset is a single draw - a
 strategy can lose on a draw and still be right. The value here is the PAIRED
 comparison (same windows, same information), not the absolute P&L.
 """

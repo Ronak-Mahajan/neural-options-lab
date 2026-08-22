@@ -5,9 +5,9 @@ overstates the model's real error. This script draws an independent LHS test
 set and, for each point, runs a 200k-path Monte Carlo that produces three
 references in one pass:
 
-    price  — control-variate estimator (SE well under 1 bp over most of box)
-    delta  — pathwise estimator of dPrice/dm
-    vega   — pathwise estimator of dPrice/dsigma
+    price  - control-variate estimator (SE well under 1 bp over most of box)
+    delta  - pathwise estimator of dPrice/dm
+    vega   - pathwise estimator of dPrice/dsigma
 
 It then reports signed errors for the first ensemble member alone ("single
 model") and the full ensemble average, for all three quantities. Everything

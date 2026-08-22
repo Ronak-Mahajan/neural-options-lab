@@ -17,7 +17,7 @@ Riemann-Liouville Volterra process
     W~_t = sqrt(2H) * int_0^t (t - s)^{H - 1/2} dW_s,
     E[W~_u W~_v] = 2H * int_0^{u ^ v} (u - s)^{H-1/2} (v - s)^{H-1/2} ds.
 
-The two agree on the DIAGONAL — both give Var[W~_t] = t^{2H}, so the
+The two agree on the DIAGONAL - both give Var[W~_t] = t^{2H}, so the
 -0.5 eta^2 t^{2H} drift correction and the martingale property were unaffected,
 which is why this survived undetected. They agree nowhere else. Measured at
 H = 0.1172, n_steps = 50: maximum off-diagonal relative difference 4.93,
@@ -26,7 +26,7 @@ Volterra process.
 
 There is a second, subtler consequence. The discretised Volterra process is
 W~_i = sum_{j<=i} K_ij dW_j with K lower triangular and positive on the
-diagonal, so C = K K^T and — by uniqueness of the Cholesky factorisation —
+diagonal, so C = K K^T and - by uniqueness of the Cholesky factorisation -
 K IS chol(C) and the Gaussian vector feeding it IS the driving Brownian
 increment. That makes the existing leverage construction
 Z_spot = rho Z_vol + sqrt(1 - rho^2) Z_indep exactly right, but ONLY once C is
@@ -100,7 +100,7 @@ def _joint_factor_unit(n_steps: int, H: float) -> tuple:
     ----------------------------------------------------
     W~_{t_i} = sqrt(2H) int_0^{t_i} (t_i - s)^{H-1/2} dW_s is a continuous
     stochastic integral. It is NOT a linear function of the n coarse increments
-    dW_1..dW_n — there is residual randomness inside each step — so C is not
+    dW_1..dW_n - there is residual randomness inside each step - so C is not
     K K^T for any n x n K built from those increments, and therefore chol(C) is
     NOT the Volterra kernel and its Gaussian input is NOT dW.
 
@@ -189,7 +189,7 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
             log-size ~ Normal(mu_j, sig_j^2), drift-compensated by
             -lam*(e^{mu_j+sig_j^2/2}-1)*T so E[S_T] is unchanged EXACTLY.
             None (the default) draws nothing extra, so seeded results are
-            bit-identical to the pure-diffusion model — and because the jump
+            bit-identical to the pure-diffusion model - and because the jump
             draws happen after the diffusion draws, two calls with the same
             seed and different jump parameters share the SAME diffusion
             sample (common random numbers across the jump axis).
@@ -200,7 +200,7 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
             continuous-path model cannot make the left tail fat enough,
             because crash risk does not scale with sqrt(tau). Jumps are the
             standard mechanism, and only S_T matters for a European payoff,
-            so their placement within the horizon is irrelevant — one
+            so their placement within the horizon is irrelevant - one
             compensated Poisson draw per path is exact, not a scheme.
         
     Returns:

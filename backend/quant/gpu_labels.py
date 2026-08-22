@@ -53,7 +53,7 @@ def geometric_asian_call_torch(m: torch.Tensor, mat: torch.Tensor,
                                n_steps: int) -> torch.Tensor:
     """Closed-form discretely-monitored geometric Asian CALL at unit strike.
 
-    Differentiable, batched, and device/dtype-agnostic — this is the same
+    Differentiable, batched, and device/dtype-agnostic - this is the same
     Kemna & Vorst (1990) formula implemented in monte_carlo.geometric_asian_price,
     rewritten in torch so it can serve two roles: the control-variate expectation
     here, and the analytic baseline of the residual surrogate in the ablation.

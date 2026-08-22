@@ -334,8 +334,7 @@ def convergence(req: ConvergenceRequest) -> dict:
 
 @app.post("/api/surface")
 def surface(req: SurfaceRequest) -> dict:
-    """NN price surface over (moneyness x maturity) — thousands of prices
-    in one batched forward pass to showcase surrogate throughput."""
+    """NN price surface over (moneyness x maturity): thousands of prices in one batched forward pass to show surrogate throughput."""
     eng = engine()
     n = req.resolution
     m_axis = np.linspace(0.55, 1.95, n)
@@ -461,12 +460,12 @@ async def ws_stream(ws: WebSocket):
     Two things this handler previously got wrong:
 
       * It called price_with_greeks synchronously on the event loop. That call
-        is a 5-member ensemble forward plus a double backward for gamma —
+        is a 5-member ensemble forward plus a double backward for gamma -
         measured at 13.73 ms median, 74.71 ms p95, NOT the "sub-millisecond"
         the old comment claimed. At the formerly-permitted 60 Hz the loop was
         busy 82% of the time, and against a real uvicorn server one client
         moved GET /api/health from 1.79 ms median to 152.92 ms median with
-        2050 ms p95 — an 85x inflation. Since render.yaml health-checks that
+        2050 ms p95 - an 85x inflation. Since render.yaml health-checks that
         endpoint, a single browser tab could mark the container unhealthy.
         The pricing call now runs in a worker thread.
       * It applied no validation at all, so sigma=-1 streamed a call delta of
@@ -558,7 +557,7 @@ async def ws_stream(ws: WebSocket):
                         (time.perf_counter() - t0) * 1e6, 0),
                 }
             except Exception:
-                # Out of domain — send spot only
+                # Out of domain - send spot only
                 frame = {"tick": tick, "spot": round(spot, 4),
                          "error": "out of domain"}
 
@@ -577,6 +576,6 @@ async def ws_stream(ws: WebSocket):
             pass
 
 
-# Static dashboard — mounted last so /api/* wins.
+# Static dashboard - mounted last so /api/* wins.
 app.mount("/", StaticFiles(directory=str(FRONTEND), html=True),
           name="frontend")

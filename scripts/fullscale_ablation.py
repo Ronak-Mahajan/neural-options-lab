@@ -26,8 +26,8 @@ instead of
 
     C_arith(x) = softplus(net(x))                        [baseline arm]
 
-This enforces C_arith >= C_geo by construction — a genuine structural guarantee, not
-a learned approximation — and leaves the Softplus floor governing only the residual
+This enforces C_arith >= C_geo by construction - a genuine structural guarantee, not
+a learned approximation - and leaves the Softplus floor governing only the residual
 Delta = C_arith - C_geo, which is orders of magnitude smaller than C itself.
 
 Experimental control
@@ -78,7 +78,7 @@ class Surrogate(nn.Module):
     """Wraps AsianPricerNet with an optional analytic geometric-Asian baseline.
 
     Takes PHYSICAL inputs (m, T, sigma, r) and normalizes internally, so autograd
-    with respect to the input tensor yields dPrice/dm and dPrice/dsigma directly —
+    with respect to the input tensor yields dPrice/dm and dPrice/dsigma directly -
     no manual chain rule through the normalization, and identical handling in both
     arms.
     """
@@ -111,7 +111,7 @@ class Surrogate(nn.Module):
         The first attempt at this ablation put the magnitude INSIDE the Softplus
         by setting the head bias to softplus^-1(target). That kills the residual
         arm. Its mean target is 175 bps = 0.0175, which needs a pre-activation of
-        -4.04, where the Softplus derivative is sigmoid(-4.04) = 0.0174 — gradients
+        -4.04, where the Softplus derivative is sigmoid(-4.04) = 0.0174 - gradients
         attenuated 57x. Three of five members drove the pre-activation further
         negative, saturated, and died: validation RMSE pinned at exactly 287.89 bps
         for 300+ consecutive epochs, which is precisely the RMSE of predicting
@@ -125,7 +125,7 @@ class Surrogate(nn.Module):
 
         Both arms get this treatment at their own mean target, so the parameter
         count, the conditioning and the optimization regime stay matched and the
-        only remaining difference is the analytic baseline — which is the thing
+        only remaining difference is the analytic baseline - which is the thing
         the ablation is supposed to measure.
         """
         self.scale.fill_(max(target_mean, 1e-8))

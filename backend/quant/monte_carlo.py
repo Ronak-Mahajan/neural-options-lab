@@ -125,7 +125,7 @@ def price_asian_mc(spot: float, strike: float, maturity: float, sigma: float,
     # Standard error from ANTITHETIC PAIRS, not individual paths.
     #
     # The sampler builds the path set as concat(z, -z), so path i and path
-    # i+half are negatively correlated by construction — that is the entire
+    # i+half are negatively correlated by construction - that is the entire
     # point of antithetic sampling. Treating all n paths as independent, as
     # this previously did with x.std(ddof=1)/sqrt(n), therefore misstates the
     # error: measured against the empirical spread of the estimator over 400

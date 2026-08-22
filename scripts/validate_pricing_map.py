@@ -11,7 +11,7 @@ surface (the recorder's own captures):
     2. calibrate against the NETWORK instead (CPU-fast), same optimizer, same
        bounds, same quotes;
     3. compare parameters and the MC-repriced RMSE OF THE NN-FOUND PARAMETERS
-       — the honest question is not "does the NN think its fit is good" but
+       - the honest question is not "does the NN think its fit is good" but
        "are the parameters the NN finds good under the true model".
 
 Pass criterion: the NN-found parameters, repriced under MC, land within the

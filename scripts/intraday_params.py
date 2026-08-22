@@ -4,8 +4,7 @@ The recorder banks a surface every 15 minutes; the map calibrates one in ~20s
 of CPU. Composed, the archive becomes something the MC engine could never
 afford: rough-Bergomi parameters as a TIME SERIES through the trading day.
 Ten days apart, accepted fits moved eta 2.69 -> 3.66 and H 0.104 -> 0.255;
-this measures how much of such drift happens WITHIN a day — is the surface's
-parameterization stable for hours, or is a morning fit stale by lunch?
+this measures how much of such drift happens WITHIN a day: is the surface's parameterization stable for hours, or is a morning fit stale by lunch?
 
     python -m scripts.intraday_params --glob "data/surfaces/equity/spy_2026082*"
 """

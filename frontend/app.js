@@ -1,4 +1,4 @@
-/* Neural Options Lab — dashboard logic
+/* Neural Options Lab - dashboard logic
    Talks to the FastAPI backend, renders Plotly charts, animates numbers. */
 
 "use strict";
@@ -113,7 +113,7 @@ function refreshReadouts() {
     (is0dte() ? " · 0DTE" : "");
   const [lo, hi] = is0dte() ? [0.85, 1.15] : [0.5, 2.0];
   const outside = m < lo || m > hi;
-  $("domain-warning").textContent = "⚠ outside " +
+  $("domain-warning").textContent = "Outside " + (is0dte() ? "0DTE rough-vol" : "trained") + " domain [" + lo + ", " + hi + "] (surrogate is extrapolating)";
     (is0dte() ? "0DTE rough-vol" : "trained") + " domain [" + lo + ", " +
     hi + "] (surrogate is extrapolating)";
   $("domain-warning").classList.toggle("show", outside);
@@ -408,7 +408,7 @@ bindSegmented("error-metric", (v) => { errorMetric = v; renderErrorDistribution(
 $("btn-benchmark").addEventListener("click", updateBenchmark);
 
 // ───────────────────────────────────────────────────────────── Ticker API ──
-// The pricer works in moneyness, so any spot level is exact — we rescale the
+// The pricer works in moneyness, so any spot level is exact - we rescale the
 // spot/strike sliders around the live price instead of clamping into the
 // demo range, and set the strike at-the-money.
 let marketData = null;

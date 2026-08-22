@@ -8,7 +8,7 @@ The sharpest test here is `test_quote_convention_reproduces_exchange_iv`. Deribi
 publishes its own `mark_iv`, which gives an independent oracle for the single
 most dangerous assumption in this module: that a premium quoted in BTC must be
 multiplied by the PER-EXPIRY FORWARD to become a USD price. Reading it as a
-dollar price instead recovers roughly 5.5 vol points where the truth is near 40 —
+dollar price instead recovers roughly 5.5 vol points where the truth is near 40 -
 wrong by about 7x, and wrong in a way that still produces a plausible-looking
 surface.
 """
@@ -66,7 +66,7 @@ def test_snapshot_is_genuine_exchange_data(snapshot):
                if i["option_type"] == "put") > 20
     assert len({i["expiration_timestamp"] for i in snapshot.instruments}) >= 4
 
-    # Deribit BTC options settle in coin — this is the fact the whole
+    # Deribit BTC options settle in coin - this is the fact the whole
     # conversion rests on, so assert it rather than trusting a comment.
     assert all(i.get("settlement_currency") == "BTC"
                for i in snapshot.instruments[:50])
@@ -234,7 +234,7 @@ def test_mid_price_violations_do_not_survive_the_spread(surface):
 def test_synthetic_forward_agrees_with_the_listed_future(surface):
     """Put-call parity backs a forward out of the option market; it must match
     the futures market. Disagreement would mean the parity map, the day count,
-    or the coin conversion is wrong — this is an end-to-end check on all three.
+    or the coin conversion is wrong - this is an end-to-end check on all three.
     """
     d = arbitrage_report(surface).to_dict()
     rows = [f for f in d["forward_consistency"] if f.get("n_pairs", 0) >= 2]

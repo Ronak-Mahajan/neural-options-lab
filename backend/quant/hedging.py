@@ -4,16 +4,16 @@ We hedge a SHORT 30-day at-the-money European call, rebalancing daily in the
 underlying only, under proportional transaction costs. Two agents run on the
 same simulated paths:
 
-    Standard delta hedge — holds the exact Black-Scholes delta each day
+    Standard delta hedge - holds the exact Black-Scholes delta each day
                            (the textbook strategy; optimal only in the
                            frictionless, continuous limit)
-    Deep hedge           — a policy network state -> holding, trained to
+    Deep hedge           - a policy network state -> holding, trained to
                            minimize CVaR_95 of the terminal hedging loss,
                            transaction costs inside the objective
 
 Policy state is (tau, S/K, h_prev, sigma, r, cost): the network is trained
 *conditionally* over a box of (sigma, r, cost) sampled per path, so one
-offline training run serves any ticker's live parameters — and lets the
+offline training run serves any ticker's live parameters - and lets the
 dashboard expose a transaction-cost slider.
 
 CVaR is optimized in the Rockafellar-Uryasev form
@@ -104,7 +104,7 @@ def bs_call_delta(spot, strike, tau, sigma, rate):
 
 
 def bs_call_gamma(spot, strike, tau, sigma, rate):
-    """d2C/dS2 — needed for the Whalley-Wilmott no-trade band."""
+    """d2C/dS2 - needed for the Whalley-Wilmott no-trade band."""
     tau = np.maximum(tau, 1e-12)
     sd = sigma * np.sqrt(tau)
     d1 = (np.log(spot / strike) + (rate + 0.5 * sigma ** 2) * tau) / sd
@@ -132,8 +132,8 @@ def cvar_bootstrap_se(pl: np.ndarray, alpha: float = CVAR_ALPHA,
 
     CVaR is a tail statistic: only ceil((1-alpha)*n) paths enter it (150 of
     3000 at alpha=0.95), so the sampling error is far larger than the P&L
-    standard deviation suggests. Reporting the point estimate alone — as this
-    module previously did, from a single hard-coded seed — overstates precision.
+    standard deviation suggests. Reporting the point estimate alone - as this
+    module previously did, from a single hard-coded seed - overstates precision.
     """
     if pl.size == 0:
         return float("nan")
@@ -223,7 +223,7 @@ def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
     """Train the CVaR policy under `measure` ('gan' or 'gbm').
 
     The measure is recorded in the checkpoint meta, because a policy trained
-    under one measure and evaluated under another is not a meaningful test —
+    under one measure and evaluated under another is not a meaningful test -
     and the shipped hedger.pt was trained under a risk_neutralize that has
     since been corrected (it was neither a martingale nor correctly scaled).
     """
@@ -261,7 +261,7 @@ def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
                           float(torch.empty(1).uniform_(*TRAIN_BOX["cost"])))
         z = torch.randn(batch, generator.noise_dim)
 
-        # Paths on the pricing measure — the policy must learn hedging skill,
+        # Paths on the pricing measure - the policy must learn hedging skill,
         # not the generator's drift bias. NOTE: risk_neutralize now enforces
         # the martingale condition and the terminal variance, which the version
         # this checkpoint family was originally trained under did not.
@@ -404,7 +404,7 @@ class HedgingEngine:
         trade only to the nearest band edge when |h - Delta| > W. This is the
         standard cost-aware baseline. The deep policy receives `cost` in its
         state, so comparing it against a cost-BLIND delta hedge is not a fair
-        fight — this is.
+        fight - this is.
         """
         def f(i, tau, s, h):
             d = bs_call_delta(s, 1.0, tau, sigma, rate)

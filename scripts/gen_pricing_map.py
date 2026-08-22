@@ -5,8 +5,7 @@ objective evaluation at 64k paths is ~0.5 s on this GPU and ~90 s on CPU, so a
 three-stage fit goes from 100 seconds to half a day. The standard escape
 (Horvath, Muguruza & Tomas 2021, "Deep learning volatility") is to spend the
 GPU ONCE on a dataset mapping model parameters to implied vols, train a small
-network on it, and calibrate forever after against the network — milliseconds
-per objective evaluation, on any machine.
+network on it, and calibrate forever after against the network: milliseconds per objective evaluation, on any machine.
 
 One map covers BOTH drivers this project simulates: the input is
 
@@ -14,7 +13,7 @@ One map covers BOTH drivers this project simulates: the input is
 
 with (lam, mu_j, sig_j) the compensated Merton jump extension and lam = 0
 EXACTLY the diffusive model. 35% of samples are drawn with lam = 0 so the
-diffusive submanifold — the one production calibration lives on — is densely
+diffusive submanifold - the one production calibration lives on - is densely
 covered rather than approached in the limit. Ranges cover the union of the
 SPY box and the widened BTC box (eta to 8, jump sizes to -25%), because the
 BTC surface is exactly where the diffusive model railed and the jump model is
@@ -180,7 +179,7 @@ def main() -> None:
     out_dir = args.out_dir
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
-        print("WARNING: no CUDA device — this generator exists precisely "
+        print("WARNING: no CUDA device - this generator exists precisely "
               "because CPU is ~200x slower. Proceeding anyway.", flush=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 

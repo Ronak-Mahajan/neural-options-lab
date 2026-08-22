@@ -1,4 +1,4 @@
-"""Authenticated client for Deribit's TEST exchange — and only the test one.
+"""Authenticated client for Deribit's TEST exchange - and only the test one.
 
 test.deribit.com is a full exchange running the production matching engine
 against paper money: free API keys, real order books, real fills, zero
@@ -46,7 +46,7 @@ class MissingCredentials(TradingError):
             "DERIBIT_TESTNET_KEY / DERIBIT_TESTNET_SECRET are not set. "
             "Create a free account at https://test.deribit.com, generate an "
             "API key under Settings -> API, and put both values in the "
-            "environment or a .env file at the repo root. Paper money only — "
+            "environment or a .env file at the repo root. Paper money only - "
             "this client is structurally unable to reach the real exchange.")
 
 
