@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 ROOT = Path(__file__).resolve().parents[1]
 SERIES = ROOT / "data" / "btc_series"
 
-HEAD = re.compile(r"BTC (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}):\d{2}Z")
+HEAD = re.compile(r"BTC (\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}):\d{2}Z")
 JUMP = re.compile(r"lam=([\d.]+) mu_j=([+-][\d.]+) sig_j=([\d.]+)")
 DELTA = re.compile(r"FULL surface: ([+-][\d.]+) vp")
 RAIL = re.compile(r"WARNING: lam at 0% of bound")
@@ -36,7 +36,8 @@ def parse(path: Path):
         return None
     lam, mu, sig = map(float, jump.groups())
     return {
-        "utc": head.group(1).split("T")[1],
+        "date": head.group(1),
+        "utc": head.group(2),
         "delta": float(delta.group(1)),
         "cumulant": lam * (mu * mu + sig * sig),
         "railed": bool(RAIL.search(text)),
@@ -50,16 +51,19 @@ def main() -> None:
         r = parse(p)
         if r:
             rows.append(r)
-    rows.sort(key=lambda r: r["utc"])
+    rows.sort(key=lambda r: (r["date"], r["utc"]))
     for r in rows:
-        print(f"{r['utc']}Z  delta {r['delta']:+.3f} vp  "
+        print(f"{r['date']}T{r['utc']}Z  delta {r['delta']:+.3f} vp  "
               f"cumulant {r['cumulant']:.4f}/yr"
               f"{'  [retracted: lam railed at 0]' if r['railed'] else ''}"
               f"  ({r['name']})")
 
-    def mins(utc: str) -> int:
-        h, m = utc.split(":")
-        return int(h) * 60 + int(m)
+    day0 = min(r["date"] for r in rows)
+
+    def mins(r: dict) -> int:
+        h, m = r["utc"].split(":")
+        days = (r["date"] != day0)          # the series spans one midnight
+        return days * 1440 + int(h) * 60 + int(m)
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 5.5), sharex=True)
     good = [r for r in rows if not r["railed"]]
@@ -67,10 +71,10 @@ def main() -> None:
     for ax, key, label in ((ax1, "delta", "jumps vs diffusive,\nMC (vp)"),
                            (ax2, "cumulant",
                             "jump variance\nlam*(mu^2+sig^2) (1/yr)")):
-        ax.plot([mins(r["utc"]) for r in good], [r[key] for r in good],
+        ax.plot([mins(r) for r in good], [r[key] for r in good],
                 "o-", color="#1252b3", zorder=3)
         if bad:
-            ax.plot([mins(r["utc"]) for r in bad], [r[key] for r in bad],
+            ax.plot([mins(r) for r in bad], [r[key] for r in bad],
                     "o", mfc="none", mec="#b3321b", zorder=3)
         ax.set_ylabel(label, fontsize=9)
         ax.grid(True, alpha=0.3)
@@ -78,12 +82,12 @@ def main() -> None:
                 label="the script's noise threshold for its verdict")
     ax1.legend(fontsize=8, loc="center right")
     ticks = []
-    for t in sorted({mins(r["utc"]) for r in rows}):
+    for t in sorted({mins(r) for r in rows}):
         if not ticks or t - ticks[-1] >= 25:    # thin clustered labels
             ticks.append(t)
-    labels = [f"{t // 60:02d}:{t % 60:02d}" for t in ticks]
+    labels = [f"{(t // 60) % 24:02d}:{t % 60:02d}" for t in ticks]
     ax2.set_xticks(ticks, labels, fontsize=8)
-    ax2.set_xlabel("UTC, Saturday 2026-08-22")
+    ax2.set_xlabel(f"UTC, from Saturday {day0} (times past 24:00 are Sunday)")
     fig.suptitle("BTC full-surface jump premium through the day\n"
                  "hollow: retracted pre-fix runs whose jump fit missed the "
                  "basin (see SERIES.md)", fontsize=10)
