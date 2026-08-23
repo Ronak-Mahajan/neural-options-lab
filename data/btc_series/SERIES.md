@@ -18,7 +18,12 @@ fresh Friday snapshot.
 | 3 | 15:40 | 76,997 | 265 | 1.899 | 1.562 | +0.337 | 90.4 | +2.9% | premium persists; cumulant 0.080/yr, delta easing from the 14:25 +0.45-0.50 |
 | 4 | 17:11 | 77,289 | 266 | 1.832 | 1.506 | +0.326 | 92.7 | +3.0% | steady: cumulant 0.087/yr, third consecutive point with mu_j at +3% |
 | 5 | 18:42 | 77,259 | 266 | 1.861 | 1.430 | +0.431 | 69.9 | +3.1% | first live point on the fixed fit: fully interior optimum (sig_j 0.99%, no rails), cumulant 0.074/yr |
-| 6 | 20:13 | 77,440 | 267 | 1.921 | 1.721 | +0.201 | 19.0 | +5.4% | premium easing into the evening: cumulant 0.055/yr, delta at the day's low but still above noise |
+| 6 | 20:13 | 77,440 | 267 | 1.921 | 1.721 | +0.201 | 19.0 | +5.4% | day's low: cumulant 0.055/yr, still above noise |
+| 7 | 21:44 | 76,988 | 235 | 1.949 | 1.447 | +0.502 | 87.7 | +3.1% | rebound to the day's high; cumulant 0.085/yr back in band (one near expiry rolled off: 7 expiries) |
+| 8 | 23:15 | 76,967 | 237 | 1.849 | 1.257 | +0.591 | 84.0 | +3.1% | new high and the jump arm's best MC fit of the day; cumulant 0.082/yr |
+| 9 | 00:46+1 | 77,264 | 240 | 2.004 | 1.315 | +0.689 | 86.5 | +3.2% | third straight rise; cumulant 0.090/yr at the top of the band as weekend gap risk builds |
+| 10 | 02:17+1 | 77,102 | 239 | 2.012 | 1.356 | +0.656 | 84.4 | +3.1% | holding just off the peak; cumulant 0.084/yr |
+| 11 | 03:48+1 | 76,919 | 238 | 2.053 | 1.804 | +0.249 | 66.4 | +1.2% | delta eases in the deep-night session while cumulant holds at 0.094/yr; interior sig_j 3.6% |
 
 Point-1 notes: both arms fit worse than Friday (map-RMSE ~2.5-2.6 vp vs
 Friday's tighter fit), with a +2.0 vp mean bias in the 17-45d bucket on
@@ -69,12 +74,15 @@ under tiny data perturbations. Protocol consequence, applied from here on:
   sig_j are far apart in raw coordinates, yet both give
   lam*(mu_j^2+sig_j^2) = 0.087-0.090/yr.
 
-## Day headline (running)
+Series closed at point 11 (03:48Z Sunday): the laptop went back Sunday
+morning. Eleven MC-verified points across fifteen hours.
 
-The jump premium was present all Saturday and drifted, not switched: MC
-delta between +0.20 and +0.50 vp at every honestly-fitted point (peak
-14:25, easing to the day's low by 20:13), jump-variance cumulant
-0.055-0.090/yr, mu_j positive throughout. The one apparent absence was an
+## Day headline (final)
+
+The jump premium was present all Saturday and oscillated within a band
+rather than trending: MC delta between +0.20 and +0.50 vp at every
+honestly-fitted point (lows near 20:13, highs at 14:25 and 21:44),
+jump-variance cumulant 0.055-0.090/yr, mu_j positive throughout. The one apparent absence was an
 optimizer basin miss, caught by replaying the surface archive, fixed with
 multi-start polishing, and documented in calibrate_map.fit. Raw lam
 wandered 19-95/yr across the day while the cumulant stayed within a
