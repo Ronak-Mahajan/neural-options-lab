@@ -66,6 +66,11 @@ import numpy as np
 import torch
 from scipy.special import hyp2f1
 
+# Paths simulated per block inside rough_bergomi_mc. At 25,000 the per-block
+# working set is ~25 MB of float32 tensors regardless of the requested
+# n_paths; see the block comment inside rough_bergomi_mc for why this exists.
+_CHUNK_PATHS = 25_000
+
 
 @lru_cache(maxsize=64)
 def _volterra_covariance_unit(n_steps: int, H: float) -> tuple:
@@ -240,39 +245,65 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         # process. The factor is cached on (n_steps, H) and dimensionless, so
         # the 100x100 factorisation is built once rather than per batch element.
         Lj = joint_factor(n_steps, dt, H, device)
-        noise = torch.randn(n_paths, 2 * n_steps, device=device, generator=gen)
-        joint = noise @ Lj.T
-        Z_vol = joint[:, :n_steps]                       # dW / sqrt(dt), the
-                                                         # actual driving BM
-        W_tilde = joint[:, n_steps:] * (dt ** H)         # W~_{t_i}
-        
-        # Volatility process (Rough Bergomi)
         t = torch.arange(1, n_steps + 1, dtype=torch.float32, device=device) * dt
         t_2H = t ** (2 * H)
         eta_b = eta_g
 
-        V = xi_g * torch.exp(eta_b * W_tilde - 0.5 * (eta_b ** 2) * t_2H)
+        # Paths are simulated in blocks of _CHUNK_PATHS; each path depends only
+        # on its own rows of noise, so blocks are exact, and only the 1-D S_T
+        # survives a block. The one-shot version held ~2,200 bytes/path of
+        # (n_paths, n_steps)-shaped tensors simultaneously (~880 MB at 400k
+        # paths), which OOM-killed the 512 MB container serving this. Jump
+        # draws stay AFTER all diffusion draws, preserving the documented
+        # common-random-numbers property across the jump axis. For
+        # n_paths <= _CHUNK_PATHS the draw order matches the old code exactly;
+        # above it the seed stream is laid out per block, so large seeded runs
+        # are deterministic but not bit-identical to the previous version.
+        def _terminal_spot_chunk(n_c: int) -> torch.Tensor:
+            noise = torch.randn(n_c, 2 * n_steps, device=device, generator=gen)
+            joint = noise @ Lj.T
+            del noise
+            # .clone() unpins joint's full 2n-wide buffer (a slice is a view).
+            Z_vol = joint[:, :n_steps].clone()           # dW / sqrt(dt), the
+                                                         # actual driving BM
+            W_tilde = joint[:, n_steps:] * (dt ** H)     # W~_{t_i}
+            del joint
 
-        # Left-point (predictable) variance: the variance applied over step i
-        # must not contain step i's own innovation. Using the right-endpoint
-        # V_i against a spot shock built from the same normal breaks the
-        # martingale property whenever rho != 0 (the -V/2 dt correction no
-        # longer offsets E[exp(sqrt(V) dW)]), which collapses prices at
-        # negative correlation. This is the discrete analogue of the Ito
-        # integral being left-point by construction.
-        V = torch.cat([torch.full((n_paths, 1), xi_g, device=device),
-                       V[:, :-1]], dim=1)
+            # Volatility process (Rough Bergomi)
+            V = xi_g * torch.exp(eta_b * W_tilde - 0.5 * (eta_b ** 2) * t_2H)
+            del W_tilde
 
-        # Standard driving normals for the spot process (correlated with Z_vol)
-        Z_indep = torch.randn(n_paths, n_steps, device=device, generator=gen)
-        Z_spot = rho_g * Z_vol + math.sqrt(1 - rho_g ** 2) * Z_indep
-        dW_spot = Z_spot * math.sqrt(dt)
+            # Left-point (predictable) variance: the variance applied over
+            # step i must not contain step i's own innovation. Using the
+            # right-endpoint V_i against a spot shock built from the same
+            # normal breaks the martingale property whenever rho != 0 (the
+            # -V/2 dt correction no longer offsets E[exp(sqrt(V) dW)]), which
+            # collapses prices at negative correlation. This is the discrete
+            # analogue of the Ito integral being left-point by construction.
+            V = torch.cat([torch.full((n_c, 1), xi_g, device=device),
+                           V[:, :-1]], dim=1)
 
-        # Euler scheme for the log spot process
-        integral_drift = torch.sum((rate_g - 0.5 * V) * dt, dim=1)
-        integral_vol = torch.sum(torch.sqrt(V) * dW_spot, dim=1)
+            # Standard driving normals for the spot process (correlated with
+            # Z_vol)
+            Z_indep = torch.randn(n_c, n_steps, device=device, generator=gen)
+            Z_spot = rho_g * Z_vol + math.sqrt(1 - rho_g ** 2) * Z_indep
+            del Z_vol, Z_indep
+            dW_spot = Z_spot * math.sqrt(dt)
+            del Z_spot
 
-        S_T = spot_g * torch.exp(integral_drift + integral_vol)
+            # Euler scheme for the log spot process
+            integral_drift = torch.sum((rate_g - 0.5 * V) * dt, dim=1)
+            integral_vol = torch.sum(torch.sqrt(V) * dW_spot, dim=1)
+            return spot_g * torch.exp(integral_drift + integral_vol)
+
+        st_chunks = []
+        remaining = n_paths
+        while remaining > 0:
+            n_c = min(_CHUNK_PATHS, remaining)
+            st_chunks.append(_terminal_spot_chunk(n_c))
+            remaining -= n_c
+        S_T = st_chunks[0] if len(st_chunks) == 1 else torch.cat(st_chunks)
+        del st_chunks
         if jumps is not None:
             lam, mu_j, sig_j = (float(v) for v in jumps)
             if lam > 0.0:

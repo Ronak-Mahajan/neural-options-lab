@@ -49,12 +49,16 @@ The repo includes `render.yaml`, so Render can deploy it directly:
 2. On render.com, choose New, then Blueprint, and point it at the repo.
 3. Render reads `render.yaml`, builds the Docker image, and deploys.
 
-Honest note on the free plan: it gives 512 MB of RAM and spins the service
-down when idle, so the first request after a pause is slow while PyTorch
-loads. The pricing and hedging tabs work, but the heavier Monte Carlo
-endpoints (the convergence and benchmark charts) can be tight on memory.
-A small paid instance removes both problems. Hugging Face Spaces is the
-easier free choice for this app.
+Honest note on the free plan: it gives 512 MB of RAM and 0.1 CPU, and spins
+the service down when idle, so the first request after a pause is slow while
+PyTorch loads. The app is sized to fit: PyTorch's import is a fixed
+~300 MB floor, so both Monte Carlo engines simulate in fixed-size path
+blocks (peak ~40 MB per request regardless of the path count), the API
+admits one simulation job at a time and queues the rest, and the dashboard
+loads its heavy panels sequentially. What the free tier still costs you is
+speed - at 0.1 CPU the convergence chart takes several seconds to fill. A
+small paid instance removes the slowness (and the idle spin-down); it is no
+longer needed for stability.
 
 ## Option 3: Any server you control
 
