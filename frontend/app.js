@@ -230,6 +230,9 @@ async function updateBenchmark() {
   try {
     const d = await api("/api/benchmark", optionBody());
     clearShimmer("plot-latency");
+    // Remove the "click Re-run" hint the initial-load block leaves in this
+    // panel; Plotly renders into the same div without clearing it.
+    $("plot-latency").querySelector(".latency-hint")?.remove();
 
     const rows = [
       ...d.mc.map((r) => ({ ...r, color: COLORS.mc })),
@@ -801,9 +804,12 @@ $("btn-stream").addEventListener("click", wsConnect);
 // demand via its Re-run button instead of on every page view.
 refreshReadouts();
 loadModelInfo();
-updatePrice();
 loadErrorDistribution();
 (async () => {
+  // The headline price lands first: /api/price and /api/convergence would
+  // otherwise race for the server's single simulation slot, and losing that
+  // race leaves the hero card blank while the convergence run finishes.
+  await updatePrice().catch(() => {});
   await updateConvergence().catch(() => {});
   await updateSurface().catch(() => {});
   await updateXAI().catch(() => {});
@@ -811,7 +817,7 @@ loadErrorDistribution();
 const latencyShimmer = $("plot-latency").querySelector(".shimmer");
 if (latencyShimmer) {
   latencyShimmer.replaceWith(Object.assign(document.createElement("p"), {
-    className: "card-sub centered",
+    className: "card-sub centered latency-hint",
     textContent: "Click Re-run to measure latency on this instance.",
   }));
 }
