@@ -88,6 +88,15 @@ class MCResult:
     n_steps: int
 
 
+# Half-paths (antithetic pairs) simulated per block. At 25,000 the block's
+# (25000, 50) float64 working set peaks around 40 MB; only the 1-D per-path
+# payoffs outlive a block, so peak memory no longer scales with n_paths. The
+# one-shot version held three full (n_paths, n_steps) matrices alive at once
+# (~480 MB at the 400k-path reference run), which is what OOM-killed the
+# 512 MB free-tier container serving this.
+_CHUNK_HALF_PATHS = 25_000
+
+
 def price_asian_mc(spot: float, strike: float, maturity: float, sigma: float,
                    rate: float, n_paths: int = 50_000, n_steps: int = 50,
                    option_type: str = "call", seed: int | None = None,
@@ -97,25 +106,42 @@ def price_asian_mc(spot: float, strike: float, maturity: float, sigma: float,
     Uses antithetic variates always, and the geometric Asian control variate
     unless disabled (the plain estimator is kept around for benchmarking the
     variance reduction itself).
+
+    Paths are simulated in blocks of _CHUNK_HALF_PATHS pairs. Seeded results
+    are bit-identical to the previous one-shot implementation: sequential
+    standard_normal calls consume the same Generator bit stream as a single
+    (half, n_steps) draw, each path's payoff depends only on its own row, and
+    the payoff vector is reassembled in the same +z-then--z order before the
+    identical control-variate and standard-error math runs on it.
     """
     rng = np.random.default_rng(seed)
     half = max(n_paths // 2, 1)
     dt = maturity / n_steps
     drift = (rate - 0.5 * sigma ** 2) * dt
     vol = sigma * math.sqrt(dt)
-
-    z = rng.standard_normal((half, n_steps))
-    z = np.concatenate([z, -z], axis=0)                    # antithetic
-    log_paths = math.log(spot) + np.cumsum(drift + vol * z, axis=1)
-
-    arith = np.exp(log_paths).mean(axis=1)                 # A per path
     disc = math.exp(-rate * maturity)
     sign = 1.0 if option_type == "call" else -1.0
-    x = disc * np.maximum(sign * (arith - strike), 0.0)
+    log_s0 = math.log(spot)
 
+    x_halves: tuple[list[np.ndarray], list[np.ndarray]] = ([], [])
+    y_halves: tuple[list[np.ndarray], list[np.ndarray]] = ([], [])
+    done = 0
+    while done < half:
+        b = min(_CHUNK_HALF_PATHS, half - done)
+        z = rng.standard_normal((b, n_steps))
+        for k, sgn in enumerate((1.0, -1.0)):              # antithetic
+            log_paths = log_s0 + np.cumsum(drift + sgn * vol * z, axis=1)
+            arith = np.exp(log_paths).mean(axis=1)         # A per path
+            x_halves[k].append(disc * np.maximum(sign * (arith - strike), 0.0))
+            if control_variate:
+                geo = np.exp(log_paths.mean(axis=1))       # G per path
+                y_halves[k].append(
+                    disc * np.maximum(sign * (geo - strike), 0.0))
+        done += b
+
+    x = np.concatenate(x_halves[0] + x_halves[1])
     if control_variate:
-        geo = np.exp(log_paths.mean(axis=1))               # G per path
-        y = disc * np.maximum(sign * (geo - strike), 0.0)
+        y = np.concatenate(y_halves[0] + y_halves[1])
         ey = geometric_asian_price(spot, strike, maturity, sigma, rate,
                                    n_steps, option_type)
         cov = np.cov(x, y)

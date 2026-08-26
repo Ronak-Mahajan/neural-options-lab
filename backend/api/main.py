@@ -11,9 +11,11 @@ import anyio
 import asyncio
 import json
 import math
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -47,6 +49,28 @@ ROUGH_ETA, ROUGH_RHO, ROUGH_H = 1.5, -0.7, 0.1
 # 60 Hz cannot be honoured (the socket actually delivered 28.8 Hz while starving
 # the loop). 15 Hz leaves the event loop real headroom.
 MAX_STREAM_HZ = 15
+
+# One Monte Carlo / batch-inference job at a time. These handlers are sync
+# `def`s, so Starlette dispatches each to a ~40-thread pool and nothing else
+# serializes them: the dashboard's page load used to put /api/price,
+# /api/convergence and /api/benchmark in flight simultaneously, and their
+# combined path arrays OOM-killed the 512 MB free-tier container (exit 137).
+# Queued requests just block their pool thread, which costs a few KB each;
+# the timeout turns a pathological pile-up into a 503 instead of a hang.
+_HEAVY_JOB_GATE = threading.Semaphore(1)
+HEAVY_JOB_TIMEOUT_S = 120.0
+
+
+@contextmanager
+def heavy_job() -> Iterator[None]:
+    if not _HEAVY_JOB_GATE.acquire(timeout=HEAVY_JOB_TIMEOUT_S):
+        raise HTTPException(
+            503, "Simulation queue is saturated; retry shortly",
+            headers={"Retry-After": "10"})
+    try:
+        yield
+    finally:
+        _HEAVY_JOB_GATE.release()
 
 app = FastAPI(title="Deep Learning for Options Pricing",
               description="Neural surrogate vs Monte Carlo for arithmetic "
@@ -209,7 +233,11 @@ class OptionParams(BaseModel):
 
 
 class PriceRequest(OptionParams):
-    mc_paths: int = Field(50_000, ge=1_000, le=500_000)
+    # Capped at 100k: the MC engines now run in fixed-size blocks so memory no
+    # longer scales with the request, but wall-clock still does, and on the
+    # free tier's 0.1 CPU a 500k-path run would hold the heavy-job gate (and
+    # its pool thread) for tens of seconds.
+    mc_paths: int = Field(50_000, ge=1_000, le=100_000)
 
 
 class ConvergenceRequest(OptionParams):
@@ -223,13 +251,15 @@ class ConvergenceRequest(OptionParams):
     @field_validator("path_counts")
     @classmethod
     def _bounded_paths(cls, v: list[int]) -> list[int]:
+        # Same rationale as PriceRequest.mc_paths: memory is bounded by the
+        # chunked MC engines, so these caps bound wall-clock on 0.1 CPU.
         for n in v:
-            if not (100 <= n <= 500_000):
+            if not (100 <= n <= 100_000):
                 raise ValueError(
-                    f"path_counts entries must be in [100, 500000]; got {n}")
-        if sum(v) > 1_500_000:
+                    f"path_counts entries must be in [100, 100000]; got {n}")
+        if sum(v) > 600_000:
             raise ValueError(
-                f"total simulated paths {sum(v):,} exceeds the 1,500,000 "
+                f"total simulated paths {sum(v):,} exceeds the 600,000 "
                 f"budget for a single convergence request")
         return v
 
@@ -286,9 +316,10 @@ def price(req: PriceRequest) -> dict:
         eng.price_with_greeks, req.spot, req.strike, req.maturity,
         req.sigma, req.rate, req.option_type)
 
-    t0 = time.perf_counter()
-    mc, mc_engine = mc_reference(req, req.mc_paths)
-    mc_ms = (time.perf_counter() - t0) * 1000.0
+    with heavy_job():
+        t0 = time.perf_counter()
+        mc, mc_engine = mc_reference(req, req.mc_paths)
+        mc_ms = (time.perf_counter() - t0) * 1000.0
 
     diff = nn_out["price"] - mc.price
     return {
@@ -314,18 +345,22 @@ def convergence(req: ConvergenceRequest) -> dict:
     validate_moneyness(req)
     points = []
     mc_engine = "asian_gbm_cv"
-    for n in sorted(set(req.path_counts)):
-        t0 = time.perf_counter()
-        mc, mc_engine = mc_reference(req, n, seed=42)
-        points.append({"n_paths": n, "price": mc.price,
-                       "ci_low": mc.ci_low, "ci_high": mc.ci_high,
-                       "latency_ms": (time.perf_counter() - t0) * 1000.0})
+    with heavy_job():
+        for n in sorted(set(req.path_counts)):
+            t0 = time.perf_counter()
+            mc, mc_engine = mc_reference(req, n, seed=42)
+            points.append({"n_paths": n, "price": mc.price,
+                           "ci_low": mc.ci_low, "ci_high": mc.ci_high,
+                           "latency_ms": (time.perf_counter() - t0) * 1000.0})
 
-    nn_ms, nn_out = time_call(
-        eng.price_with_greeks, req.spot, req.strike, req.maturity,
-        req.sigma, req.rate, req.option_type)
+        nn_ms, nn_out = time_call(
+            eng.price_with_greeks, req.spot, req.strike, req.maturity,
+            req.sigma, req.rate, req.option_type)
 
-    ref, _ = mc_reference(req, 400_000, seed=7)
+        # 100k, down from 400k: the CI-width gain of 400k (2x) is invisible on
+        # the dashboard, while the extra 300k paths quadrupled the wall-clock
+        # this endpoint holds the heavy-job gate on the free tier's 0.1 CPU.
+        ref, _ = mc_reference(req, 100_000, seed=7)
     return {"mc_points": points, "engine": mc_engine,
             "nn": {"price": nn_out["price"], "latency_ms": nn_ms},
             "reference": {"price": ref.price, "std_error": ref.std_error,
@@ -363,31 +398,39 @@ def benchmark(req: OptionParams) -> dict:
     """Latency shoot-out: MC at increasing path budgets vs NN single-shot
     and batched inference."""
     eng = engine()
-    mc_rows: list[dict[str, Any]] = []
-    for n in (1_000, 10_000, 100_000):
-        ms, out = time_call(mc_reference, req, n, repeats=2)
-        res, mc_eng = out
-        label = "rBergomi MC" if mc_eng == "rough_bergomi" else "MC"
-        mc_rows.append({"label": f"{label} {n:,} paths", "latency_ms": ms,
-                        "std_error": res.std_error})
+    with heavy_job():
+        mc_rows: list[dict[str, Any]] = []
+        for n in (1_000, 10_000, 100_000):
+            ms, out = time_call(mc_reference, req, n, repeats=2)
+            res, mc_eng = out
+            label = "rBergomi MC" if mc_eng == "rough_bergomi" else "MC"
+            mc_rows.append({"label": f"{label} {n:,} paths", "latency_ms": ms,
+                            "std_error": res.std_error})
 
-    nn_rows: list[dict[str, Any]] = []
-    single_ms, _ = time_call(eng.price_with_greeks, req.spot, req.strike,
-                             req.maturity, req.sigma, req.rate,
-                             req.option_type, repeats=5)
-    nn_rows.append({"label": "NN 1 price + Greeks", "latency_ms": single_ms})
+        nn_rows: list[dict[str, Any]] = []
+        single_ms, _ = time_call(eng.price_with_greeks, req.spot, req.strike,
+                                 req.maturity, req.sigma, req.rate,
+                                 req.option_type, repeats=5)
+        nn_rows.append({"label": "NN 1 price + Greeks",
+                        "latency_ms": single_ms})
 
-    for b in (1_000, 100_000):
-        rng = np.random.default_rng(0)
-        spots = rng.uniform(60, 180, b)
-        strikes = np.full(b, req.strike)
-        mats = rng.uniform(0.1, 2.0, b)
-        sigs = rng.uniform(0.1, 0.6, b)
-        rates = np.full(b, req.rate)
-        ms, _ = time_call(eng.price_batch, spots, strikes, mats, sigs, rates,
-                          option_type=req.option_type, repeats=3)
-        nn_rows.append({"label": f"NN batch {b:,} prices", "latency_ms": ms,
-                        "throughput_per_s": b / max(ms / 1000, 1e-9)})
+        # 50k, down from 100k: a 100k-point batch through the 5-member
+        # ensemble transiently holds ~150 MB of float32 activations, which is
+        # most of the free tier's request headroom on its own. Throughput per
+        # second is what the row reports, and that is batch-size-invariant
+        # once the batch saturates the CPU.
+        for b in (1_000, 50_000):
+            rng = np.random.default_rng(0)
+            spots = rng.uniform(60, 180, b)
+            strikes = np.full(b, req.strike)
+            mats = rng.uniform(0.1, 2.0, b)
+            sigs = rng.uniform(0.1, 0.6, b)
+            rates = np.full(b, req.rate)
+            ms, _ = time_call(eng.price_batch, spots, strikes, mats, sigs,
+                              rates, option_type=req.option_type, repeats=3)
+            nn_rows.append({"label": f"NN batch {b:,} prices",
+                            "latency_ms": ms,
+                            "throughput_per_s": b / max(ms / 1000, 1e-9)})
 
     mc_100k = float(mc_rows[-1]["latency_ms"])
     return {"mc": mc_rows, "nn": nn_rows,

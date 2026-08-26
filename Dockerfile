@@ -4,6 +4,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# Free-tier hosts give this container a fraction of one CPU and a hard 512MB
+# memory cap. Extra BLAS/torch threads are pure overhead there, and each
+# glibc malloc arena (one is created per contending thread by default) holds
+# onto freed heap pages, inflating RSS on a box where every MB counts.
+ENV OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MALLOC_ARENA_MAX=2
+
 WORKDIR /app
 
 # Install the CPU-only build of PyTorch first. The default Linux wheel bundles

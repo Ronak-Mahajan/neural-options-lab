@@ -208,7 +208,8 @@ async function updateConvergence() {
     {
       x: [xs[0], xs[xs.length - 1]],
       y: [d.reference.price, d.reference.price],
-      mode: "lines", name: "Reference (400k paths)",
+      mode: "lines",
+      name: `Reference (${Math.round(d.reference.n_paths / 1000)}k paths)`,
       line: { color: "rgba(255,255,255,0.45)", width: 1.5, dash: "dot" },
       hovertemplate: "Reference: $%{y:.4f}<extra></extra>",
     },
@@ -792,13 +793,26 @@ function wsConnect() {
 
 $("btn-stream").addEventListener("click", wsConnect);
 
-// initial load
+// Initial load. Cheap calls go out immediately; the simulation-heavy panels
+// load one after another, because the server admits only one Monte Carlo /
+// batch-inference job at a time (firing them in parallel would just queue
+// them there while tying up connections). The latency benchmark is the whole
+// convergence workload re-run for its wall-clock alone, so it loads on
+// demand via its Re-run button instead of on every page view.
 refreshReadouts();
 loadModelInfo();
 updatePrice();
-updateConvergence();
-updateSurface();
-updateXAI();
-updateBenchmark();
 loadErrorDistribution();
+(async () => {
+  await updateConvergence().catch(() => {});
+  await updateSurface().catch(() => {});
+  await updateXAI().catch(() => {});
+})();
+const latencyShimmer = $("plot-latency").querySelector(".shimmer");
+if (latencyShimmer) {
+  latencyShimmer.replaceWith(Object.assign(document.createElement("p"), {
+    className: "card-sub centered",
+    textContent: "Click Re-run to measure latency on this instance.",
+  }));
+}
 

@@ -184,27 +184,39 @@ class PricingEngine:
             },
         }
 
+    # Rows fed through the ensemble per block in price_batch. Every row is
+    # priced independently, so blocking is exact; without it a 50,000-point
+    # batch transiently held ~110 MB of (batch, width) float32 activations
+    # across the 5 members - most of the request headroom on the 512 MB
+    # free-tier container this serves from.
+    _BATCH_CHUNK = 8_192
+
     @torch.no_grad()
     def price_batch(self, spots: np.ndarray, strikes: np.ndarray,
                     maturities: np.ndarray, sigmas: np.ndarray,
                     rates: np.ndarray, option_type: str = "call",
                     member: int | None = None) -> np.ndarray:
-        m = torch.from_numpy((spots / strikes).astype(np.float32))
-        mat = torch.from_numpy(maturities.astype(np.float32))
-        sig = torch.from_numpy(sigmas.astype(np.float32))
-        r = torch.from_numpy(rates.astype(np.float32))
-        f = self._call_price_torch(m, mat, sig, r, member=member)
-        if option_type == "put":
-            if self.has_0dte:
-                mask_0dte = mat <= ZERO_DTE_CUTOFF
-                adj_asian = self._parity_adjustment_torch(m, mat, r)
-                adj_euro = m - torch.exp(-r * mat) # P = C - (S - Ke^-rT)
-                adj = torch.where(mask_0dte, adj_euro, adj_asian)
-                f = f - adj
-            else:
-                f = f - self._parity_adjustment_torch(m, mat, r)
-        return np.maximum((torch.from_numpy(strikes.astype(np.float32)) * f)
-                          .numpy(), 0.0)
+        out = np.empty(spots.shape[0], dtype=np.float32)
+        for lo in range(0, spots.shape[0], self._BATCH_CHUNK):
+            hi = lo + self._BATCH_CHUNK
+            m = torch.from_numpy((spots[lo:hi] / strikes[lo:hi])
+                                 .astype(np.float32))
+            mat = torch.from_numpy(maturities[lo:hi].astype(np.float32))
+            sig = torch.from_numpy(sigmas[lo:hi].astype(np.float32))
+            r = torch.from_numpy(rates[lo:hi].astype(np.float32))
+            f = self._call_price_torch(m, mat, sig, r, member=member)
+            if option_type == "put":
+                if self.has_0dte:
+                    mask_0dte = mat <= ZERO_DTE_CUTOFF
+                    adj_asian = self._parity_adjustment_torch(m, mat, r)
+                    adj_euro = m - torch.exp(-r * mat)  # P = C - (S - Ke^-rT)
+                    adj = torch.where(mask_0dte, adj_euro, adj_asian)
+                    f = f - adj
+                else:
+                    f = f - self._parity_adjustment_torch(m, mat, r)
+            out[lo:hi] = (torch.from_numpy(strikes[lo:hi].astype(np.float32))
+                          * f).numpy()
+        return np.maximum(out, 0.0)
 
     def mc_price(self, spot: float, strike: float, maturity: float,
                  sigma: float, rate: float, n_paths: int,

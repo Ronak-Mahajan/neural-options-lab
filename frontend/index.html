@@ -93,10 +93,11 @@
     <section class="rail-section">
       <h2 class="kicker">Simulation</h2>
       <div class="segmented dense" id="mc-paths">
+        <!-- 100k is also the server-side cap (PriceRequest.mc_paths); the old
+             250k option would now be rejected with a 422. -->
         <button class="seg-btn mono" data-value="10000">10k</button>
         <button class="seg-btn mono active" data-value="50000">50k</button>
         <button class="seg-btn mono" data-value="100000">100k</button>
-        <button class="seg-btn mono" data-value="250000">250k</button>
       </div>
 
       <div class="readout-row">
