@@ -471,6 +471,8 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.querySelectorAll(".tab-pane").forEach(p => p.style.display = "none");
     btn.classList.add("active");
     $(btn.dataset.tab).style.display = "flex";
+    // Each pane's content starts at the top; landing mid-scroll shows a void.
+    window.scrollTo(0, 0);
     // charts drawn or window-resized while this pane was hidden need a nudge
     requestAnimationFrame(() => {
       document.querySelectorAll("#" + btn.dataset.tab + " .js-plotly-plot")
@@ -549,6 +551,10 @@ async function runHedge() {
   const btn = $("btn-hedge");
   btn.textContent = "Simulating...";
   btn.disabled = true;
+  // The simulation takes seconds (tens of seconds on a small host); without
+  // this the panel is a blank void with only the button label as feedback.
+  $("hedge-sub").textContent =
+    "Simulating thousands of 30-day paths across both hedging policies…";
   try {
     const d = await api("/api/hedge",
       { sigma: state.sigma, rate: state.rate, cost: state.hedgeCost });
@@ -558,12 +564,21 @@ async function runHedge() {
     const K = state.strike;
     const $$ = (v) => (v < 0 ? "−$" : "$") + Math.abs(v * K).toFixed(2);
 
+    // cvar95 is a positive loss magnitude, so the SMALLER one is the better
+    // hedge. The deep hedge does not always win (the honest out-of-sample
+    // result under GBM often favors delta), so the green "good" highlight
+    // and the reduction/increase label both follow the measurement instead
+    // of assuming the deep policy won.
+    const deepWins = d.deep.cvar95 < d.delta.cvar95;
     const improvement = (1 - d.deep.cvar95 / Math.max(d.delta.cvar95, 1e-9)) * 100;
     $("hedge-stats").innerHTML =
-      hedgeStatChip("CVaR₉₅ deep hedge", $$(-d.deep.cvar95), "good") +
-      hedgeStatChip("CVaR₉₅ delta hedge", $$(-d.delta.cvar95)) +
-      hedgeStatChip("Tail-risk reduction",
-        improvement.toFixed(0) + "%", improvement > 0 ? "good" : "") +
+      hedgeStatChip("CVaR₉₅ deep hedge", $$(-d.deep.cvar95),
+        deepWins ? "good" : "") +
+      hedgeStatChip("CVaR₉₅ delta hedge", $$(-d.delta.cvar95),
+        deepWins ? "" : "good") +
+      hedgeStatChip(improvement >= 0 ? "Tail-risk reduction"
+                                     : "Tail-risk increase",
+        Math.abs(improvement).toFixed(0) + "%", improvement > 0 ? "good" : "") +
       hedgeStatChip("Avg costs deep vs delta",
         $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs));
     $("hedge-sub").textContent =
@@ -656,7 +671,7 @@ $("btn-risk").addEventListener("click", async () => {
     if (lastNNPrice == null || !lastAttributions || !lastHedge)
       throw new Error("pricing/hedging inputs unavailable; is the backend up?");
 
-    out.textContent = "";
+    out.textContent = "Contacting the risk analyst…";
     out.classList.add("streaming");
     const req = {
       ticker: marketData ? marketData.ticker
@@ -676,9 +691,11 @@ $("btn-risk").addEventListener("click", async () => {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let firstChunk = true;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (firstChunk) { out.textContent = ""; firstChunk = false; }
       out.textContent += decoder.decode(value, { stream: true });
     }
   } catch (e) {
@@ -714,7 +731,7 @@ function wsConnect() {
     btn.textContent = "Disconnect";
     btn.classList.add("btn-stream-active");
     $("stream-sub").textContent =
-      "Connected. Streaming GBM ticks at 20 Hz with neural pricing.";
+      "Connected. Negotiating stream rate…";
 
     ws.send(JSON.stringify({
       spot: state.spot, strike: state.strike, sigma: state.sigma,
@@ -748,6 +765,14 @@ function wsConnect() {
   ws.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
     if (d.error) return;
+    if (d.status === "ready") {
+      // The server caps the requested rate (MAX_STREAM_HZ); show the rate it
+      // actually granted. This frame has no tick fields - falling through
+      // used to throw a TypeError on every connect.
+      $("stream-sub").textContent = "Connected. Streaming GBM ticks at " +
+        d.hz + " Hz with neural pricing.";
+      return;
+    }
 
     $("ws-spot").textContent = "$" + d.spot.toFixed(2);
     $("ws-spot").className = "v mono live";
@@ -757,7 +782,7 @@ function wsConnect() {
     $("ws-gamma").textContent = d.gamma.toFixed(6);
     $("ws-vega").textContent = d.vega.toFixed(4);
     $("ws-theta").textContent = d.theta.toFixed(4);
-    $("ws-latency").textContent = d.latency_us.toFixed(0) + " \u00b5s";
+    $("ws-latency").textContent = fmtMs(d.latency_us / 1000);
     $("ws-ticks").textContent = d.tick.toLocaleString();
 
     // Append to rolling buffers
