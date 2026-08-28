@@ -37,6 +37,15 @@ def get_risk_report_stream(ticker: str, nn_price: float, bs_cvar: float,
     except Exception:
         news_context = "No live news available at this time."
 
+    # Which policy actually has the smaller tail loss. CVaR95 arrives as a
+    # P&L quantile (negative = loss), so "better" means less negative. The
+    # deep hedger does NOT reliably beat delta hedging out of sample (see
+    # hedging.py), and both this prompt and the offline template must state
+    # whichever direction the numbers actually show - an earlier version
+    # hardcoded "the Deep Hedger reduces this tail risk" and happily printed
+    # it next to numbers proving the opposite.
+    deep_wins = deep_cvar > bs_cvar
+
     api_key = os.environ.get("GROQ_API_KEY")
     prompt = f"""
 You are an elite quantitative Risk Analyst. Analyze the following live options
@@ -49,10 +58,12 @@ DATA:
 - XAI Price Drivers: Spot contributed ${attributions['spot']:.4f}, Volatility
   contributed ${attributions['sigma']:.4f}, Maturity contributed
   ${attributions['maturity']:.4f}.
-- Hedging Risk (CVaR95): Standard Black-Scholes Delta Hedging yields a
-  shortfall risk of ${bs_cvar:.4f}, whereas our Deep Hedging engine (which
-  accounts for transaction costs) yields a lower shortfall risk of
-  ${deep_cvar:.4f}.
+- Hedging Risk (CVaR95, a P&L quantile where less negative is better):
+  Standard Black-Scholes Delta Hedging: ${bs_cvar:.4f}. Deep Hedging engine
+  (accounts for transaction costs): ${deep_cvar:.4f}. In this simulation the
+  {"Deep Hedging policy" if deep_wins else "standard delta hedge"} has the
+  smaller tail loss - describe the comparison exactly as these numbers show
+  it, and do not assume either policy is better than the measurement says.
 
 LIVE MARKET NEWS (RAG Context):
 {news_context}
@@ -60,10 +71,12 @@ LIVE MARKET NEWS (RAG Context):
 FORMAT:
 Paragraph 1: Discuss the Neural Price and what is driving it (using XAI). Synthesize this with the LIVE MARKET NEWS to explain WHY the market might be pricing these Greeks (e.g. if Vega is high, correlate it to a recent news event).
 Paragraph 2: Discuss hedging risk, comparing Standard vs Deep Hedging.
-Paragraph 3: A final one-sentence recommendation on risk limit management based on both the quantitative data and the fundamental news context.
+Paragraph 3: A final one-sentence note on risk limit management based on both the quantitative data and the fundamental news context.
 
 Keep it highly technical, confident, and professional. Do not use asterisks or
-markdown bolding. Just plain text paragraphs.
+markdown bolding. Just plain text paragraphs. This is a research dashboard,
+not investment advice - frame the close as monitoring guidance, not an
+instruction to deploy capital.
 """
 
     if not api_key:
@@ -74,28 +87,53 @@ markdown bolding. Just plain text paragraphs.
                             "maturity": "time value",
                             "rate": "the rate environment"}
             top = max(attributions, key=lambda k: abs(attributions[k]))
+            others = ", ".join(
+                f"{driver_names.get(k, k)} ${attributions[k]:.4f}"
+                for k in ("sigma", "maturity", "spot") if k != top)
+            if deep_wins:
+                hedge_text = (
+                    f"In this simulation the Deep Hedging policy carries the "
+                    f"smaller tail risk: the frictionless Black-Scholes delta "
+                    f"hedge shows a 95% Conditional Value at Risk (CVaR) of "
+                    f"${bs_cvar:.4f}, while the Deep Hedger, which "
+                    f"internalizes proportional transaction costs, improves "
+                    f"that to ${deep_cvar:.4f} by trading less and avoiding "
+                    f"over-hedging whipsaw losses."
+                )
+                close_text = (
+                    "The Deep Hedging policy's tail advantage in this run "
+                    "merits attention alongside its lower trading costs; "
+                    "monitor the spot-driven XAI attribution daily."
+                )
+            else:
+                hedge_text = (
+                    f"In this simulation the Deep Hedging policy does NOT "
+                    f"beat the standard delta hedge on tail risk: the "
+                    f"Black-Scholes delta hedge shows a 95% Conditional "
+                    f"Value at Risk (CVaR) of ${bs_cvar:.4f} versus "
+                    f"${deep_cvar:.4f} for the Deep Hedger. The learned "
+                    f"policy trades less and therefore pays lower "
+                    f"transaction costs, but under these parameters that "
+                    f"saving does not compensate for the wider loss tail."
+                )
+                close_text = (
+                    "Under these parameters the delta hedge remains the "
+                    "safer baseline for tail-risk limits; monitor the "
+                    "spot-driven XAI attribution daily."
+                )
             fallback_text = (
                 f"[OFFLINE FALLBACK - NO GROQ API KEY]\n\n"
-                f"The Neural Network prices the {ticker} option at "
+                f"The Neural Network prices the option on {ticker} at "
                 f"${nn_price:.4f}. Based on our Integrated Gradients XAI, "
-                f"this "
-                f"premium is primarily driven by {driver_names.get(top, top)} "
-                f"(${attributions[top]:.4f}), with volatility contributing "
-                f"${attributions['sigma']:.4f}, time-value "
-                f"${attributions['maturity']:.4f}, and spot "
-                f"${attributions['spot']:.4f}. These attribution metrics "
-                f"confirm the model is pricing the risk factors in line with "
-                f"expected theoretical sensitivities.\n\n"
-                f"From a risk management perspective, the Deep Hedging policy "
-                f"significantly outperforms frictionless Black-Scholes delta "
-                f"hedging. Standard hedging yields a 95% Conditional Value at "
-                f"Risk (CVaR) shortfall of ${bs_cvar:.4f}. By internalizing "
-                f"proportional transaction costs, the Deep Hedger reduces "
-                f"this tail risk shortfall to ${deep_cvar:.4f}, actively "
-                f"preventing "
-                f"over-hedging whipsaw losses.\n\n"
-                f"Recommendation: Allocate hedging capital according to the "
-                f"Deep Hedging policy and monitor spot-driven XAI daily."
+                f"this premium is primarily driven by "
+                f"{driver_names.get(top, top)} (${attributions[top]:.4f}); "
+                f"the remaining drivers contribute {others}. These "
+                f"attribution metrics confirm the model is pricing the risk "
+                f"factors in line with expected theoretical "
+                f"sensitivities.\n\n"
+                f"{hedge_text}\n\n"
+                f"{close_text} This is a research dashboard, not investment "
+                f"advice."
             )
             for chunk in fallback_text.split(" "):
                 yield chunk + " "
