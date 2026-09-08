@@ -90,11 +90,11 @@ body {
 .brand-copy { display: flex; flex-direction: column; }
 .brand-name {
   font-family: var(--font-display); font-size: 16.5px; font-weight: 600;
-  letter-spacing: 0.02em; color: var(--ink-hi);
+  letter-spacing: 0.02em; color: var(--ink-hi); white-space: nowrap;
 }
 .brand-sub {
   font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--ink-low); margin-top: 1px;
+  color: var(--ink-low); margin-top: 1px; white-space: nowrap;
 }
 
 /* tab nav lives in the chrome — content area stays pure data */
@@ -117,13 +117,26 @@ body {
   box-shadow: inset 0 0 0 1px var(--line-hi);
 }
 
+.bar-right { justify-self: end; display: flex; align-items: center; gap: 10px;
+  min-width: 0; max-width: 100%; }
+.meta-links { display: flex; align-items: center; gap: 6px; flex: none; }
+.btn-ghost {
+  padding: 6px 11px; font-size: 12px; font-weight: 500;
+  background: transparent; border: 1px solid var(--line); color: var(--ink-mid);
+  text-decoration: none; line-height: 1.2;
+}
+.btn-ghost:hover { color: var(--ink-hi); border-color: var(--line-hi); background: var(--raised); }
+.btn-ghost.copied { color: var(--mint); border-color: rgba(48, 209, 88, 0.5); }
+
 .status-cluster {
-  justify-self: end;
+  min-width: 0; flex: 1 1 auto; overflow: hidden;
   display: flex; align-items: center; gap: 10px;
   padding: 7px 14px; border-radius: var(--r-ctl);
   background: var(--surface);
 }
-.status-text { font-size: 11px; color: var(--ink-mid); }
+.status-text { font-size: 11px; color: var(--ink-mid); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+@media (max-width: 1360px) { .status-text { display: none; } }
 .status-dot { width: 7px; height: 7px; border-radius: 50%;
   background: var(--ink-low); flex: none; }
 .status-dot.ok { background: var(--mint); }
@@ -146,6 +159,8 @@ body {
   background: var(--surface);
   border-radius: var(--r-panel);
 }
+.rail-toggle { display: none; }
+.shell > *, .rail > *, .stage > *, .tab-pane > * { min-width: 0; }
 .rail-section { display: flex; flex-direction: column; gap: 14px; }
 .rail-section + .rail-section { border-top: 1px solid var(--line);
   padding-top: 18px; }
@@ -269,7 +284,46 @@ input[type="range"]::-moz-range-thumb {
 .panel {
   background: var(--surface);
   border-radius: var(--r-panel);
+  min-width: 0;
 }
+
+/* First-visit explainer */
+.explainer {
+  position: relative; display: flex; gap: 16px; align-items: flex-start;
+  padding: 18px 44px 16px 22px;
+  border: 1px solid rgba(10, 132, 255, 0.22);
+  background: linear-gradient(180deg, rgba(10, 132, 255, 0.07), var(--surface));
+}
+.explainer.hidden { display: none; }
+.explainer h2 {
+  font-family: var(--font-display); font-size: 14px; font-weight: 600;
+  color: var(--ink-hi); margin-bottom: 6px;
+}
+.explainer p { font-size: 13px; line-height: 1.65; color: var(--ink); max-width: 96ch; }
+.explainer p em { color: var(--ink-hi); font-style: normal; font-weight: 600; }
+.explainer [title] { text-decoration: underline dotted var(--ink-low); text-underline-offset: 3px; cursor: help; }
+.hl-nn { color: var(--neural); font-weight: 600; }
+.hl-mc { color: var(--classic); font-weight: 600; }
+.explainer-close {
+  position: absolute; top: 10px; right: 12px;
+  width: 28px; height: 28px; border-radius: 6px; border: none;
+  background: transparent; color: var(--ink-mid); font-size: 20px; cursor: pointer;
+}
+.explainer-close:hover { background: var(--raised); color: var(--ink-hi); }
+.preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.preset-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-low); }
+.chip-btn {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line-hi);
+  background: var(--raised); color: var(--ink-hi);
+  font-family: var(--font-ui); font-size: 12px; font-weight: 500; cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.chip-btn:hover { border-color: var(--neural); background: var(--neural-soft); }
+
+/* a failed re-price: keep the last good numbers visible but clearly stale */
+.errored .price, .errored .greek-val, .errored .speedup { opacity: 0.3; }
+.errored #mc-ci, .errored #nn-latency, .errored #mc-latency { visibility: hidden; }
 
 /* Hero Row: NN price dominates, dial pivots, MC answers */
 .hero { display: grid; grid-template-columns: 1.15fr 0.7fr 1.15fr; gap: 18px; }
@@ -361,7 +415,7 @@ input[type="range"]::-moz-range-thumb {
 .chart-tools { display: flex; flex-direction: column; align-items: flex-end;
   gap: 8px; flex: none; }
 
-.plot { height: 330px; position: relative; }
+.plot { height: 330px; position: relative; min-width: 0; }
 .plot.tall { height: 460px; }
 
 /* buttons */
@@ -466,6 +520,80 @@ input[type="range"]::-moz-range-thumb {
 .colophon {
   text-align: center; font-size: 11px; color: var(--ink-low);
   line-height: 1.7; padding: 6px 0 2px;
+}
+.colophon-links { display: block; margin-top: 4px; }
+.colophon a { color: var(--ink-mid); text-decoration: none; border-bottom: 1px dotted var(--ink-low); }
+.colophon a:hover { color: var(--ink-hi); }
+
+/* ───────────────────────────── responsive ─────────────────────────────
+   Previously nothing reflowed below 800px: the header grid, the 5-column
+   Greek strip and the Plotly scenes all kept desktop widths, so phones got
+   a 1150px-wide page to pan around. */
+@media (max-width: 1100px) {
+  .cmd-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 16px;
+  }
+  .brand { flex: 1 1 auto; }
+  .bar-right { flex: none; order: 2; }
+  .status-cluster { display: none; }         /* the model badge is desktop chrome */
+  .tab-nav {
+    order: 3; flex: 1 0 100%;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tab-nav::-webkit-scrollbar { display: none; }
+  .tab-btn { flex: 1 0 auto; padding: 8px 14px; white-space: nowrap; }
+  /* single column: the rail sits above the results, so keep it short */
+  .rail {
+    position: static;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px;
+    align-items: start;
+  }
+  .rail-section + .rail-section { border-top: none; padding-top: 0; }
+  .rail-note { grid-column: 1 / -1; }
+}
+@media (max-width: 800px) {
+  .shell { padding: 14px 12px 36px; gap: 14px; }
+  .rail { padding: 16px 14px; gap: 16px; grid-template-columns: 1fr; }
+  .rail-toggle {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
+    padding: 4px 0; border: none; background: transparent; cursor: pointer;
+    color: var(--ink-hi); text-align: left;
+  }
+  .rail-toggle .kicker { color: var(--ink-hi); }
+  .rail-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 11.5px; color: var(--ink-mid); }
+  .rail-caret { color: var(--ink-mid); transition: transform 0.2s ease; }
+  .rail.collapsed > .rail-section, .rail.collapsed > .rail-note { display: none; }
+  .rail.collapsed { gap: 0; padding: 12px 14px; }
+  .rail.collapsed .rail-caret { transform: rotate(-90deg); }
+  .stage, .tab-pane { gap: 14px; }
+  .hero { gap: 12px; }
+  .hero-card { padding: 16px 18px; }
+  .price { font-size: 36px; }
+  .greek { padding: 12px 14px; }
+  .chart-panel { padding: 16px 14px 10px; }
+  .chart-head { flex-direction: column; align-items: stretch; }
+  .chart-tools { align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+  .plot { height: 280px; }
+  .plot.tall { height: 360px; }
+  .explainer { padding: 16px 40px 14px 16px; }
+  .report-body { padding: 16px 16px; font-size: 13.5px; }
+}
+@media (max-width: 480px) {
+  .brand-sub { display: none; }
+  .tab-nav { -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent);
+    mask-image: linear-gradient(90deg, #000 82%, transparent); }
+  .tab-btn { padding: 8px 12px; font-size: 12.5px; }
+  .btn-ghost { padding: 6px 9px; font-size: 11.5px; }
+  .greek-strip { grid-template-columns: 1fr; }
+  .hedge-stats, .stream-stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .hedge-stat, .stream-stat { padding: 10px 12px; }
+  .hedge-stat .v, .stream-stat .v { font-size: 15px; }
+  .cost-slider-row { flex-wrap: wrap; }
+  .cost-slider-row input[type="range"] { width: 100%; }
+  .price { font-size: 32px; }
+  .speedup { font-size: 26px; }
 }
 
 /* stale-while-updating: readouts dim while a newer request is in flight */

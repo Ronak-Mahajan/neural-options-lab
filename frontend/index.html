@@ -4,6 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neural Options Lab: Deep Learning for Options Pricing</title>
+<meta name="description" content="A neural surrogate that prices arithmetic Asian options in about a millisecond with exact autograd Greeks, benchmarked live against Monte Carlo; a rough-volatility model for 0DTE; and a deep hedging policy reported honestly.">
+<meta name="theme-color" content="#1c1c1e">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Neural Options Lab">
+<meta property="og:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and a deep hedger that is reported honestly - including where it loses.">
+<meta property="og:url" content="https://neural-options-lab.onrender.com/">
+<meta property="og:image" content="https://neural-options-lab.onrender.com/hero.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Neural Options Lab">
+<meta name="twitter:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and an honestly reported deep hedger.">
+<meta name="twitter:image" content="https://neural-options-lab.onrender.com/hero.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c2c2e'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='JetBrains Mono,Consolas,monospace' font-size='38' font-weight='600' fill='%23f5f5f7'%3E%E2%88%82%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -29,9 +41,16 @@
     <button class="tab-btn" data-tab="tab-ai">AI Risk Analyst</button>
   </nav>
 
-  <div class="status-cluster" id="model-badge">
-    <span class="status-dot" id="status-dot"></span>
-    <span class="status-text mono" id="model-badge-text">Connecting...</span>
+  <div class="bar-right">
+    <div class="status-cluster" id="model-badge">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-text mono" id="model-badge-text">Connecting...</span>
+    </div>
+    <nav class="meta-links" aria-label="Project links">
+      <button class="btn btn-ghost" id="btn-share" title="Copy a link that reproduces the current sliders and tab">Copy link</button>
+      <a class="btn btn-ghost" href="/methodology" title="How it works, results, and what went wrong along the way">Methodology</a>
+      <a class="btn btn-ghost" href="https://github.com/Ronak-Mahajan/neural-options-lab" target="_blank" rel="noopener" title="Source code, tests and training scripts">GitHub</a>
+    </nav>
   </div>
 </header>
 
@@ -39,6 +58,13 @@
 
   <!-- Parameter Rail -->
   <aside class="rail" id="controls">
+    <!-- Phones: the rail is taller than the screen, so it starts collapsed
+         behind a one-line summary and the results come first. -->
+    <button class="rail-toggle" id="rail-toggle" aria-expanded="true" aria-controls="controls">
+      <span class="kicker">Parameters</span>
+      <span class="rail-summary mono" id="rail-summary"></span>
+      <span class="rail-caret" aria-hidden="true">▾</span>
+    </button>
 
     <section class="rail-section">
       <h2 class="kicker">Live Market</h2>
@@ -57,34 +83,37 @@
       </div>
 
       <div class="param">
-        <div class="param-head"><label>Spot <i class="sym">S₀</i></label>
+        <div class="param-head"><label title="Current price of the underlying asset">Spot <i class="sym">S₀</i></label>
           <output class="param-val mono" id="val-spot">100</output></div>
         <input type="range" id="in-spot" min="55" max="195" step="1" value="100">
       </div>
 
       <div class="param">
-        <div class="param-head"><label>Strike <i class="sym">K</i></label>
+        <div class="param-head"><label title="Price at which the option can be exercised. The models work in moneyness S₀/K, so only the ratio matters">Strike <i class="sym">K</i></label>
           <output class="param-val mono" id="val-strike">100</output></div>
         <input type="range" id="in-strike" min="55" max="195" step="1" value="100">
       </div>
 
       <div class="param">
-        <div class="param-head"><label>Maturity <i class="sym">T</i></label>
+        <div class="param-head"><label title="Time to expiry in years. At or below 12 trading days the app switches to the 0DTE rough-volatility model; maturities between 12 days and 0.05y are covered by neither model and the slider snaps past them">Maturity <i class="sym">T</i></label>
           <output class="param-val mono" id="val-maturity">1.00y</output></div>
-        <input type="range" id="in-maturity" min="0.0039" max="2" step="0.001" value="1">
+        <!-- min is a hair above the 0DTE surrogate's trained floor of 1/252 = 0.003968;
+             the old 0.0039 minimum was rejected by the API with a 422 at the slider's
+             own leftmost position. -->
+        <input type="range" id="in-maturity" min="0.004" max="2" step="0.001" value="1">
       </div>
     </section>
 
     <section class="rail-section">
       <h2 class="kicker">Model Inputs</h2>
       <div class="param">
-        <div class="param-head"><label>Volatility <i class="sym">σ</i></label>
+        <div class="param-head"><label title="Annualised volatility of the underlying (its Black-Scholes sigma). Trained range 5% to 80%">Volatility <i class="sym">σ</i></label>
           <output class="param-val mono" id="val-sigma">25%</output></div>
         <input type="range" id="in-sigma" min="5" max="80" step="1" value="25">
       </div>
 
       <div class="param">
-        <div class="param-head"><label>Risk-free rate <i class="sym">r</i></label>
+        <div class="param-head"><label title="Continuously compounded risk-free rate. Trained range 0% to 10%">Risk-free rate <i class="sym">r</i></label>
           <output class="param-val mono" id="val-rate">4.0%</output></div>
         <input type="range" id="in-rate" min="0" max="10" step="0.25" value="4">
       </div>
@@ -122,6 +151,33 @@
     <!-- Tab: Pricing Lab -->
     <section id="tab-pricing" class="tab-pane results active">
 
+      <!-- First-visit explainer. Dismissable; the choice is remembered. -->
+      <section class="explainer panel" id="explainer">
+        <div class="explainer-copy">
+          <h2>What you are looking at</h2>
+          <p>
+            A small neural network has learned to price an exotic option (an
+            <span title="An option whose payoff depends on the average price of the underlying over its life, not just the final price">arithmetic-average Asian option</span>)
+            directly from Monte Carlo simulations, so it answers in about a
+            millisecond with the Greeks as exact derivatives. Move the sliders:
+            the <span class="hl-nn">blue</span> number is the network's price, the
+            <span class="hl-mc">amber</span> one is a fresh 50,000-path Monte Carlo run,
+            and the middle card says whether they agree. At or below 12 trading
+            days a second model trained on rough volatility takes over. The
+            Deep Hedging tab shows a learned hedging policy <em>losing</em> to
+            plain delta hedging, an honest negative result.
+          </p>
+          <div class="preset-row" aria-label="Guided experiments">
+            <span class="preset-label">Try:</span>
+            <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call"}' title="5 trading days to expiry: the 0DTE rough-Bergomi surrogate serves this contract">0DTE regime</button>
+            <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put"}' title="A far out-of-the-money put: the surrogate's relative error is visible here">Deep OTM put</button>
+            <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call"}' title="The most expensive corner of the trained box">2y at 80% vol</button>
+            <button class="chip-btn" data-preset='{"tab":"hedging","sigma":0.25,"rate":0.04,"cost":50,"run":true}' title="Runs the hedging simulation: CVaR of the learned policy vs Black-Scholes delta hedging with 50 bps costs">Deep hedger vs delta</button>
+          </div>
+        </div>
+        <button class="explainer-close" id="explainer-close" aria-label="Dismiss explainer" title="Dismiss">×</button>
+      </section>
+
       <!-- Hero: neural price dominates; conic speedup dial pivots the duel -->
       <div class="hero">
         <article class="panel hero-card hero-nn" id="card-nn">
@@ -130,7 +186,7 @@
             <span class="meta mono" id="nn-latency">-</span>
           </header>
           <div class="price mono" id="nn-price">-</div>
-          <p class="card-sub" id="nn-sub">price + 5 Greeks in one autograd pass</p>
+          <p class="card-sub" id="nn-sub" title="One forward pass through the 5-member ensemble plus reverse-mode autograd for all Greeks">price + 5 Greeks in one autograd pass</p>
         </article>
 
         <article class="panel hero-card hero-vs" id="card-speedup">
@@ -154,15 +210,15 @@
       <!-- Greeks: one dense instrument strip, hairline-divided -->
       <div class="panel greek-strip" id="greeks-row">
         <div class="greek"><span class="greek-sym">Δ</span>
-          <span class="greek-name">Delta</span><span class="greek-val mono" id="g-delta">-</span></div>
+          <span class="greek-name" title="Change in option price per $1 move in spot">Delta</span><span class="greek-val mono" id="g-delta">-</span></div>
         <div class="greek"><span class="greek-sym">Γ</span>
-          <span class="greek-name">Gamma</span><span class="greek-val mono" id="g-gamma">-</span></div>
+          <span class="greek-name" title="Change in delta per $1 move in spot">Gamma</span><span class="greek-val mono" id="g-gamma">-</span></div>
         <div class="greek"><span class="greek-sym">ν</span>
-          <span class="greek-name">Vega</span><span class="greek-val mono" id="g-vega">-</span></div>
+          <span class="greek-name" title="Change in price per 1 volatility point">Vega</span><span class="greek-val mono" id="g-vega">-</span></div>
         <div class="greek"><span class="greek-sym">Θ</span>
-          <span class="greek-name">Theta</span><span class="greek-val mono" id="g-theta">-</span></div>
+          <span class="greek-name" title="Change in price per calendar day of time decay">Theta</span><span class="greek-val mono" id="g-theta">-</span></div>
         <div class="greek"><span class="greek-sym">ρ</span>
-          <span class="greek-name">Rho</span><span class="greek-val mono" id="g-rho">-</span></div>
+          <span class="greek-name" title="Change in price per 1 point of the risk-free rate">Rho</span><span class="greek-val mono" id="g-rho">-</span></div>
       </div>
 
       <!-- Analytics grid: asymmetric 7/5 rhythm -->
@@ -334,6 +390,10 @@
       Research tool. Prices come from neural surrogates trained on simulated
       data and are not investment advice. Built with PyTorch, FastAPI and
       Plotly.
+      <span class="colophon-links">
+        <a href="/methodology">Methodology &amp; postmortem</a> ·
+        <a href="https://github.com/Ronak-Mahajan/neural-options-lab" target="_blank" rel="noopener">Source on GitHub</a>
+      </span>
     </footer>
   </main>
 </div>

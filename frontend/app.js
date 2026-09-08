@@ -108,12 +108,16 @@ function refreshReadouts() {
     : state.maturity.toFixed(2) + "y";
   $("val-sigma").textContent = Math.round(state.sigma * 100) + "%";
   $("val-rate").textContent = (state.rate * 100).toFixed(1) + "%";
+  $("rail-summary").textContent =
+    state.optionType + " · S " + state.spot + " · K " + state.strike +
+    " · T " + $("val-maturity").textContent +
+    " · σ " + $("val-sigma").textContent + " · r " + $("val-rate").textContent;
   const m = state.spot / state.strike;
   $("moneyness-val").textContent = m.toFixed(2) +
     (is0dte() ? " · 0DTE" : "");
   const [lo, hi] = is0dte() ? [0.85, 1.15] : [0.5, 2.0];
   const outside = m < lo || m > hi;
-  $("domain-warning").textContent = "Outside " + (is0dte() ? "0DTE rough-vol" : "trained") + " domain [" + lo + ", " + hi + "] (surrogate is extrapolating)";
+  $("domain-warning").textContent = "Outside " +
     (is0dte() ? "0DTE rough-vol" : "trained") + " domain [" + lo + ", " +
     hi + "] (surrogate is extrapolating)";
   $("domain-warning").classList.toggle("show", outside);
@@ -160,6 +164,7 @@ async function updatePrice() {
       " bps of spot vs MC" + (d.comparison.within_mc_ci ? " · inside 95% CI" : "");
     agr.className = "card-sub centered " + (ok ? "agreement-ok" : "agreement-warn");
 
+    document.querySelector(".results").classList.remove("errored");
     const g = d.nn.greeks;
     animateNumber($("g-delta"), g.delta, (v) => v.toFixed(4));
     animateNumber($("g-gamma"), g.gamma, (v) => v.toFixed(4));
@@ -167,6 +172,10 @@ async function updatePrice() {
     animateNumber($("g-theta"), g.theta, (v) => v.toFixed(4));
     animateNumber($("g-rho"), g.rho, (v) => v.toFixed(4));
   } catch (err) {
+    if (seq !== priceSeq) return;
+    // Keep the last good numbers on screen but visibly stale: a red message
+    // next to crisp prices read as if the prices belonged to the message.
+    document.querySelector(".results").classList.add("errored");
     $("agreement").textContent = err.message;
     $("agreement").className = "card-sub centered agreement-warn";
   } finally {
@@ -397,11 +406,28 @@ async function loadModelInfo() {
 // ─────────────────────────────────────────────────────────────── wire up ──
 const refreshFast = debounce(updatePrice, 220);
 const refreshSlow = debounce(() => { updateConvergence(); updateSurface(); updateXAI(); }, 650);
-const refreshAll = () => { refreshReadouts(); refreshFast(); refreshSlow(); };
+const refreshAll = () => { refreshReadouts(); refreshFast(); refreshSlow(); syncURL(); };
 
 bindSlider("spot", (v) => { state.spot = v; refreshAll(); });
 bindSlider("strike", (v) => { state.strike = v; refreshAll(); });
-bindSlider("maturity", (v) => { state.maturity = v; refreshAll(); });
+// Maturities strictly between the 0DTE cutoff (12/252) and the Asian net's
+// 0.05y training floor are covered by neither model; the API rejects them
+// with a 422. The slider's 0.001 grid has three such positions (0.048,
+// 0.049 and, because of float rounding, 0.047619 itself is unreachable), so
+// snap to whichever valid endpoint is nearer: 0.047 (serves as 12 trading
+// days) or 0.05.
+const ASIAN_FLOOR = 0.05;
+function snapMaturity(v) {
+  if (v > ZERO_DTE_CUTOFF && v < ASIAN_FLOOR) {
+    v = (v - ZERO_DTE_CUTOFF) < (ASIAN_FLOOR - v) ? 0.047 : ASIAN_FLOOR;
+    const el = $("in-maturity");
+    el.value = v;
+    el.style.setProperty("--fill",
+      (el.value - el.min) / (el.max - el.min) * 100 + "%");
+  }
+  return v;
+}
+bindSlider("maturity", (v) => { state.maturity = snapMaturity(v); refreshAll(); });
 bindSlider("sigma", (v) => { state.sigma = v / 100; refreshAll(); });
 bindSlider("rate", (v) => { state.rate = v / 100; refreshAll(); });
 
@@ -410,6 +436,164 @@ bindSegmented("mc-paths", (v) => { state.mcPaths = parseInt(v); refreshFast(); }
 bindSegmented("error-metric", (v) => { errorMetric = v; renderErrorDistribution(); });
 
 $("btn-benchmark").addEventListener("click", updateBenchmark);
+
+// ──────────────────────────────────────────── URL state, presets, sharing ──
+// Every slider, the contract type, the tab and the hedging cost are mirrored
+// into the query string so a specific finding can be sent as a link, e.g.
+//   /?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put
+const TAB_IDS = { pricing: "tab-pricing", stream: "tab-stream",
+                  hedging: "tab-hedging", ai: "tab-ai" };
+let currentTab = "pricing";
+
+function serializeState() {
+  const q = new URLSearchParams();
+  q.set("tab", currentTab);
+  q.set("spot", String(state.spot));
+  q.set("strike", String(state.strike));
+  q.set("T", String(+state.maturity.toFixed(4)));
+  q.set("sigma", String(+state.sigma.toFixed(4)));
+  q.set("rate", String(+state.rate.toFixed(4)));
+  q.set("type", state.optionType);
+  if (state.mcPaths !== 50000) q.set("paths", String(state.mcPaths));
+  if (Math.round(state.hedgeCost * 1e4) !== 50)
+    q.set("cost", String(Math.round(state.hedgeCost * 1e4)));
+  if (marketData) q.set("ticker", marketData.ticker);
+  return q;
+}
+const syncURL = debounce(() => {
+  history.replaceState(null, "", "?" + serializeState().toString());
+}, 300);
+
+function setSegmented(containerId, value) {
+  $(containerId).querySelectorAll(".seg-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.value === String(value)));
+}
+function setSlider(id, value) {
+  const el = $("in-" + id);
+  el.value = value;
+  el.style.setProperty("--fill",
+    (el.value - el.min) / (el.max - el.min) * 100 + "%");
+}
+
+// Apply a partial state (from the URL or a preset) to the controls and the
+// state object without firing per-control refreshes; the caller refreshes.
+function applyState(p) {
+  const num = (k) => (p[k] !== undefined && p[k] !== null && p[k] !== "" &&
+                      isFinite(+p[k])) ? +p[k] : undefined;
+  const spot = num("spot"), strike = num("strike");
+  if (spot !== undefined || strike !== undefined) {
+    const s = spot ?? state.spot, k = strike ?? state.strike;
+    // Sliders default to 55..195; a ticker-scale spot needs the rail
+    // rescaled around it first, otherwise the browser clamps the value.
+    const el = $("in-spot");
+    if (s < +el.min || s > +el.max || k < +el.min || k > +el.max)
+      rescaleSpotSliders(Math.max(s, k));
+    state.spot = s; state.strike = k;
+    setSlider("spot", s); setSlider("strike", k);
+  }
+  const T = num("T");
+  if (T !== undefined) {
+    state.maturity = Math.min(2, Math.max(0.004, T));
+    setSlider("maturity", state.maturity);
+    state.maturity = snapMaturity(state.maturity);
+  }
+  const sigma = num("sigma");
+  if (sigma !== undefined) { state.sigma = sigma; setSlider("sigma", sigma * 100); }
+  const rate = num("rate");
+  if (rate !== undefined) { state.rate = rate; setSlider("rate", rate * 100); }
+  if (p.type === "call" || p.type === "put") {
+    state.optionType = p.type; setSegmented("option-type", p.type);
+  }
+  const paths = num("paths");
+  if (paths !== undefined && [10000, 50000, 100000].includes(paths)) {
+    state.mcPaths = paths; setSegmented("mc-paths", paths);
+  }
+  const cost = num("cost");
+  if (cost !== undefined) {
+    const bps = Math.min(200, Math.max(0, Math.round(cost / 5) * 5));
+    state.hedgeCost = bps / 1e4;
+    $("in-cost").value = bps; $("val-cost").textContent = bps + " bps";
+  }
+}
+
+function showTab(key) {
+  const id = TAB_IDS[key] || TAB_IDS.pricing;
+  currentTab = TAB_IDS[key] ? key : "pricing";
+  document.querySelectorAll(".tab-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll(".tab-pane").forEach((p) =>
+    p.style.display = p.id === id ? "flex" : "none");
+  // Each pane's content starts at the top; landing mid-scroll shows a void.
+  window.scrollTo(0, 0);
+  // charts drawn or window-resized while this pane was hidden need a nudge
+  requestAnimationFrame(() => {
+    document.querySelectorAll("#" + id + " .js-plotly-plot")
+      .forEach((p) => Plotly.Plots.resize(p));
+  });
+  syncURL();
+}
+
+function applyPreset(p) {
+  applyState(p);
+  refreshAll();
+  showTab(p.tab || "pricing");
+  if (p.tab === "hedging" && p.run) runHedge();
+}
+document.querySelectorAll(".chip-btn[data-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    try { applyPreset(JSON.parse(btn.dataset.preset)); } catch (e) { /* ignore */ }
+  });
+});
+
+$("btn-share").addEventListener("click", async () => {
+  const url = location.origin + location.pathname + "?" + serializeState().toString();
+  const btn = $("btn-share");
+  try {
+    await navigator.clipboard.writeText(url);
+    btn.textContent = "Copied"; btn.classList.add("copied");
+  } catch {
+    // Clipboard blocked (insecure context / permissions): fall back to the
+    // address bar, which syncURL keeps current.
+    history.replaceState(null, "", "?" + serializeState().toString());
+    btn.textContent = "Link in address bar";
+  }
+  setTimeout(() => { btn.textContent = "Copy link"; btn.classList.remove("copied"); }, 1600);
+});
+
+// Parameter rail: on phones it starts collapsed so the results are the
+// first thing on screen; the choice is remembered. Desktop never collapses
+// (the toggle is display:none there), so the class is harmless.
+(() => {
+  const rail = $("controls"), btn = $("rail-toggle");
+  const phone = window.matchMedia("(max-width: 800px)").matches;
+  let collapsed = phone;
+  try {
+    const saved = localStorage.getItem("nol.rail");
+    if (saved) collapsed = saved === "collapsed";
+  } catch { /* private mode */ }
+  const paint = () => {
+    rail.classList.toggle("collapsed", collapsed);
+    btn.setAttribute("aria-expanded", String(!collapsed));
+  };
+  paint();
+  btn.addEventListener("click", () => {
+    collapsed = !collapsed; paint();
+    try { localStorage.setItem("nol.rail", collapsed ? "collapsed" : "open"); } catch { /* ignore */ }
+    if (!collapsed) rail.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+})();
+
+// Explainer strip: dismissable, remembered per browser.
+(() => {
+  const box = $("explainer");
+  let hidden = false;
+  try { hidden = localStorage.getItem("nol.explainer") === "hidden"; } catch { /* private mode */ }
+  if (hidden) box.classList.add("hidden");
+  $("explainer-close").addEventListener("click", () => {
+    box.classList.add("hidden");
+    try { localStorage.setItem("nol.explainer", "hidden"); } catch { /* ignore */ }
+  });
+})();
 
 // ───────────────────────────────────────────────────────────── Ticker API ──
 // The pricer works in moneyness, so any spot level is exact - we rescale the
@@ -467,17 +651,8 @@ $("in-ticker").addEventListener("keydown", (e) => {
 // ───────────────────────────────────────────────────────────── Tabs ──
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-pane").forEach(p => p.style.display = "none");
-    btn.classList.add("active");
-    $(btn.dataset.tab).style.display = "flex";
-    // Each pane's content starts at the top; landing mid-scroll shows a void.
-    window.scrollTo(0, 0);
-    // charts drawn or window-resized while this pane was hidden need a nudge
-    requestAnimationFrame(() => {
-      document.querySelectorAll("#" + btn.dataset.tab + " .js-plotly-plot")
-        .forEach((p) => Plotly.Plots.resize(p));
-    });
+    const key = Object.keys(TAB_IDS).find((k) => TAB_IDS[k] === btn.dataset.tab);
+    showTab(key || "pricing");
   });
 });
 
@@ -540,10 +715,19 @@ state.hedgeCost = 0.005;
 $("in-cost").addEventListener("input", () => {
   state.hedgeCost = parseFloat($("in-cost").value) / 10000;
   $("val-cost").textContent = $("in-cost").value + " bps";
+  syncURL();
 });
 
+const CHIP_HELP = {
+  "CVaR₉₅ deep hedge": "Expected P&L in the worst 5% of paths when the learned policy hedges the short call (less negative is better)",
+  "CVaR₉₅ delta hedge": "Expected P&L in the worst 5% of paths when a Black-Scholes delta hedge with the same costs does the hedging",
+  "Tail-risk reduction": "How much smaller the deep hedge's worst-5% loss is than the delta hedge's",
+  "Tail-risk increase": "How much larger the deep hedge's worst-5% loss is than the delta hedge's",
+  "Avg costs deep vs delta": "Average transaction costs paid per path by each policy",
+};
 function hedgeStatChip(k, v, cls) {
-  return "<div class='hedge-stat'><span class='k'>" + k +
+  const help = CHIP_HELP[k] ? " title='" + CHIP_HELP[k] + "'" : "";
+  return "<div class='hedge-stat'" + help + "><span class='k'>" + k +
     "</span><span class='v" + (cls ? " " + cls : "") + "'>" + v + "</span></div>";
 }
 
@@ -674,8 +858,9 @@ $("btn-risk").addEventListener("click", async () => {
     out.textContent = "Contacting the risk analyst…";
     out.classList.add("streaming");
     const req = {
-      ticker: marketData ? marketData.ticker
-        : ($("in-ticker").value.trim().toUpperCase() || "a generic underlying"),
+      // Only a successfully fetched ticker names the underlying; a failed
+      // lookup used to put strings like "ZZZZQQ" into the report.
+      ticker: marketData ? marketData.ticker : "a generic underlying",
       nn_price: lastNNPrice,
       bs_cvar: -lastHedge.delta.cvar95 * state.strike,
       deep_cvar: -lastHedge.deep.cvar95 * state.strike,
@@ -827,10 +1012,19 @@ $("btn-stream").addEventListener("click", wsConnect);
 // them there while tying up connections). The latency benchmark is the whole
 // convergence workload re-run for its wall-clock alone, so it loads on
 // demand via its Re-run button instead of on every page view.
+const urlParams = Object.fromEntries(new URLSearchParams(location.search));
+applyState(urlParams);
+if (urlParams.tab && TAB_IDS[urlParams.tab]) showTab(urlParams.tab);
 refreshReadouts();
 loadModelInfo();
 loadErrorDistribution();
 (async () => {
+  // A deep link with a ticker replays the live fetch (which resets the
+  // spot/strike/vol/rate sliders around the market), then prices.
+  if (urlParams.ticker) {
+    $("in-ticker").value = String(urlParams.ticker).slice(0, 10);
+    await fetchTicker().catch(() => {});
+  }
   // The headline price lands first: /api/price and /api/convergence would
   // otherwise race for the server's single simulation slot, and losing that
   // race leaves the hero card blank while the convergence run finishes.
@@ -838,6 +1032,7 @@ loadErrorDistribution();
   await updateConvergence().catch(() => {});
   await updateSurface().catch(() => {});
   await updateXAI().catch(() => {});
+  if (currentTab === "hedging" && urlParams.run === "1") runHedge();
 })();
 const latencyShimmer = $("plot-latency").querySelector(".shimmer");
 if (latencyShimmer) {

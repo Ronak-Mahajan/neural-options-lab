@@ -1,12 +1,35 @@
 # Neural Options Lab
 
-**Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)**. Free-tier hosting, so the first load after an idle spell takes about a minute while the container wakes and PyTorch loads. Every number on the dashboard is computed live by the models described below.
+[![CI](https://github.com/Ronak-Mahajan/neural-options-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/Ronak-Mahajan/neural-options-lab/actions/workflows/tests.yml)
+[![live demo](https://img.shields.io/badge/live%20demo-neural--options--lab.onrender.com-2ea44f)](https://neural-options-lab.onrender.com)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-3776ab)](https://www.python.org/downloads/)
 
-A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 33x more accurately than the standard closed-form approximation, wrapped in an interactive dashboard you can run locally in two commands.
+![Neural Options Lab dashboard](docs/hero.png)
+
+**Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)**. It runs on an always-on paid instance, so there is no wake-up delay on first load. Every number on the dashboard is computed live by the models described below.
+
+A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 33x more accurately than the Levy (1992) closed-form approximation (Curran's 1994 conditioning approximation is more accurate still on price alone; see [docs/approximation_benchmark.md](docs/approximation_benchmark.md)), wrapped in an interactive dashboard you can run locally in two commands.
 
 The project covers the full stack of a modern quant pricing system: the numerical methods that generate ground truth, the deep learning that learns to imitate them, a rough volatility model for same-day-expiry options, a reinforcement-style hedging agent, live market calibration, and a browser front end that ties it together. Trained model weights are included, so it runs the moment you clone it.
 
 Built with PyTorch, FastAPI, and plain JavaScript with Plotly. No frontend build step.
+
+## Results at a glance
+
+Every figure here is measured; the sections below say how, and keep the retractions where earlier versions of this README overclaimed.
+
+- **Pricing.** The neural surrogate prices an arithmetic Asian option in ~714 µs (p50), 500x faster than 200,000-path Monte Carlo, with a price RMSE of 1.4 basis points of strike on 600 held-out points. Against Levy (1992) moment matching it is 33x more accurate at 13x the cost.
+- **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications. An earlier "about 30x" claim is retracted below.
+- **0DTE.** The rough Bergomi ensemble measures 1.48 bps of strike RMSE and +0.13 bps bias on 400 held-out points against 500,000-path references, below its own 2.35 bps per-label noise floor. It is currently uncalibrated: the prior fit was made from market-closed quotes under the old kernel.
+- **Deep hedging, a negative result.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12. The earlier claim of "roughly 30%" lower tail loss was measured in-sample against a handicapped baseline and is retracted.
+
+## Try it
+
+Three links into the live dashboard, each opening on a case discussed below. The dashboard reads these parameters from the URL, so they are visible and editable.
+
+- [0DTE regime](https://neural-options-lab.onrender.com/?tab=pricing&spot=100&strike=100&T=0.02&sigma=0.25&rate=0.04&type=call): an at-the-money call with T = 0.02 years, inside the 12-trading-day cutoff, so the price comes from the rough Bergomi 0DTE ensemble and the Monte Carlo benchmark switches to the rough Bergomi engine.
+- [Deep out-of-the-money put](https://neural-options-lab.onrender.com/?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put): spot 160 against strike 100, where the true price is close to zero and the surrogate's Softplus floor (0.310 bps after head conditioning) is visible as relative error.
+- [Deep hedging](https://neural-options-lab.onrender.com/?tab=hedging&sigma=0.25&rate=0.04&cost=50): the CVaR-trained policy against the vol-matched delta hedge at σ = 0.25 with a proportional transaction cost of 0.005 of traded notional, reported with bootstrap standard errors. Out of sample the learned hedger loses to this baseline in 7 of 12 grid cells.
 
 ## Why this is not trivial
 
