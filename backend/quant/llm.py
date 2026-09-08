@@ -79,63 +79,67 @@ not investment advice - frame the close as monitoring guidance, not an
 instruction to deploy capital.
 """
 
-    if not api_key:
-        # Fallback offline template if no API key
-        def fallback_stream():
-            driver_names = {"spot": "the underlying spot level",
-                            "sigma": "volatility exposure",
-                            "maturity": "time value",
-                            "rate": "the rate environment"}
-            top = max(attributions, key=lambda k: abs(attributions[k]))
-            others = ", ".join(
-                f"{driver_names.get(k, k)} ${attributions[k]:.4f}"
-                for k in ("sigma", "maturity", "spot") if k != top)
-            if deep_wins:
-                hedge_text = (
-                    f"In this simulation the Deep Hedging policy carries the "
-                    f"smaller tail risk: the frictionless Black-Scholes delta "
-                    f"hedge shows a 95% Conditional Value at Risk (CVaR) of "
-                    f"${bs_cvar:.4f}, while the Deep Hedger, which "
-                    f"internalizes proportional transaction costs, improves "
-                    f"that to ${deep_cvar:.4f} by trading less and avoiding "
-                    f"over-hedging whipsaw losses."
-                )
-                close_text = (
-                    "The Deep Hedging policy's tail advantage in this run "
-                    "merits attention alongside its lower trading costs; "
-                    "monitor the spot-driven XAI attribution daily."
-                )
-            else:
-                hedge_text = (
-                    f"In this simulation the Deep Hedging policy does NOT "
-                    f"beat the standard delta hedge on tail risk: the "
-                    f"Black-Scholes delta hedge shows a 95% Conditional "
-                    f"Value at Risk (CVaR) of ${bs_cvar:.4f} versus "
-                    f"${deep_cvar:.4f} for the Deep Hedger. The learned "
-                    f"policy trades less and therefore pays lower "
-                    f"transaction costs, but under these parameters that "
-                    f"saving does not compensate for the wider loss tail."
-                )
-                close_text = (
-                    "Under these parameters the delta hedge remains the "
-                    "safer baseline for tail-risk limits; monitor the "
-                    "spot-driven XAI attribution daily."
-                )
-            fallback_text = (
-                f"[OFFLINE FALLBACK - NO GROQ API KEY]\n\n"
-                f"The Neural Network prices the option on {ticker} at "
-                f"${nn_price:.4f}. Based on our Integrated Gradients XAI, "
-                f"this premium is primarily driven by "
-                f"{driver_names.get(top, top)} (${attributions[top]:.4f}); "
-                f"the remaining drivers contribute {others}. These "
-                f"attribution metrics confirm the model is pricing the risk "
-                f"factors in line with expected theoretical "
-                f"sensitivities.\n\n"
-                f"{hedge_text}\n\n"
-                f"{close_text} This is a research dashboard, not investment "
-                f"advice."
+    def template_text() -> str:
+        """Rule-based narrative built from the same numbers. Served when no
+        LLM key is configured, and as the fallback if the provider fails."""
+        driver_names = {"spot": "the underlying spot level",
+                        "sigma": "volatility exposure",
+                        "maturity": "time value",
+                        "rate": "the rate environment"}
+        top = max(attributions, key=lambda k: abs(attributions[k]))
+        others = ", ".join(
+            f"{driver_names.get(k, k)} ${attributions[k]:.4f}"
+            for k in ("sigma", "maturity", "spot") if k != top)
+        if deep_wins:
+            hedge_text = (
+                f"In this simulation the Deep Hedging policy carries the "
+                f"smaller tail risk: the frictionless Black-Scholes delta "
+                f"hedge shows a 95% Conditional Value at Risk (CVaR) of "
+                f"${bs_cvar:.4f}, while the Deep Hedger, which "
+                f"internalizes proportional transaction costs, improves "
+                f"that to ${deep_cvar:.4f} by trading less and avoiding "
+                f"over-hedging whipsaw losses."
             )
-            for chunk in fallback_text.split(" "):
+            close_text = (
+                "The Deep Hedging policy's tail advantage in this run "
+                "merits attention alongside its lower trading costs; "
+                "monitor the spot-driven XAI attribution daily."
+            )
+        else:
+            hedge_text = (
+                f"In this simulation the Deep Hedging policy does NOT "
+                f"beat the standard delta hedge on tail risk: the "
+                f"Black-Scholes delta hedge shows a 95% Conditional "
+                f"Value at Risk (CVaR) of ${bs_cvar:.4f} versus "
+                f"${deep_cvar:.4f} for the Deep Hedger. The learned "
+                f"policy trades less and therefore pays lower "
+                f"transaction costs, but under these parameters that "
+                f"saving does not compensate for the wider loss tail."
+            )
+            close_text = (
+                "Under these parameters the delta hedge remains the "
+                "safer baseline for tail-risk limits; monitor the "
+                "spot-driven XAI attribution daily."
+            )
+        fallback_text = (
+            f"Risk summary (rule-based narrative)\n\n"
+            f"The Neural Network prices the option on {ticker} at "
+            f"${nn_price:.4f}. Based on our Integrated Gradients XAI, "
+            f"this premium is primarily driven by "
+            f"{driver_names.get(top, top)} (${attributions[top]:.4f}); "
+            f"the remaining drivers contribute {others}. These "
+            f"attribution metrics confirm the model is pricing the risk "
+            f"factors in line with expected theoretical "
+            f"sensitivities.\n\n"
+            f"{hedge_text}\n\n"
+            f"{close_text} This is a research dashboard, not investment "
+            f"advice."
+        )
+        return fallback_text
+
+    if not api_key:
+        def fallback_stream():
+            for chunk in template_text().split(" "):
                 yield chunk + " "
         return StreamingResponse(fallback_stream(), media_type="text/plain")
 
@@ -157,7 +161,9 @@ instruction to deploy capital.
                         chunk.choices[0].delta.content is not None):
                     yield chunk.choices[0].delta.content
         except Exception as e:
-            yield (f"[GROQ API ERROR] {e}\n"
-                   f"(model={model}; override with the GROQ_MODEL env var)")
+            # Never surface a raw provider error on the page: log it and serve
+            # the rule-based narrative instead.
+            print(f"[risk-report] LLM provider error (model={model}): {e}")
+            yield "\n\n" + template_text()
 
     return StreamingResponse(groq_stream(), media_type="text/plain")

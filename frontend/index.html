@@ -4,16 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neural Options Lab: Deep Learning for Options Pricing</title>
-<meta name="description" content="A neural surrogate that prices arithmetic Asian options in about a millisecond with exact autograd Greeks, benchmarked live against Monte Carlo; a rough-volatility model for 0DTE; and a deep hedging policy reported honestly.">
+<meta name="description" content="A neural surrogate that prices arithmetic Asian options in about a millisecond with exact autograd Greeks, benchmarked live against Monte Carlo; a rough-volatility model for 0DTE; and a deep hedging policy benchmarked against delta hedging.">
 <meta name="theme-color" content="#1c1c1e">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Neural Options Lab">
-<meta property="og:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and a deep hedger that is reported honestly - including where it loses.">
+<meta property="og:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and a deep hedging policy benchmarked against delta hedging.">
 <meta property="og:url" content="https://neural-options-lab.onrender.com/">
 <meta property="og:image" content="https://neural-options-lab.onrender.com/hero.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Neural Options Lab">
-<meta name="twitter:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and an honestly reported deep hedger.">
+<meta name="twitter:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and a deep hedging policy benchmarked against delta hedging.">
 <meta name="twitter:image" content="https://neural-options-lab.onrender.com/hero.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c2c2e'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='JetBrains Mono,Consolas,monospace' font-size='38' font-weight='600' fill='%23f5f5f7'%3E%E2%88%82%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -95,7 +95,7 @@
       </div>
 
       <div class="param">
-        <div class="param-head"><label title="Time to expiry in years. At or below 12 trading days the app switches to the 0DTE rough-volatility model; maturities between 12 days and 0.05y are covered by neither model and the slider snaps past them">Maturity <i class="sym">T</i></label>
+        <div class="param-head"><label title="Time to expiry in years. At or below 12 trading days the 0DTE rough-volatility model takes over; the slider skips the short gap between the two models' ranges">Maturity <i class="sym">T</i></label>
           <output class="param-val mono" id="val-maturity">1.00y</output></div>
         <!-- min is a hair above the 0DTE surrogate's trained floor of 1/252 = 0.003968;
              the old 0.0039 minimum was rejected by the API with a 422 at the slider's
@@ -164,13 +164,13 @@
             <span class="hl-mc">amber</span> one is a fresh 50,000-path Monte Carlo run,
             and the middle card says whether they agree. At or below 12 trading
             days a second model trained on rough volatility takes over. The
-            Deep Hedging tab shows a learned hedging policy <em>losing</em> to
-            plain delta hedging, an honest negative result.
+            Deep Hedging tab pits a learned hedging policy against Black-Scholes
+            delta hedging under transaction costs, measured on the same simulated paths.
           </p>
           <div class="preset-row" aria-label="Guided experiments">
             <span class="preset-label">Try:</span>
             <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call"}' title="5 trading days to expiry: the 0DTE rough-Bergomi surrogate serves this contract">0DTE regime</button>
-            <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put"}' title="A far out-of-the-money put: the surrogate's relative error is visible here">Deep OTM put</button>
+            <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put"}' title="A far out-of-the-money put, priced close to zero">Deep OTM put</button>
             <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call"}' title="The most expensive corner of the trained box">2y at 80% vol</button>
             <button class="chip-btn" data-preset='{"tab":"hedging","sigma":0.25,"rate":0.04,"cost":50,"run":true}' title="Runs the hedging simulation: CVaR of the learned policy vs Black-Scholes delta hedging with 50 bps costs">Deep hedger vs delta</button>
           </div>
@@ -382,7 +382,7 @@
           </div>
           <button class="btn btn-accent" id="btn-risk">Generate Report</button>
         </header>
-        <div class="report-body" id="ai-report">Click "Generate Report" to analyze the current option state. Uses Llama 3 via Groq when GROQ_API_KEY is set; otherwise a deterministic offline summary.</div>
+        <div class="report-body" id="ai-report">Click Generate Report to narrate the current pricing, hedging and attribution numbers for the desk.</div>
       </article>
     </section>
 
@@ -391,7 +391,7 @@
       data and are not investment advice. Built with PyTorch, FastAPI and
       Plotly.
       <span class="colophon-links">
-        <a href="/methodology">Methodology &amp; postmortem</a> ·
+        <a href="/methodology">Methodology</a> ·
         <a href="https://github.com/Ronak-Mahajan/neural-options-lab" target="_blank" rel="noopener">Source on GitHub</a>
       </span>
     </footer>
