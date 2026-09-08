@@ -1,6 +1,6 @@
 # Neural Options Lab
 
-[![CI](https://github.com/Ronak-Mahajan/neural-options-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/Ronak-Mahajan/neural-options-lab/actions/workflows/tests.yml)
+[![CI](https://github.com/Ronak-Mahajan/neural-options-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/Ronak-Mahajan/neural-options-lab/actions/workflows/ci.yml)
 [![live demo](https://img.shields.io/badge/live%20demo-neural--options--lab.onrender.com-2ea44f)](https://neural-options-lab.onrender.com)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776ab)](https://www.python.org/downloads/)
 
