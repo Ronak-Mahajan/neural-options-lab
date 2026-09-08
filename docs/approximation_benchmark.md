@@ -16,11 +16,11 @@ Errors are (method - reference), in basis points of strike.
 
 | method | mean abs error | max abs error | bias | worst cell | wall-clock per price |
 |---|---|---|---|---|---|
-| neural surrogate (5-member ensemble) | 0.719 bps | 2.045 bps | +0.712 bps | m=1.06, T=2.00 | 823 us |
-| Turnbull-Wakeman / Levy | 3.654 bps | 13.282 bps | +2.028 bps | m=1.18, T=2.00 | 65 us |
-| Curran (1994), exact threshold | 0.104 bps | 0.345 bps | -0.104 bps | m=1.30, T=2.00 | 279 us |
-| Curran (1994), linear threshold | 0.104 bps | 0.346 bps | -0.104 bps | m=1.30, T=2.00 | 96 us |
-| Monte Carlo, 400,000 paths | (reference) | SE <= 0.207 bps | n/a | n/a | 439.71 ms |
+| neural surrogate (5-member ensemble) | 0.719 bps | 2.045 bps | +0.712 bps | m=1.06, T=2.00 | 633 us |
+| Turnbull-Wakeman / Levy | 3.654 bps | 13.282 bps | +2.028 bps | m=1.18, T=2.00 | 55 us |
+| Curran (1994), exact threshold | 0.104 bps | 0.345 bps | -0.104 bps | m=1.30, T=2.00 | 75 us |
+| Curran (1994), linear threshold | 0.104 bps | 0.346 bps | -0.104 bps | m=1.30, T=2.00 | 66 us |
+| Monte Carlo, 400,000 paths | (reference) | SE <= 0.207 bps | n/a | n/a | 479.94 ms |
 
 Mean absolute error by maturity (bps of strike, averaged over the six moneyness points):
 
@@ -59,14 +59,14 @@ Signed error per cell for the two contenders (bps of strike; rows are maturity, 
 
 ## Interpretation
 
-Against Turnbull-Wakeman / Levy moment matching the surrogate is 5x more accurate on this grid (mean 0.72 vs 3.65 bps of strike, max 2.05 vs 13.28 bps), and the closed form's error is a bias that grows with maturity (0.15 bps at 0.10 y to 7.89 bps at 2.00 y), not noise; the README's 33x is RMSE on 300 points spanning the full trained box (sigma up to 0.80), where Levy measures 44.3 bps against the surrogate's 1.329 bps. Curran's conditioning approximation is a different baseline: at a mean 0.10 bps (max 0.34 bps, never more than 0.3 reference standard errors above the Monte Carlo price, as a lower bound must be) it is 6.9x more accurate than the surrogate on price alone at 279 us against 823 us per price, so 'more accurate than the standard closed-form approximation' is true of Levy and false of Curran at this vol. What the surrogate offers over Curran is therefore not price accuracy on a GBM Asian but the rest of the package (all five Greeks by autograd in one call, batched throughput, and a training recipe that carries over to dynamics with no geometric-conditioning trick, such as the rough-volatility 0DTE pricer), and a headline built on the Levy comparison alone should name Levy.
+Against Turnbull-Wakeman / Levy moment matching the surrogate is 5x more accurate on this grid (mean 0.72 vs 3.65 bps of strike, max 2.05 vs 13.28 bps), and the closed form's error is a bias that grows with maturity (0.15 bps at 0.10 y to 7.89 bps at 2.00 y), not noise; the README's 33x is RMSE on 300 points spanning the full trained box (sigma up to 0.80), where Levy measures 44.3 bps against the surrogate's 1.329 bps. Curran's conditioning approximation is a different baseline: at a mean 0.10 bps (max 0.34 bps, never more than 0.3 reference standard errors above the Monte Carlo price, as a lower bound must be) it is 6.9x more accurate than the surrogate on price alone at 75 us against 633 us per price, so 'more accurate than the standard closed-form approximation' is true of Levy and false of Curran at this vol. What the surrogate offers over Curran is therefore not price accuracy on a GBM Asian but the rest of the package (all five Greeks by autograd in one call, batched throughput, and a training recipe that carries over to dynamics with no geometric-conditioning trick, such as the rough-volatility 0DTE pricer), and a headline built on the Levy comparison alone should name Levy.
 
 ## Notes
 
 - The surrogate's signed error is positive in 35 of 36 cells (bias +0.71 bps). The README reports +0.468 bps bias for the served head on its paired 1,500-point set; same sign, same Softplus-floor mechanism, larger here because this grid is all near-the-money at one vol rather than a box average.
 - Curran (exact threshold), over the 35 cells where the reference has a nonzero standard error, sits at most +0.33 SE above the Monte Carlo price and -3.42 SE below it at worst; a lower bound may exceed the reference only by noise, and it does not. Curran's first-order threshold differs from the exact solve by at most 0.0055 bps on this grid.
 - At m=0.70, T=0.10 every one of the 400,000 reference paths pays zero, so the reference is 0 with zero standard error. Curran returns +0.0000 bps there and the surrogate +0.29 bps: the Softplus output floor the README documents, seen on a cell where the true price is 0.
-- Timing floor: both closed forms spend most of their time in scipy's `norm.cdf` wrapper, 32 us per scalar call measured in this run against 0.3 us for `scipy.special.ndtr`. Switching primitive would speed both up by a similar factor and changes none of the accuracy columns; it is not done here so the two closed forms stay on equal footing with `benchmarks.py`.
+- Timing floor: Turnbull-Wakeman is two scalar `norm.cdf` calls plus a 50x50 exponential sum, and scipy's `norm.cdf` wrapper costs 17 us per scalar call in this run against 0.1 us for `scipy.special.ndtr`, so the wrapper is most of its 55 us. Curran makes two `norm.cdf` calls, one on a length-50 vector; the 75 us of the exact threshold against 66 us for the linear one is the Newton solve, the only code that differs between them. Switching the cdf primitive would speed every closed form up and change none of the accuracy columns; it is not done here so they stay on equal footing with `benchmarks.py`.
 
 ## Reproduce
 

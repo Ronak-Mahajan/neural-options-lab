@@ -368,7 +368,7 @@ def main() -> None:
 
     report = build_report(grid, ref, ref_se, ref_secs, results, args, engine)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(report, encoding="utf-8")
+    args.out.write_text(report, encoding="utf-8", newline="\n")   # LF on Windows too
     print()
     print(report)
     print(f"wrote {args.out}")

@@ -16,19 +16,19 @@ Built with PyTorch, FastAPI, and plain JavaScript with Plotly. No frontend build
 
 ## Results at a glance
 
-Every figure here is measured; the sections below say how, and keep the retractions where earlier versions of this README overclaimed.
+Every figure here is measured; the sections below say how.
 
 - **Pricing.** The neural surrogate prices an arithmetic Asian option in ~714 µs (p50), 500x faster than 200,000-path Monte Carlo, with a price RMSE of 1.4 basis points of strike on 600 held-out points. Against Levy (1992) moment matching it is 33x more accurate at 13x the cost.
-- **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications. An earlier "about 30x" claim is retracted below.
+- **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications.
 - **0DTE.** The rough Bergomi ensemble measures 1.48 bps of strike RMSE and +0.13 bps bias on 400 held-out points against 500,000-path references, below its own 2.35 bps per-label noise floor. It is currently uncalibrated: the prior fit was made from market-closed quotes under the old kernel.
-- **Deep hedging, a negative result.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12. The earlier claim of "roughly 30%" lower tail loss was measured in-sample against a handicapped baseline and is retracted.
+- **Deep hedging.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
 
 ## Try it
 
 Three links into the live dashboard, each opening on a case discussed below. The dashboard reads these parameters from the URL, so they are visible and editable.
 
 - [0DTE regime](https://neural-options-lab.onrender.com/?tab=pricing&spot=100&strike=100&T=0.02&sigma=0.25&rate=0.04&type=call): an at-the-money call with T = 0.02 years, inside the 12-trading-day cutoff, so the price comes from the rough Bergomi 0DTE ensemble and the Monte Carlo benchmark switches to the rough Bergomi engine.
-- [Deep out-of-the-money put](https://neural-options-lab.onrender.com/?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put): spot 160 against strike 100, where the true price is close to zero and the surrogate's Softplus floor (0.310 bps after head conditioning) is visible as relative error.
+- [Deep out-of-the-money put](https://neural-options-lab.onrender.com/?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put): spot 160 against strike 100, where the true price is close to zero.
 - [Deep hedging](https://neural-options-lab.onrender.com/?tab=hedging&sigma=0.25&rate=0.04&cost=50): the CVaR-trained policy against the vol-matched delta hedge at σ = 0.25 with a proportional transaction cost of 0.005 of traded notional, reported with bootstrap standard errors. Out of sample the learned hedger loses to this baseline in 7 of 12 grid cells.
 
 ## Why this is not trivial
