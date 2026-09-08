@@ -20,6 +20,7 @@ from typing import Any, Iterator
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -620,5 +621,12 @@ async def ws_stream(ws: WebSocket):
 
 
 # Static dashboard - mounted last so /api/* wins.
+@app.get("/methodology", include_in_schema=False)
+def methodology() -> FileResponse:
+    """Clean URL for the static methodology page. StaticFiles(html=True) only
+    maps directories to index.html, so /methodology would otherwise 404."""
+    return FileResponse(FRONTEND / "methodology.html")
+
+
 app.mount("/", StaticFiles(directory=str(FRONTEND), html=True),
           name="frontend")

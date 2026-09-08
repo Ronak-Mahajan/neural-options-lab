@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Methodology &amp; Postmortem: Neural Options Lab</title>
+<meta name="description" content="How the Neural Options Lab prices arithmetic Asian options with a neural surrogate, the measured results, and the record of earlier claims that did not survive measurement.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+/* Methodology page: one reading column built on the dashboard's design tokens.
+   Everything here is additive; styles.css is shared with the dashboard and untouched. */
+
+.top {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 10px 20px; padding: 12px 20px;
+  background: rgba(28, 28, 30, 0.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--line);
+}
+.top .brand { text-decoration: none; min-width: 0; }
+.top-links { display: flex; gap: 6px; flex: none; }
+.top-links a {
+  padding: 7px 14px; border-radius: var(--r-ctl);
+  font-family: var(--font-ui); font-size: 13px; font-weight: 500;
+  color: var(--ink-mid); text-decoration: none; background: var(--well);
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.top-links a:hover { color: var(--ink-hi); background: var(--raised); }
+
+.prose {
+  max-width: 72ch; margin: 0 auto; padding: 36px 20px 72px;
+  font-size: 15.5px; line-height: 1.7; color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.prose h1 {
+  font-family: var(--font-display); font-size: 28px; line-height: 1.2;
+  letter-spacing: -0.01em; font-weight: 600; color: var(--ink-hi);
+  margin: 6px 0 14px;
+}
+.prose h2 {
+  font-family: var(--font-display); font-size: 21px; font-weight: 600;
+  color: var(--ink-hi); margin: 52px 0 12px; padding-top: 20px;
+  border-top: 1px solid var(--line); scroll-margin-top: 84px;
+}
+.prose h3 {
+  font-family: var(--font-display); font-size: 16px; font-weight: 600;
+  color: var(--ink-hi); margin: 28px 0 8px; scroll-margin-top: 84px;
+}
+.prose p { margin: 0 0 14px; }
+.prose a { color: var(--neural); text-decoration: none;
+  border-bottom: 1px solid rgba(10, 132, 255, 0.35); }
+.prose a:hover { border-bottom-color: var(--neural); }
+.prose code {
+  font-family: var(--font-mono); font-size: 0.88em; color: var(--ink-hi);
+  background: var(--well); padding: 1px 5px; border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.prose ul, .prose ol { padding-left: 1.4em; margin: 0 0 14px; }
+.prose li { margin-bottom: 6px; }
+.prose strong { color: var(--ink-hi); font-weight: 600; }
+.lede { font-size: 17px; color: var(--ink); }
+.asof { font-size: 12.5px; color: var(--ink-mid); }
+
+/* contents: chips, wrap freely on narrow screens */
+.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 6px; }
+.toc a {
+  padding: 6px 12px; border-radius: 6px; border: none;
+  font-size: 12.5px; font-weight: 500; color: var(--ink-mid);
+  background: var(--surface);
+}
+.toc a:hover { color: var(--ink-hi); background: var(--raised); }
+
+/* tables scroll inside their own box; the page never scrolls sideways */
+.tbl-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  margin: 14px 0 22px; border-radius: var(--r-ctl); background: var(--surface);
+}
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+caption {
+  caption-side: top; text-align: left; padding: 12px 14px 6px;
+  font-size: 12px; color: var(--ink-mid);
+}
+th, td {
+  padding: 9px 14px; text-align: left; vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  font-family: var(--font-display); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-low);
+  white-space: nowrap;
+}
+td { min-width: 9ch; }
+td:first-child { color: var(--ink); min-width: 14ch; }
+.n {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  text-align: right; white-space: nowrap; color: var(--ink-hi);
+}
+tr:last-child td { border-bottom: none; }
+tr.hi td { color: var(--ink-hi); }
+
+/* postmortem entries: claim, discovery, change */
+.pm {
+  background: var(--surface); border-radius: var(--r-panel);
+  padding: 18px 20px 16px; margin: 18px 0;
+}
+.pm h3 { margin: 0 0 4px; }
+.pm .when { font-size: 12px; color: var(--ink-low); margin-bottom: 4px; }
+.pm dl { margin: 0; }
+.pm dt {
+  font-family: var(--font-display); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-low);
+  margin-top: 14px;
+}
+.pm dt.was { color: var(--rose); }
+.pm dt.fix { color: var(--mint); }
+.pm dd { margin: 4px 0 0; }
+.pm dd p:last-child { margin-bottom: 0; }
+.pm ol, .pm ul { margin-bottom: 0; }
+
+.foot {
+  margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
+  font-size: 11.5px; line-height: 1.7; color: var(--ink-low);
+}
+
+@media (max-width: 480px) {
+  .top { padding: 10px 14px; }
+  .brand-sub { display: none; }
+  .prose { padding: 26px 16px 56px; font-size: 15px; }
+  .prose h1 { font-size: 23px; }
+  .prose h2 { font-size: 19px; margin-top: 40px; }
+  th, td { padding: 8px 10px; }
+}
+/* narrow screens: tables scroll inside their own box instead of widening the page */
+@media (max-width: 640px) {
+  table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="/" aria-label="Neural Options Lab dashboard">
+    <div class="brand-mark">∂</div>
+    <div class="brand-copy">
+      <span class="brand-name">Neural Options Lab</span>
+      <span class="brand-sub">Methodology &amp; Postmortem</span>
+    </div>
+  </a>
+  <nav class="top-links" aria-label="Site">
+    <a href="/">Dashboard</a>
+    <a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main class="prose">
+
+<p class="kicker">Methodology &amp; Postmortem</p>
+<h1>How the numbers on the dashboard are made, and which earlier claims did not survive measurement</h1>
+<p class="lede">
+  Every number the dashboard shows is computed live by the models described here. This page
+  is the long-form companion to the project README: the methods, the measured results, and the
+  record of what was wrong before it was fixed. Corrections are kept in place rather than
+  edited out.
+</p>
+<p class="asof">
+  Figures are those recorded in the repository README at the time of writing. Where this page
+  and the README disagree, the README is the source of truth.
+</p>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#looking">1. What you are looking at</a>
+  <a href="#how">2. How it works</a>
+  <a href="#results">3. Results</a>
+  <a href="#postmortem">4. What I got wrong</a>
+  <a href="#limits">5. Limitations</a>
+  <a href="#links">6. Links</a>
+</nav>
+
+<!-- ---------------------------------------------------------------- -->
+<h2 id="looking">1. What you are looking at</h2>
+
+<p>
+  An Asian option is a contract whose payout depends on the average price of a stock over the
+  contract's life rather than only its final price, and there is no formula for its fair value.
+  The standard way to price one is to simulate a large number of possible futures and average
+  the payout, which is accurate but slow: at a 100,000-path budget a single price takes roughly
+  100 milliseconds, and a trading desk needs thousands of prices and their risk sensitivities
+  refreshed continuously.
+  This project trains a neural network on those simulated prices so that it learns the pricing
+  function itself, and it then answers in about 714 microseconds, roughly 500 times faster, with
+  a measured error of 1.4 basis points of strike.
+  Because the network is a smooth function, its risk sensitivities (the Greeks) come out as
+  exact derivatives of the network instead of by nudging each input and re-pricing, which is
+  what makes the result usable for hedging.
+  The dashboard shows the network's answer next to a fresh simulation with its confidence
+  interval so you can check it yourself, and the postmortem below lists the places where earlier
+  claims about this project were wrong and how each error was found.
+</p>
+
+<!-- ---------------------------------------------------------------- -->
+<h2 id="how">2. How it works</h2>
+
+<h3>One model for every strike</h3>
+<p>
+  An Asian call's price scales linearly in spot and strike: multiply both by the same factor and
+  the price scales with them. So the network only learns the unit-strike price as a function of
+  moneyness, maturity, volatility and rate, <code>f(S/K, T, σ, r)</code>, and any contract is
+  priced as <code>K · f(S/K, T, σ, r)</code>. One model covers every strike exactly, and puts
+  come from Asian put-call parity, which is also exact. The test suite checks parity for both
+  the Monte Carlo engine and the surrogate.
+</p>
+
+<h3>The network, the training signal, and the ensemble</h3>
+<p>
+  The pricer is a residual multilayer perceptron with SiLU activations and LayerNorm, about
+  134k parameters. Smooth activations matter because the Greeks are derivatives of the
+  network; a ReLU network would have zero gamma almost everywhere. Five independently
+  initialized networks are averaged as a deep ensemble, which lowers error, and the Greeks
+  average cleanly through the mean.
+</p>
+<p>
+  Training follows differential machine learning (Huge and Savine, 2020): the pathwise delta
+  and vega are computed on the same Monte Carlo paths that produce each price, for almost no
+  extra cost, and the network is fit to the prices and their derivatives together in a
+  variance-normalized loss. A controlled ablation at the same sample budget, prices only versus
+  the differential loss, cut delta error about 3x and vega error about 4x. The served model was
+  trained on 500,000 labels of 5,000 paths each for 400 epochs. Label generation runs on the GPU
+  in float64 at 0.85 G path-steps/s on an RTX 5080, so the full set takes 148 s instead of
+  roughly 80 minutes on CPU; float64 is not optional, because the same kernel at float32 with
+  identical seeds injects 10.03 bps of price RMSE at 5,000 paths.
+</p>
+
+<h3>Greeks by automatic differentiation</h3>
+<p>
+  All five Greeks are exact derivatives of the network obtained by automatic differentiation,
+  not finite differences, and the tests check them against finite-difference perturbations.
+  A price alone costs about 714 µs at p50. Price plus all five Greeks costs 8.4 ms at p50
+  (9.3 ms p95, 9.8 ms p99), because gamma needs a second backward pass through each of the five
+  ensemble members. Batch throughput is 487,843 prices/s at a batch of 10,000. Serving stays on
+  the CPU: at a batch of one the GPU is slower (1,813 µs versus 1,336 µs), being
+  kernel-launch bound.
+</p>
+
+<h3>Monte Carlo: antithetic sampling and a geometric control variate</h3>
+<p>
+  The reference engine, which generates the training labels and the live comparison price on
+  the dashboard, uses antithetic sampling with a geometric-Asian control variate (Kemna and
+  Vorst, 1990). The geometric-average option has a closed-form price, so the simulation error
+  on it can be measured and subtracted from the arithmetic estimate. Measured as the ratio of
+  empirical standard deviations across 300 seeded replications, the control variate cuts the
+  standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000). On the dashboard the
+  benchmark switches regime automatically: Asian under geometric Brownian motion above 12
+  trading days to expiry, rough Bergomi at or below.
+</p>
+
+<h3>Same-day expiry: a rough Bergomi surrogate with exact Volterra simulation</h3>
+<p>
+  Very short-dated option smiles show a power-law skew that classical models cannot reproduce,
+  so a separate five-member ensemble serves maturities of 12 trading days or less, trained on a
+  rough Bergomi Monte Carlo engine. The driver is the Riemann-Liouville Volterra process of
+  Bayer, Friz and Gatheral (2016), <code>W̃_t = √(2H) ∫₀ᵗ (t−s)^(H−½) dW_s</code>, with Hurst
+  index near 0.1, simulated exactly from the joint Gaussian law of the driving Brownian motion
+  and the Volterra integral; the scheme is verified against quadrature to 5.4e-08 and against
+  400,000 draws. On 400 held-out points against 500,000-path references the 0DTE ensemble
+  measures 1.48 bps RMSE with +0.13 bps bias, below the 2.35 bps noise floor of its own
+  20,000-path training labels. The served checkpoint is currently uncalibrated, for the reason
+  given in the postmortem.
+</p>
+
+<h3>Deep hedging and the CVaR objective</h3>
+<p>
+  Following Buehler and coauthors (2019), a policy network maps the hedging state to a position
+  and is trained to minimize the 95% conditional value at risk of the terminal loss, with
+  transaction costs inside the objective. The dashboard simulates 3,000 paths of hedging a short
+  option to expiry and shows the learned policy's profit-and-loss distribution next to a
+  Black-Scholes delta hedge on the same paths. Out of sample, the learned policy loses to a
+  vol-matched delta hedge and to a cost-aware Whalley-Wilmott no-trade band; that is a negative
+  result and it is reported as one, in the results and in the postmortem.
+</p>
+
+<h3>Explainability by integrated gradients</h3>
+<p>
+  The feature-attribution panel runs Integrated Gradients through the ensemble against an
+  at-the-money baseline, so each input is credited with its share of the price difference from
+  that baseline. The completeness check, that the attributions sum to the price difference, is
+  reported alongside, so a bad attribution shows up as a visible residual rather than
+  disappearing into the chart.
+</p>
+
+<h3>Real market data</h3>
+<p>
+  Everything above runs on simulated data. The exception is a live Deribit option chain: 836 BTC
+  instruments across 12 expiries, fetched from public endpoints with no API key and committed as
+  a snapshot so the diagnostics run offline. Reading the coin-denominated premium on the
+  per-expiry forward and inverting Black-76 reproduces Deribit's own published mark IV to a
+  median of 0.0028 vol points; reading it as a dollar price instead gives 4.62 vol points where
+  the truth is 32.88, wrong by 7.1x and still a smooth, plausible surface. Of 51 static-arbitrage
+  violations that appear on mid prices, zero are executable once the actual bid-ask has to be
+  crossed.
+</p>
+
+<!-- ---------------------------------------------------------------- -->
+<h2 id="results">3. Results</h2>
+
+<p>
+  Everything here is measured, not asserted. The evaluation script prices an independent test
+  set against high-precision Monte Carlo references; the model is never scored against its own
+  noisy training labels, because that overstates the error (by 2.4x on the 0DTE model).
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Main pricer, 5-member ensemble, 600 test points against 200,000-path references</caption>
+  <thead><tr><th>Quantity</th><th class="n">Error (RMSE)</th></tr></thead>
+  <tbody>
+    <tr><td>Price</td><td class="n">1.4 bps of strike</td></tr>
+    <tr><td>Delta</td><td class="n">7.1e-4</td></tr>
+    <tr><td>Vega</td><td class="n">13e-4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Against the alternatives: 300 points versus 200,000-path references</caption>
+  <thead><tr><th>Method</th><th class="n">RMSE</th><th class="n">Bias</th><th class="n">p95 abs err</th><th class="n">Latency</th></tr></thead>
+  <tbody>
+    <tr class="hi"><td>Neural ensemble</td><td class="n">1.329 bps</td><td class="n">+0.548</td><td class="n">2.376</td><td class="n">714 µs p50</td></tr>
+    <tr><td>Levy (1992) moment matching</td><td class="n">44.344 bps</td><td class="n">+19.813</td><td class="n">103.300</td><td class="n">56 µs</td></tr>
+    <tr><td>Monte Carlo, 200k paths</td><td class="n">(reference)</td><td class="n">n/a</td><td class="n">n/a</td><td class="n">357,000 µs</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  33x more accurate than the closed form at 13x its cost, and 500x faster than Monte Carlo.
+  The one regime where Levy still wins is where the true price is essentially zero (0.082
+  versus 0.310 bps), which is the Softplus floor described in the postmortem, seen from an
+  independent direction.
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Latency, best of 200 calls, CPU serving</caption>
+  <thead><tr><th>Operation</th><th class="n">p50</th><th class="n">p95</th><th class="n">p99</th></tr></thead>
+  <tbody>
+    <tr><td>Single price</td><td class="n">714 µs</td><td class="n">&nbsp;</td><td class="n">&nbsp;</td></tr>
+    <tr><td>Single price plus all five Greeks</td><td class="n">8.4 ms</td><td class="n">9.3 ms</td><td class="n">9.8 ms</td></tr>
+    <tr><td>Batch of 10,000 prices</td><td class="n" colspan="3">487,843 prices/s</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>0DTE ensemble (regenerated on the corrected driver), 400 held-out points versus 500,000-path references</caption>
+  <thead><tr><th>Quantity</th><th class="n">Value</th></tr></thead>
+  <tbody>
+    <tr><td>RMSE</td><td class="n">1.48 bps of strike</td></tr>
+    <tr><td>Bias</td><td class="n">+0.13 bps</td></tr>
+    <tr><td>p95 absolute error</td><td class="n">2.76 bps</td></tr>
+    <tr><td>Training-label noise floor (20,000 paths per label)</td><td class="n">2.35 bps</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Deep hedging, out of sample on risk-neutral GBM, 12-cell (σ, cost) grid, 15,000 paths per cell. A ratio above 1 means worse tail loss than the delta hedge.</caption>
+  <thead><tr><th>Policy</th><th class="n">Beats vol-matched delta</th><th class="n">Median ratio</th><th class="n">Beats Whalley-Wilmott</th></tr></thead>
+  <tbody>
+    <tr><td>Trained on the fixed GAN measure</td><td class="n">2 / 12</td><td class="n">1.469</td><td class="n">0 / 12</td></tr>
+    <tr><td>Trained on GBM (in-sample)</td><td class="n">5 / 12</td><td class="n">1.085</td><td class="n">1 / 12</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  As implemented, deep hedging here does not beat a properly specified baseline. Even trained
+  and evaluated on the same correct measure, the learned policy loses to a vol-matched delta
+  hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Real market data: committed Deribit snapshot, 836 BTC options, 12 expiries, 0.42 to 323 days</caption>
+  <thead><tr><th>Check</th><th class="n">Result</th></tr></thead>
+  <tbody>
+    <tr><td>Black-76 inversion versus Deribit's published mark IV</td><td class="n">median 0.0028 vol pts</td></tr>
+    <tr><td>Quotes flagged and dropped</td><td class="n">289 of 836</td></tr>
+    <tr><td>IV bid-ask on surviving quotes</td><td class="n">median 1.36, p95 9.79 vol pts</td></tr>
+    <tr><td>Static-arbitrage violations on mid / executable through the spread</td><td class="n">51 / 0</td></tr>
+    <tr><td>Parity-implied forward versus listed future, 12 expiries</td><td class="n">median under 1 bp</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ---------------------------------------------------------------- -->
+<h2 id="postmortem">4. What I got wrong and how I found out</h2>
+
+<p>
+  Each entry records the claim as it was made, how the error surfaced, and what changed. Most
+  were found by audit rather than by a failing test, which is itself a finding: the tests
+  checked the things that were easy to state, and the errors lived in the things that were
+  easy to assume.
+</p>
+
+<div class="pm">
+  <h3>The deep hedger did not beat delta hedging</h3>
+  <dl>
+    <dt class="was">The claim</dt>
+    <dd><p>That the learned hedger "reduced 95% tail loss by roughly 30% versus delta hedging." Retracted.</p></dd>
+    <dt>How it surfaced</dt>
+    <dd>
+      <p>The comparison was measured in-sample, against a handicapped baseline, on a measure that was not a valid pricing measure. Three separate problems, all measured:</p>
+      <ol>
+        <li><strong>The simulated measure was not risk-neutral.</strong> <code>risk_neutralize</code> matched per-step marginals but left cross-step covariance free, so paths realized 1.28x the requested volatility and discounted spot was not a martingale: E[S_T] exceeded e^{rT} by up to 147 bps. The option was booked at Black-Scholes while being worth about 30% more under the measure actually being simulated.</li>
+        <li><strong>The baseline was handicapped</strong>, hedging at the requested σ while the paths realized 1.28σ. On the old measure, vol-matching the baseline alone closed about 83% of the claimed gap.</li>
+        <li><strong>The comparison was in-sample on a degenerate generator.</strong> The WGAN market simulator is mode-collapsed (participation ratio 4.66 of 30 factors), which makes its paths forecastable: R² = 0.8755 regressing future returns on realized ones, versus 0.0006 for GBM. Minimizing CVaR on such paths rewards market timing, not hedging.</li>
+      </ol>
+    </dd>
+    <dt class="fix">What changed</dt>
+    <dd><p>Terminal variance and the martingale condition are now enforced exactly and the premium is priced under the simulated measure. A cost-aware Whalley-Wilmott baseline was added, and the evaluation moved out of sample onto risk-neutral GBM over a 12-cell grid. <code>compare()</code> reports both measures with bootstrap standard errors and defaults its headline to the out-of-sample one. The headline is now the negative result in the table above, and the dashboard's hedging panel and risk report follow the measured direction rather than the old claim.</p></dd>
+  </dl>
+</div>
+
+<div class="pm">
+  <h3>The rough volatility driver was the wrong process</h3>
+  <dl>
+    <dt class="was">The claim</dt>
+    <dd><p>That the 0DTE surrogate agreed with its rough Bergomi teacher to about 2 basis points. The agreement was real; the teacher was wrong.</p></dd>
+    <dt>How it surfaced</dt>
+    <dd>
+      <p><code>rough_vol.py</code> built the Type-I (Mandelbrot-Van Ness) fractional Brownian covariance <code>0.5(t_i^2H + t_j^2H − |t_i−t_j|^2H)</code>. Rough Bergomi is driven by the Riemann-Liouville Volterra process <code>W̃_t = √(2H) ∫₀ᵗ (t−s)^(H−½) dW_s</code>. The two agree on the diagonal, both giving <code>Var[W̃_t] = t^2H</code>, which is why the martingale property held and nothing looked wrong, and they agree nowhere else: at H = 0.1172 the maximum off-diagonal relative difference is 4.93, and <code>corr(W̃_t1, W̃_t50)</code> was +0.320 against a true +0.054.</p>
+      <p>There was a second half. A Cholesky factor of the covariance is not the Volterra kernel, because W̃ is a continuous stochastic integral rather than a linear function of n coarse increments. Factorising the covariance alone forces <code>corr(Z_1, W̃_t1) = 1</code> by construction when the truth is <code>√(2H)/(H+½) = 0.7844</code>, so the leverage correlation ρ was being applied to the wrong object, over-correlating spot and volatility precisely at the short end where a 0DTE skew fit is identified.</p>
+    </dd>
+    <dt class="fix">What changed</dt>
+    <dd><p>Both defects are fixed with the exact joint-Gaussian scheme, verified against quadrature to 5.4e-08 and against 400,000 draws. The 0DTE checkpoint was regenerated against the corrected driver, the old one is kept as <code>model_0dte_legacy_wrong_kernel.pt</code> for comparison, and the old figure was replaced by a measurement against the right teacher: 1.48 bps RMSE on 400 held-out points against 500,000-path references.</p></dd>
+  </dl>
+</div>
+
+<div class="pm">
+  <h3>The calibration was not live</h3>
+  <dl>
+    <dt class="was">The claim</dt>
+    <dd><p>That the 0DTE model was "calibrated to the live SPY smile ... about 2 volatility points across 72 quotes and two expiries."</p></dd>
+    <dt>How it surfaced</dt>
+    <dd><p>The committed <code>artifacts/rough_calibration.json</code> reads <code>as_of 2026-07-09T03:43:16-04:00</code>, which is 03:43 in New York with the market closed, with <code>quote_source: "last_trade_market_closed"</code> and <code>accepted: true</code>. Those exact parameters (H 0.1172, η 2.1384, ρ −0.7387) are what the served <code>model_0dte.pt</code> carried. A market-closed fit passed the quality gate and was trained into the served model because the gate tested only RMSE and bound-pinning and never looked at staleness. Related: in the market-closed branch, time-to-expiry was stamped from <code>now</code> while the prices were the previous session's last trades, which on synthetic quotes with known truth inflated √ξ by 21% and moved H by 0.021.</p></dd>
+    <dt class="fix">What changed</dt>
+    <dd><p>The 0DTE checkpoint has been regenerated on the corrected driver and is labelled as it is: uncalibrated, because the prior calibration was fitted under the old kernel from market-closed quotes. A live calibration under the corrected kernel is the outstanding step, not a claimed one.</p></dd>
+  </dl>
+</div>
+
+<div class="pm">
+  <h3>The 1.4 bp error was not a noise floor; it was a Softplus bias</h3>
+  <dl>
+    <dt class="was">The claim</dt>
+    <dd><p>That the 1.4 bp price RMSE was the label-noise floor and therefore irreducible.</p></dd>
+    <dt>How it surfaced</dt>
+    <dd><p>On 600 held-out points, 89.3% of price errors were positive and the mean accounted for 47.6% of total MSE. Bucketing by true price magnitude showed a flat additive offset (+1.05, +1.03, +1.06, +1.20, +0.89 bps across five decades of price), and where the true price is below 0.01 bps the network still predicted about 1.08 bps and never went below 0.898. The cause is the output layer: <code>nn.Softplus()</code> cannot emit zero, so it floors at about 1 bp and lifts the whole surface. The initialization made it worse, starting every run at <code>softplus(0) = 0.693</code>, which is 6,930 bps against a mean price of 3,664 bps.</p></dd>
+    <dt class="fix">What changed</dt>
+    <dd>
+      <p>Two fixes were tested at full scale, 500,000 labels of 5,000 paths, 400 epochs, five-member ensembles, both arms identical except for the one change under test:</p>
+      <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Model</th><th class="n">RMSE</th><th class="n">Bias</th><th class="n">% positive</th><th class="n">bias²/MSE</th></tr></thead>
+        <tbody>
+          <tr><td>Previous <code>model.pt</code></td><td class="n">1.489 bps</td><td class="n">+0.966</td><td class="n">89.3%</td><td class="n">42.1%</td></tr>
+          <tr class="hi"><td>Conditioned head (now served)</td><td class="n">1.301 bps</td><td class="n">+0.404</td><td class="n">78.1%</td><td class="n">9.7%</td></tr>
+          <tr><td>Residual over geometric Asian</td><td class="n">1.823 bps</td><td class="n">+0.925</td><td class="n">86.8%</td><td class="n">25.7%</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Head conditioning, which carries the output magnitude in a fixed scale with the Softplus head initialized near unity, halved the systematic bias and is the served checkpoint. The residual-over-geometric idea did not work, and that is a real result: it made things 37% worse, because the residual has a 3.8x wider relative dynamic range (p99/p50 of 12.46 versus 3.27) and that outweighs its 21x smaller output scale.</p>
+      <p>What the promotion cost is stated rather than buried. In a paired comparison on the same 1,500 points against the same references, price RMSE improved 10.8% (1.531 to 1.366 bps) and the bias halved (+1.032 to +0.468), but delta got 5.9% worse (7.338e-4 to 7.768e-4) and vega 1.2% worse (17.757e-4 to 17.978e-4). Promotion is now gated by <code>scripts/promote_model.py</code>, which re-prices a fresh 1,500-point test set against 200,000-path references on a seed used by neither training nor the ablation and writes <code>model.pt</code> only if the candidate beats the incumbent on both RMSE and |bias|; the first version of the gate tested price only, so it could not have seen the Greeks regression. The Levy comparison corroborates the diagnosis from an independent direction: the near-zero-price floor shrank from 1.050 to 0.310 bps when the head was conditioned.</p>
+      <p>One more caveat: the absolute RMSE is heavy-tailed enough to move with the test draw. The same promoted checkpoint measures 1.301, 1.329, 1.366 and 1.488 bps on four independent Latin-hypercube draws, which is why the paired comparison is the meaningful one.</p>
+    </dd>
+  </dl>
+</div>
+
+<div class="pm">
+  <h3>The standard error was overstated by about 45%</h3>
+  <dl>
+    <dt class="was">The claim</dt>
+    <dd><p>That the control variate cut the Monte Carlo standard error by "about 30x."</p></dd>
+    <dt>How it surfaced</dt>
+    <dd><p>The 30x came from the estimator's own reported standard error, which was computed as if the antithetic pairs were independent draws. They are not, and treating them that way overstated the true error by about 45%.</p></dd>
+    <dt class="fix">What changed</dt>
+    <dd><p>Both the estimator and the claim were fixed. Measured properly, as the ratio of empirical standard deviations across 300 seeded replications, the reduction is 24.0x at 5,000 paths and 24.5x at 20,000. The confidence interval on the dashboard is the corrected one.</p></dd>
+  </dl>
+</div>
+
+<div class="pm">
+  <h3>The latency claim was off by 8x</h3>
+  <dl>
+    <dt class="was">The claim</dt>
+    <dd><p>"Roughly a millisecond for a single price plus all Greeks."</p></dd>
+    <dt>How it surfaced</dt>
+    <dd><p>Measuring it. About 714 µs is the price-only figure. Price plus all Greeks is 8.4 ms at p50, because gamma needs a double backward pass across five ensemble members.</p></dd>
+    <dt class="fix">What changed</dt>
+    <dd><p>The two figures are reported separately, with percentiles, and the batch-throughput number (487,843 prices/s at a batch of 10,000) is stated as the thing that does hold up.</p></dd>
+  </dl>
+</div>
+
+<div class="pm">
+  <h3>The live demo was killed by its own Monte Carlo</h3>
+  <p class="when">August 2026</p>
+  <dl>
+    <dt class="was">What happened</dt>
+    <dd><p>At the time, the public deployment ran on Render's free tier: a 512 MB container with 0.1 CPU. After a routine deploy the service crash-looped with exit code 137, which is the kernel's out-of-memory killer. The container booted, because PyTorch's import is a fixed floor of about 300 MB and that fits. The first page view did not survive.</p></dd>
+    <dt>How it surfaced</dt>
+    <dd><p>The dashboard's page load fired several Monte Carlo endpoints at once, and a single request's float64 path matrices peaked near 480 MB: the one-shot engine held three full (paths × steps) matrices alive at the same time, measured at 483 MB on the convergence endpoint's unconditional 400,000-path reference run. On a developer machine with tens of gigabytes that never registered as a cost. On a fixed 512 MB box, any allocation that scales with a request parameter is a crash waiting for the right input.</p></dd>
+    <dt class="fix">What changed</dt>
+    <dd><p>Both Monte Carlo engines now simulate in fixed-size blocks of paths, and only the one-dimensional per-path payoffs outlive a block, so peak memory is a constant that no longer depends on the path count. Measured at 400,000 paths: 483 MB before, 46 MB after. The seeded results are bit-identical to the one-shot version, because the blocked draws continue the same generator stream and the payoffs are reassembled in the same order, so no number on the dashboard moved. Alongside it, the API now admits one simulation job at a time and queues the rest, the convergence reference dropped from 400,000 to 100,000 paths, and the dashboard loads its heavy panels sequentially instead of concurrently. The lesson is unglamorous: on a small box, bound every allocation by a constant and measure the peak, not the average.</p></dd>
+  </dl>
+</div>
+
+<!-- ---------------------------------------------------------------- -->
+<h2 id="limits">5. Honest limitations</h2>
+
+<ul>
+  <li>This is a research and portfolio project, not production trading infrastructure. Nothing here is investment advice.</li>
+  <li>The pricer takes a single flat volatility rather than a full surface, and there is no arbitrage-free constraint built into the learned surface.</li>
+  <li>The rough volatility model uses a fixed Hurst index rather than calibrating it jointly with the smile, and the served 0DTE checkpoint is currently uncalibrated: its last calibration was fitted under the old kernel from market-closed quotes.</li>
+  <li>The deep hedger does not beat a properly specified baseline out of sample, and the WGAN market simulator it was originally trained on is mode-collapsed, so it is not a sound measure for evaluating a hedging policy.</li>
+  <li>Promoting the conditioned-head pricer improved price accuracy but made the served delta 5.9% and vega 1.2% worse; a service hedging off these Greeks should weigh that differently than a service pricing with them.</li>
+  <li>The absolute price RMSE moves with the test draw (1.301 to 1.488 bps across four independent draws); only paired comparisons on identical points and references are treated as meaningful.</li>
+  <li>Market data for the ticker feature comes from yfinance, which is retail-grade and has stale or missing quotes. The Deribit chain is a committed snapshot, not a live feed.</li>
+  <li>The live demo now runs on a small always-on instance, so there is no wake-up delay. A free-tier deploy of the same image fits in 512 MB only because of the blocked Monte Carlo described in the postmortem, and at 0.1 CPU the convergence chart takes several seconds to fill.</li>
+</ul>
+
+<!-- ---------------------------------------------------------------- -->
+<h2 id="links">6. Links</h2>
+
+<ul>
+  <li><a href="/">The live dashboard</a>: Pricing Lab, Deep Hedging and the AI Risk Analyst, all computed live.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">Source code on GitHub</a>, including the README this page is drawn from, the trained checkpoints, and the evaluation scripts.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the full write-up of the deep hedging retraction.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/real_market_data.md" rel="noopener">docs/real_market_data.md</a>: the Deribit chain, its conventions and its diagnostics.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/DEPLOY.md" rel="noopener">DEPLOY.md</a>: hosting notes, including what the 512 MB free tier does and does not fit.</li>
+</ul>
+
+<p class="foot">
+  Research tool. Prices come from neural surrogates trained on simulated data and are not
+  investment advice. Built with PyTorch, FastAPI and Plotly. MIT licensed.
+</p>
+
+</main>
+
+</body>
+</html>
