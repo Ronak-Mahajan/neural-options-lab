@@ -307,12 +307,17 @@ def build_report(grid, ref, ref_se, ref_secs, results, args,
           f"standard error. Curran returns {e_cur:+.4f} bps there and the "
           f"surrogate {e_nn:+.2f} bps: the Softplus output floor the README "
           f"documents, seen on a cell where the true price is 0.")
-    a(f"- Timing floor: both closed forms spend most of their time in "
-      f"scipy's `norm.cdf` wrapper, {cdf_us:.0f} us per scalar call measured "
-      f"in this run against {ndtr_us:.1f} us for `scipy.special.ndtr`. "
-      f"Switching primitive would speed both up by a similar factor and "
-      f"changes none of the accuracy columns; it is not done here so the "
-      f"two closed forms stay on equal footing with `benchmarks.py`.")
+    a(f"- Timing floor: Turnbull-Wakeman is two scalar `norm.cdf` calls plus "
+      f"a 50x50 exponential sum, and scipy's `norm.cdf` wrapper costs "
+      f"{cdf_us:.0f} us per scalar call in this run against {ndtr_us:.1f} us "
+      f"for `scipy.special.ndtr`, so the wrapper is most of its "
+      f"{fmt_latency(tw['secs'])}. Curran makes two `norm.cdf` calls, one on "
+      f"a length-{N_STEPS} vector; the {fmt_latency(cur['secs'])} of the "
+      f"exact threshold against {fmt_latency(rows[3]['secs'])} for the "
+      f"linear one is the Newton solve, the only code that differs between "
+      f"them. Switching the cdf primitive would speed every closed form up "
+      f"and change none of the accuracy columns; it is not done here so "
+      f"they stay on equal footing with `benchmarks.py`.")
     a("")
     a("## Reproduce")
     a("")
