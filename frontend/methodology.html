@@ -139,6 +139,10 @@ tr.hi td { color: var(--ink-hi); }
 @media (max-width: 640px) {
   table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
+figure.fig { margin: 18px 0 22px; }
+figure.fig img { display: block; width: 100%; height: auto; border-radius: 10px;
+  border: 1px solid rgba(84, 84, 88, 0.36); background: #000; }
+figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; color: rgba(235, 235, 245, 0.45); }
 </style>
 </head>
 <body>
@@ -267,16 +271,59 @@ tr.hi td { color: var(--ink-hi); }
   rather than a live market calibration.
 </p>
 
+<h3>The rough-volatility signature: how fast the skew steepens</h3>
+<p>
+  The market-facing reason to use rough volatility for short-dated options is the term
+  structure of the at-the-money skew: rough models predict that the skew
+  <code>&psi;(T) = d&sigma;<sub>imp</sub>/dk</code> steepens like a power law
+  <code>T<sup>H&minus;&frac12;</sup></code> as expiry approaches, which classical stochastic
+  volatility cannot reproduce. Measured from the committed SPY option captures (8 captures across
+  two trading days, 7 expiries each, 56 local-quadratic fits between 2 and 10 trading days), the
+  market exponent is &minus;0.249 &plusmn; 0.033, against <code>H &minus; &frac12; = &minus;0.239</code>
+  for the calibrated H = 0.261. The model side is measured the same way, by Monte Carlo with 8 seeds
+  &times; 400,000 paths per maturity: at the calibrated vol-of-vol (&eta; = 3.9) the model's skew is
+  steeper than the asymptotic law (exponent &minus;0.321 &plusmn; 0.007) because &eta;T<sup>H</sup> is
+  already 0.9 at one day, while at &eta; = 0.5 the same engine returns &minus;0.233 &plusmn; 0.011
+  with an amplitude within 0.4% of the first-order theory. Bitcoin, for contrast, shows no power
+  law at all: its front-month skew is positive.
+</p>
+<figure class="fig">
+  <img src="/assets/atm_skew_term_structure.png" alt="Log-log plot of the at-the-money implied-volatility skew against maturity: rough Bergomi model curve with Monte Carlo error band, SPY market points from listed expiries, fitted power laws and the H minus one-half reference slope; Bitcoin panel alongside" loading="lazy">
+  <figcaption>ATM skew term structure. Left: SPY, model (blue) against listed expiries (amber), with the fitted power laws and the reference slope H &minus; &frac12;. Right: Bitcoin on Deribit, where the short-dated skew is positive and no power law applies. Reproduce with <code>scripts/atm_skew_term_structure.py</code>.</figcaption>
+</figure>
+
 <h3>Deep hedging and the CVaR objective</h3>
 <p>
   Following Buehler and coauthors (2019), a policy network maps the hedging state to a position
   and is trained to minimize the 95% conditional value at risk of the terminal loss, with
   transaction costs inside the objective. The dashboard simulates 3,000 paths of hedging a short
   option to expiry and shows the learned policy's profit-and-loss distribution next to a
-  Black-Scholes delta hedge on the same paths. Out of sample, the learned policy does not beat a
-  vol-matched delta hedge or a cost-aware Whalley-Wilmott no-trade band on tail risk; the
-  results table below reports the measured comparison.
+  Black-Scholes delta hedge on the same paths. On Black-Scholes dynamics the learned policy does
+  not beat a vol-matched delta hedge or a cost-aware Whalley-Wilmott no-trade band on tail risk;
+  under rough volatility with transaction costs it does, which is the experiment below.
 </p>
+
+<h3>Deep hedging under rough volatility, jumps and costs</h3>
+<p>
+  On Black-Scholes paths the market is complete and a delta hedge is close to optimal, so a learned
+  policy has little to win there. The dashboard's Deep Hedging tab therefore simulates the
+  SPY-calibrated rough Bergomi model with compensated jumps (H = 0.25, &rho; = &minus;0.55, an
+  incomplete market with stochastic rough volatility correlated with spot) and runs four hedgers on
+  identical paths: the learned policy, a vol-matched Black-Scholes delta, a Whalley-Wilmott
+  no-trade band tuned in the baseline's favour, and a linear-regression hedge in the style of
+  Ruf and Wang. Across 15,000 paths per cost the learned policy's tail loss crosses below the
+  delta hedge at 50 bp of proportional cost (CVaR<sub>95</sub> 404 &plusmn; 7 versus
+  493 &plusmn; 11 bp of strike) and below the Whalley-Wilmott band at 100 bp
+  (452 &plusmn; 8 versus 498 &plusmn; 10), reaching half the delta hedge's tail loss at 200 bp.
+  It does so by holding about 0.23 less than the Black-Scholes delta, the under-hedge that
+  minimum-variance theory predicts when spot and volatility are negatively correlated, and by
+  trading a third of the delta hedge's turnover. The same policy evaluated on Black-Scholes paths
+  loses, as it should: the edge is specific to the dynamics it was trained on.
+</p>
+<figure class="fig">
+  <img src="/assets/deep_hedging_regimes.png" alt="Left: tail loss (CVaR 95) against transaction cost for the deep policy, delta hedge, linear-regression hedge and Whalley-Wilmott band under rough Bergomi with jumps, with error bars. Right: a train-by-evaluate regime matrix of the deep policy's tail loss relative to the delta hedge" loading="lazy">
+  <figcaption>Left: CVaR<sub>95</sub> of the terminal hedging loss against proportional transaction cost under rough Bergomi + jumps, 5 seeds &times; 3,000 paths per point, bars = 2 bootstrap standard errors. Right: median tail-loss ratio deep/delta for each training and evaluation measure. Reproduce with <code>scripts/deep_hedging_regimes.py</code>.</figcaption>
+</figure>
 
 <h3>Explainability by integrated gradients</h3>
 <p>
@@ -372,6 +419,32 @@ tr.hi td { color: var(--ink-hi); }
   </tbody>
 </table>
 </div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Deep hedging under rough Bergomi + jumps (SPY-calibrated), CVaR<sub>95</sub> of the terminal loss in bp of strike, 5 seeds &times; 3,000 paths per cost, &plusmn; one bootstrap SE. Deep policy trained under the same dynamics.</caption>
+  <thead><tr><th>Cost</th><th class="n">Delta hedge</th><th class="n">Whalley-Wilmott</th><th class="n">Linear regression</th><th class="n">Deep policy</th><th class="n">Deep / delta</th></tr></thead>
+  <tbody>
+    <tr><td>0 bp</td><td class="n">308 &plusmn; 10</td><td class="n">308 &plusmn; 10</td><td class="n">288 &plusmn; 9</td><td class="n">354 &plusmn; 7</td><td class="n">1.15</td></tr>
+    <tr><td>10 bp</td><td class="n">344 &plusmn; 10</td><td class="n">312 &plusmn; 9</td><td class="n">319 &plusmn; 9</td><td class="n">364 &plusmn; 7</td><td class="n">1.06</td></tr>
+    <tr><td>50 bp</td><td class="n">493 &plusmn; 11</td><td class="n">392 &plusmn; 9</td><td class="n">447 &plusmn; 10</td><td class="n">404 &plusmn; 7</td><td class="n">0.82</td></tr>
+    <tr><td>100 bp</td><td class="n">687 &plusmn; 12</td><td class="n">498 &plusmn; 10</td><td class="n">616 &plusmn; 11</td><td class="n">452 &plusmn; 8</td><td class="n">0.66</td></tr>
+    <tr><td>200 bp</td><td class="n">1086 &plusmn; 15</td><td class="n">709 &plusmn; 10</td><td class="n">965 &plusmn; 13</td><td class="n">532 &plusmn; 9</td><td class="n">0.49</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>ATM skew term structure: fitted power-law exponent of |&psi;(T)| against T over 1-45 trading days (model) and 2-10 trading days (market), SPY</caption>
+  <thead><tr><th>Series</th><th class="n">Exponent</th><th class="n">Reference H &minus; &frac12;</th></tr></thead>
+  <tbody>
+    <tr><td>SPY listed expiries, 8 captures &times; 7 expiries</td><td class="n">&minus;0.249 &plusmn; 0.033</td><td class="n">&minus;0.239</td></tr>
+    <tr><td>Rough Bergomi, calibrated &eta; = 3.9</td><td class="n">&minus;0.321 &plusmn; 0.007</td><td class="n">&minus;0.239</td></tr>
+    <tr><td>Rough Bergomi, &eta; = 0.5 (asymptotic regime)</td><td class="n">&minus;0.233 &plusmn; 0.011</td><td class="n">&minus;0.239</td></tr>
+  </tbody>
+</table>
+</div>
 <p>
   As implemented, deep hedging here does not beat a properly specified baseline. Even trained
   and evaluated on the same correct measure, the learned policy loses to a vol-matched delta
@@ -412,7 +485,9 @@ tr.hi td { color: var(--ink-hi); }
 <ul>
   <li><a href="/">The live dashboard</a>: Pricing Lab, Deep Hedging and the AI Risk Analyst, all computed live.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">Source code on GitHub</a>: the README, the trained checkpoints, and the evaluation scripts.</li>
-  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the full deep hedging evaluation.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/deep_hedging_regimes.md" rel="noopener">docs/deep_hedging_regimes.md</a>: the deep hedging experiment under rough volatility, jumps and costs, every cell with standard errors.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/atm_skew_term_structure.md" rel="noopener">docs/atm_skew_term_structure.md</a>: the skew term-structure measurement, model and market.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the Black-Scholes deep hedging evaluation.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/real_market_data.md" rel="noopener">docs/real_market_data.md</a>: the Deribit chain, its conventions and its diagnostics.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/DEPLOY.md" rel="noopener">DEPLOY.md</a>: hosting notes.</li>
 </ul>

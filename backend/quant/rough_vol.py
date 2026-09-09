@@ -326,6 +326,98 @@ def rough_bergomi_mc(spot: torch.Tensor, strike: torch.Tensor, maturity: torch.T
         return prices, std_errors
     return prices
 
+
+def rough_bergomi_log_returns(n_paths: int, n_steps: int, dt: float,
+                              xi: float, eta: float, rho: float, H: float,
+                              rate: float, seed: int | None = None,
+                              jumps: tuple[float, float, float] | None = None,
+                              device: str | torch.device = "cpu"
+                              ) -> torch.Tensor:
+    """Per-step risk-neutral rough Bergomi log returns, shape (n_paths, n_steps).
+
+    The path-level companion of rough_bergomi_mc, built for the hedging
+    module, which needs the whole spot path rather than only S_T. It reuses
+    the exact joint-Gaussian Volterra scheme (joint_factor: the driving
+    increments dW and the Riemann-Liouville process W~ are drawn from their
+    exact 2n-dimensional joint law, so the leverage correlation rho acts on
+    the true driving Brownian motion) and the same left-point variance, and
+    it chunks over paths exactly like _terminal_spot_chunk does. The only
+    difference is what survives a chunk: the per-step increments
+
+        r_i = (rate - V_{i-1}/2) dt + sqrt(V_{i-1}) dW_i,     V_{-1} := xi,
+
+    whose row sum is the log(S_T / S_0) that rough_bergomi_mc exponentiates.
+
+    jumps=(lam, mu_j, sig_j) adds compensated Merton jumps PER STEP: a
+    Poisson(lam*dt) count each step, lognormal sizes with log-jump
+    ~ Normal(mu_j, sig_j^2), and the drift compensation
+    -lam*(e^{mu_j + sig_j^2/2} - 1)*dt on every step, so that discounted spot
+    stays a martingale step by step, not only at T (a hedger rebalances at
+    every step, so the placement of the jump inside the horizon matters here
+    in a way it did not for a European payoff). Jump draws happen AFTER all
+    diffusion draws, as in rough_bergomi_mc, so two calls with the same seed
+    and different `jumps` share the same diffusion sample.
+
+    Deterministic per seed: the same (seed, n_paths, n_steps, parameters)
+    reproduce the tensor bit for bit on the same device.
+    """
+    device = torch.device(device)
+    gen = None
+    if seed is not None:
+        gen = torch.Generator(device=device).manual_seed(int(seed))
+    xi, eta, rho, H, rate = (float(v) for v in (xi, eta, rho, H, rate))
+    if not (-1.0 < rho < 1.0):
+        raise ValueError(f"rho must lie strictly inside (-1, 1); got {rho}")
+
+    Lj = joint_factor(n_steps, dt, H, device)
+    t = torch.arange(1, n_steps + 1, dtype=torch.float32, device=device) * dt
+    t_2H = t ** (2 * H)
+    sqrt_dt = math.sqrt(dt)
+    rho_perp = math.sqrt(1.0 - rho ** 2)
+
+    def _increments_chunk(n_c: int) -> torch.Tensor:
+        noise = torch.randn(n_c, 2 * n_steps, device=device, generator=gen)
+        joint = noise @ Lj.T
+        del noise
+        Z_vol = joint[:, :n_steps].clone()            # dW / sqrt(dt)
+        W_tilde = joint[:, n_steps:] * (dt ** H)      # W~_{t_i}
+        del joint
+        V = xi * torch.exp(eta * W_tilde - 0.5 * (eta ** 2) * t_2H)
+        del W_tilde
+        # Left-point (predictable) variance, as in rough_bergomi_mc: the
+        # variance applied over step i must not contain step i's own
+        # innovation or the martingale property breaks whenever rho != 0.
+        V = torch.cat([torch.full((n_c, 1), xi, device=device), V[:, :-1]],
+                      dim=1)
+        Z_indep = torch.randn(n_c, n_steps, device=device, generator=gen)
+        Z_spot = rho * Z_vol + rho_perp * Z_indep
+        del Z_vol, Z_indep
+        return (rate - 0.5 * V) * dt + torch.sqrt(V) * Z_spot * sqrt_dt
+
+    chunks = []
+    remaining = int(n_paths)
+    while remaining > 0:
+        n_c = min(_CHUNK_PATHS, remaining)
+        chunks.append(_increments_chunk(n_c))
+        remaining -= n_c
+    incr = chunks[0] if len(chunks) == 1 else torch.cat(chunks)
+    del chunks
+
+    if jumps is not None:
+        lam, mu_j, sig_j = (float(v) for v in jumps)
+        if lam > 0.0:
+            n_j = torch.poisson(
+                torch.full((n_paths, n_steps), lam * dt, device=device),
+                generator=gen)
+            eps_j = torch.randn(n_paths, n_steps, device=device,
+                                generator=gen)
+            # Sum of n iid Normal(mu, sig^2) is Normal(n mu, n sig^2).
+            total_j = n_j * mu_j + torch.sqrt(n_j) * sig_j * eps_j
+            kappa_bar = math.exp(mu_j + 0.5 * sig_j ** 2) - 1.0
+            incr = incr + total_j - lam * kappa_bar * dt
+    return incr
+
+
 if __name__ == "__main__":
     # Quick sanity check
     spot = torch.tensor([100.0])

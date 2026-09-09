@@ -22,6 +22,8 @@ Every figure here is measured; the sections below say how.
 - **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications.
 - **0DTE.** The rough Bergomi ensemble measures 1.48 bps of strike RMSE and +0.13 bps bias on 400 held-out points against 500,000-path references, below its own 2.35 bps per-label noise floor. It is currently uncalibrated: the prior fit was made from market-closed quotes under the old kernel.
 - **Deep hedging.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
+- **Deep hedging under rough volatility.** On the SPY-calibrated rough Bergomi + jumps measure with transaction costs, a policy trained under those dynamics beats a vol-matched delta hedge from 50 bp of cost (CVaR₉₅ 404 ± 7 vs 493 ± 11 bp of strike) and a Whalley-Wilmott band from 100 bp, at a third of the delta hedge's turnover; evaluated on Black-Scholes paths the same policy loses. Full grid with standard errors in [docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md).
+- **Rough-volatility skew.** The at-the-money skew of listed SPY expiries steepens toward expiry with exponent −0.249 ± 0.033, against the rough-volatility prediction H − ½ = −0.239 at the calibrated H = 0.261; the rough Bergomi engine reproduces the law in its asymptotic regime and steepens beyond it at the calibrated vol-of-vol. Measurement and figure in [docs/atm_skew_term_structure.md](docs/atm_skew_term_structure.md).
 
 ## Try it
 
@@ -29,7 +31,7 @@ Three links into the live dashboard, each opening on a case discussed below. The
 
 - [0DTE regime](https://neural-options-lab.onrender.com/?tab=pricing&spot=100&strike=100&T=0.02&sigma=0.25&rate=0.04&type=call): an at-the-money call with T = 0.02 years, inside the 12-trading-day cutoff, so the price comes from the rough Bergomi 0DTE ensemble and the Monte Carlo benchmark switches to the rough Bergomi engine.
 - [Deep out-of-the-money put](https://neural-options-lab.onrender.com/?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put): spot 160 against strike 100, where the true price is close to zero.
-- [Deep hedging](https://neural-options-lab.onrender.com/?tab=hedging&sigma=0.25&rate=0.04&cost=50): the CVaR-trained policy against the vol-matched delta hedge at σ = 0.25 with a proportional transaction cost of 0.005 of traded notional, reported with bootstrap standard errors. Out of sample the learned hedger loses to this baseline in 7 of 12 grid cells.
+- [Deep hedging](https://neural-options-lab.onrender.com/?tab=hedging&dyn=rough&cost=100&run=1): the CVaR-trained policy against a vol-matched delta hedge and a Whalley-Wilmott band on SPY-calibrated rough Bergomi + jumps dynamics with 100 bp of proportional transaction cost, reported with bootstrap standard errors; switch the dynamics to Black-Scholes to see the same policy family lose.
 
 ## Why this is not trivial
 

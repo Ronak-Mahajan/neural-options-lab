@@ -1,0 +1,6 @@
+# Development-only extras. The server (requirements.txt) must not depend on
+# anything here: matplotlib is used by analysis scripts under scripts/ to
+# write the figures under docs/, never at serving time.
+#
+#   python -m pip install -r requirements.txt -r requirements-dev.txt
+matplotlib~=3.11.1

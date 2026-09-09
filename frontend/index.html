@@ -164,15 +164,15 @@
             <span class="hl-mc">amber</span> one is a fresh 50,000-path Monte Carlo run,
             and the middle card says whether they agree. At or below 12 trading
             days a second model trained on rough volatility takes over. The
-            Deep Hedging tab pits a learned hedging policy against Black-Scholes
-            delta hedging under transaction costs, measured on the same simulated paths.
+            Deep Hedging tab pits a learned hedging policy against delta hedging
+            under transaction costs, on rough-volatility or Black-Scholes dynamics.
           </p>
           <div class="preset-row" aria-label="Guided experiments">
             <span class="preset-label">Try:</span>
             <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call"}' title="5 trading days to expiry: the 0DTE rough-Bergomi surrogate serves this contract">0DTE regime</button>
             <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put"}' title="A far out-of-the-money put, priced close to zero">Deep OTM put</button>
             <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call"}' title="The most expensive corner of the trained box">2y at 80% vol</button>
-            <button class="chip-btn" data-preset='{"tab":"hedging","sigma":0.25,"rate":0.04,"cost":50,"run":true}' title="Runs the hedging simulation: CVaR of the learned policy vs Black-Scholes delta hedging with 50 bps costs">Deep hedger vs delta</button>
+            <button class="chip-btn" data-preset='{"tab":"hedging","cost":100,"dyn":"rough","run":true}' title="Runs the hedging simulation on SPY-calibrated rough-volatility dynamics with 100 bps costs: tail loss of the learned policy vs delta hedging and a Whalley-Wilmott band">Deep hedger vs delta</button>
           </div>
         </div>
         <button class="explainer-close" id="explainer-close" aria-label="Dismiss explainer" title="Dismiss">×</button>
@@ -346,9 +346,13 @@
         <header class="chart-head">
           <div>
             <h3>Hedging Simulator</h3>
-            <p id="hedge-sub">Simulated 30-day paths | Short ATM call | Deep policy vs. Black-Scholes delta hedge</p>
+            <p id="hedge-sub">Simulated 30-day paths | Short ATM call | Deep policy vs. delta hedge and a Whalley-Wilmott band, on rough-volatility or Black-Scholes dynamics</p>
           </div>
           <div class="chart-tools">
+            <div class="segmented dense" id="hedge-dynamics" title="The simulated market the hedgers are run on">
+              <button class="seg-btn active" data-value="rough" title="Rough Bergomi with compensated jumps, calibrated to SPY (its own forward vol and rate): stochastic rough volatility correlated with spot, an incomplete market">Rough vol + jumps</button>
+              <button class="seg-btn" data-value="gbm" title="Black-Scholes dynamics at the volatility and rate set in the rail: a complete market where the delta hedge is the benchmark">Black-Scholes</button>
+            </div>
             <div class="cost-slider-row">
               <label>Transaction cost</label>
               <input type="range" id="in-cost" min="0" max="200" step="5" value="50">
