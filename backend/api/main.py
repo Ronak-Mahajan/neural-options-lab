@@ -111,6 +111,26 @@ try:
 except FileNotFoundError:
     HEDGER = None
 
+# One policy per market dynamics the dashboard can simulate. Each checkpoint
+# was trained under the measure it serves: a policy trained on Black-Scholes
+# paths evaluated on rough-volatility paths (or the reverse) is a regime test,
+# not the product. Missing checkpoints fall back to the default engine.
+HEDGE_DYNAMICS = {
+    "rough": {"checkpoint": "hedger_rbergomi_jumps.pt",
+              "measure": "rbergomi_jumps",
+              "label": "rough Bergomi + jumps (SPY-calibrated)"},
+    "gbm": {"checkpoint": "hedger_gbm.pt", "measure": "gbm",
+            "label": "Black-Scholes (GBM)"},
+}
+HEDGERS: dict[str, HedgingEngine] = {}
+if HEDGER is not None:
+    _artifacts = Path(__file__).resolve().parents[2] / "artifacts"
+    for _key, _spec in HEDGE_DYNAMICS.items():
+        try:
+            HEDGERS[_key] = HedgingEngine(_artifacts / _spec["checkpoint"])
+        except FileNotFoundError:
+            HEDGERS[_key] = HEDGER
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -451,13 +471,38 @@ class HedgeRequest(BaseModel):
     sigma: float = Field(0.25, gt=0, le=0.8)
     rate: float = Field(0.04, ge=0, le=0.1)
     cost: float = Field(0.01, ge=0, le=0.05)
+    # Which simulated market the hedgers are run on. "rough" is the
+    # SPY-calibrated rough Bergomi model with compensated jumps (stochastic
+    # rough volatility, spot-vol correlation, an incomplete market); "gbm" is
+    # Black-Scholes, where a delta hedge is the benchmark to beat.
+    dynamics: str = Field("rough", pattern="^(rough|gbm)$")
 
 
 @app.post("/api/hedge")
 def hedge(req: HedgeRequest) -> dict:
     if HEDGER is None:
         raise HTTPException(503, "Hedging model not trained.")
-    return HEDGER.compare(req.sigma, req.rate, req.cost)
+    spec = HEDGE_DYNAMICS[req.dynamics]
+    engine = HEDGERS.get(req.dynamics, HEDGER)
+    # The rough dynamics ARE the SPY calibration: its forward vol sqrt(xi)
+    # and rate are part of the model, and the policy that serves it was
+    # trained at exactly those values. The sliders drive Black-Scholes only.
+    params = engine.meta.get("measure_params") if req.dynamics == "rough" else None
+    sigma = math.sqrt(float(params["xi"])) if params else req.sigma
+    rate = float(params["rate"]) if params else req.rate
+    with heavy_job():
+        out = engine.compare(sigma, rate, req.cost,
+                             primary=spec["measure"],
+                             measures=(spec["measure"],))
+    out["dynamics"] = req.dynamics
+    out["dynamics_label"] = spec["label"]
+    out["sigma_source"] = "SPY calibration" if params else "slider"
+    out["policy_trained_on"] = engine.meta.get("train_measure", "unknown")
+    out["measure_note"] = (
+        f"Paths simulated under {spec['label']}; the deep policy was trained "
+        f"under the same dynamics. Baselines are vol-matched to the realized "
+        f"volatility of the simulated paths.")
+    return out
 
 
 @app.post("/api/explain")

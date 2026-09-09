@@ -457,6 +457,7 @@ function serializeState() {
   if (state.mcPaths !== 50000) q.set("paths", String(state.mcPaths));
   if (Math.round(state.hedgeCost * 1e4) !== 50)
     q.set("cost", String(Math.round(state.hedgeCost * 1e4)));
+  if (state.hedgeDynamics !== "rough") q.set("dyn", state.hedgeDynamics);
   if (marketData) q.set("ticker", marketData.ticker);
   return q;
 }
@@ -513,6 +514,9 @@ function applyState(p) {
     const bps = Math.min(200, Math.max(0, Math.round(cost / 5) * 5));
     state.hedgeCost = bps / 1e4;
     $("in-cost").value = bps; $("val-cost").textContent = bps + " bps";
+  }
+  if (p.dyn === "rough" || p.dyn === "gbm") {
+    state.hedgeDynamics = p.dyn; setSegmented("hedge-dynamics", p.dyn);
   }
 }
 
@@ -711,6 +715,8 @@ async function updateXAI() {
 // P&L is in strike units; scale by the current strike into dollars.
 let lastHedge = null;
 state.hedgeCost = 0.005;
+state.hedgeDynamics = "rough";
+bindSegmented("hedge-dynamics", (v) => { state.hedgeDynamics = v; syncURL(); });
 
 $("in-cost").addEventListener("input", () => {
   state.hedgeCost = parseFloat($("in-cost").value) / 10000;
@@ -721,6 +727,7 @@ $("in-cost").addEventListener("input", () => {
 const CHIP_HELP = {
   "CVaR₉₅ deep hedge": "Expected P&L in the worst 5% of paths when the learned policy hedges the short call (less negative is better)",
   "CVaR₉₅ delta hedge": "Expected P&L in the worst 5% of paths when a Black-Scholes delta hedge with the same costs does the hedging",
+  "CVaR₉₅ Whalley-Wilmott": "Expected P&L in the worst 5% of paths for a delta hedge that only trades outside a cost-aware no-trade band (Whalley & Wilmott, 1997), the strongest classical baseline",
   "Tail-risk reduction": "How much smaller the deep hedge's worst-5% loss is than the delta hedge's",
   "Tail-risk increase": "How much larger the deep hedge's worst-5% loss is than the delta hedge's",
   "Avg costs deep vs delta": "Average transaction costs paid per path by each policy",
@@ -741,7 +748,8 @@ async function runHedge() {
     "Simulating thousands of 30-day paths across both hedging policies…";
   try {
     const d = await api("/api/hedge",
-      { sigma: state.sigma, rate: state.rate, cost: state.hedgeCost });
+      { sigma: state.sigma, rate: state.rate, cost: state.hedgeCost,
+        dynamics: state.hedgeDynamics });
     clearShimmer("plot-hedge");
     clearShimmer("plot-holdings");
     lastHedge = d;
@@ -755,20 +763,30 @@ async function runHedge() {
     // of assuming the deep policy won.
     const deepWins = d.deep.cvar95 < d.delta.cvar95;
     const improvement = (1 - d.deep.cvar95 / Math.max(d.delta.cvar95, 1e-9)) * 100;
+    const ww = d.whalley_wilmott;
+    const wwLabel = "CVaR₉₅ Whalley-Wilmott";
+    const best = Math.min(d.deep.cvar95, d.delta.cvar95,
+                          ww ? ww.cvar95 : Infinity);
     $("hedge-stats").innerHTML =
       hedgeStatChip("CVaR₉₅ deep hedge", $$(-d.deep.cvar95),
-        deepWins ? "good" : "") +
+        d.deep.cvar95 === best ? "good" : "") +
       hedgeStatChip("CVaR₉₅ delta hedge", $$(-d.delta.cvar95),
-        deepWins ? "" : "good") +
+        d.delta.cvar95 === best ? "good" : "") +
+      (ww ? hedgeStatChip(wwLabel, $$(-ww.cvar95),
+        ww.cvar95 === best ? "good" : "") : "") +
       hedgeStatChip(improvement >= 0 ? "Tail-risk reduction"
                                      : "Tail-risk increase",
         Math.abs(improvement).toFixed(0) + "%", improvement > 0 ? "good" : "") +
       hedgeStatChip("Avg costs deep vs delta",
         $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs));
     $("hedge-sub").textContent =
-      d.n_paths.toLocaleString() + " simulated 30-day paths · short ATM call (premium " +
-      $$(d.premium) + ") · σ " + (d.sigma * 100).toFixed(0) + "% · r " +
-      (d.rate * 100).toFixed(1) + "% · cost " + (d.cost * 10000).toFixed(0) + " bps" +
+      d.n_paths.toLocaleString() + " simulated 30-day paths under " +
+      (d.dynamics_label || "the selected dynamics") +
+      " · short ATM call (premium " + $$(d.premium) + ") · σ " +
+      (d.sigma * 100).toFixed(1) + "%" +
+      (d.sigma_source === "SPY calibration" ? " (SPY-calibrated)" : "") +
+      " · r " + (d.rate * 100).toFixed(1) +
+      "% · cost " + (d.cost * 10000).toFixed(0) + " bps" +
       (d.clamped ? " · params clamped to hedger's trained box" : "");
 
     const allPnl = [...d.deep.pnl, ...d.delta.pnl].map((v) => v * K);

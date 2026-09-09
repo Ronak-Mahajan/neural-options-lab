@@ -55,15 +55,33 @@ compare() now reports BOTH measures side by side and defaults its headline to
 the out-of-sample GBM one. Item (2) is a property of the shipped generator that
 this module cannot fix; it is documented rather than papered over.
 
+Measures and baselines beyond the original pair
+------------------------------------------------
+GBM is a complete market with small costs, where a static delta hedge is
+near-optimal and the negative result above is EXPECTED. The question worth
+asking is whether the learned policy wins where a static delta cannot:
+stochastic rough volatility with spot-vol correlation ('rbergomi'), jumps
+('rbergomi_jumps', an incomplete market), and transaction costs. Both rough
+measures are wired into train() and HedgingEngine._spots() at the SPY
+calibration read from disk (rough_measure_params). A third baseline, the
+Ruf-Wang linear-regression hedge (fit_linear_hedge), is a holding rule linear
+in Black-Scholes features with coefficients fitted by OLS to minimise the
+variance of terminal P&L on separate training paths. The designed experiment
+lives in scripts/deep_hedging_regimes.py and its result in
+docs/deep_hedging_regimes.md.
+
 Train:  python -m backend.quant.hedging --iters 6000     (see train() for the
         runtime actually observed on this machine)
+        python -m backend.quant.hedging --measure rbergomi --out hedger_rbergomi.pt
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import time
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -73,8 +91,10 @@ from scipy.stats import norm
 
 from backend.quant.generative import (PathGenerator, gbm_log_returns,
                                       risk_neutralize)
+from backend.quant.rough_vol import rough_bergomi_log_returns
 
-ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
+ROOT = Path(__file__).resolve().parents[2]
+ARTIFACTS = ROOT / "artifacts"
 
 N_STEPS = 30                 # daily rebalances over the 30-day horizon
 DT = 1.0 / 252.0
@@ -82,6 +102,96 @@ MATURITY = N_STEPS * DT
 CVAR_ALPHA = 0.95
 TRAIN_BOX = {"sigma": (0.08, 0.65), "rate": (0.0, 0.09),
              "cost": (0.0, 0.02)}
+
+#: Simulated measures the hedgers can be trained and evaluated under.
+#:   gbm            exact risk-neutral geometric Brownian motion (complete
+#:                  market: delta hedging is near-optimal, the control)
+#:   gan            the WGAN market simulator after risk_neutralize (see the
+#:                  module docstring for why it is not a sound measure)
+#:   rbergomi       risk-neutral rough Bergomi at the SPY calibration in
+#:                  artifacts/rough_calibration.json (eta, rho, H; the
+#:                  forward variance xi = sigma^2 is set by the caller's
+#:                  sigma so the training box still covers a vol range, and
+#:                  rough_measure_params() exposes the CALIBRATED xi and
+#:                  rate so an experiment can evaluate at that level)
+#:   rbergomi_jumps rough Bergomi plus compensated Merton jumps at the jump
+#:                  fit in scripts/_fit_jumps_last.json
+#: Under both rough measures the market is incomplete (stochastic vol with
+#: spot-vol correlation, and jumps), which is where a learned policy can in
+#: principle do what a static delta cannot.
+ROUGH_MEASURES = ("rbergomi", "rbergomi_jumps")
+MEASURES = ("gbm", "gan") + ROUGH_MEASURES
+ROUGH_CALIBRATION_FILE = ARTIFACTS / "rough_calibration.json"
+JUMP_FIT_FILE = ROOT / "scripts" / "_fit_jumps_last.json"
+
+
+@lru_cache(maxsize=4)
+def rough_measure_params(measure: str) -> dict:
+    """Calibrated rough-vol parameters for a rough measure, read from disk.
+
+    'rbergomi' takes (eta, rho, H, xi, rate) from the SPY calibration
+    artifact. 'rbergomi_jumps' takes theta = [eta, rho, H, xi, lam, mu_j,
+    sig_j] from the paired jump fit (which carries no rate, so the rate is the
+    calibration's). Nothing is hardcoded: change the files and every measure
+    follows. The returned dict has keys eta, rho, H, xi, rate, jumps
+    (None or (lam, mu_j, sig_j)) and source.
+    """
+    if measure not in ROUGH_MEASURES:
+        raise ValueError(f"{measure!r} is not a rough measure; "
+                         f"use one of {ROUGH_MEASURES}")
+    cal = json.loads(ROUGH_CALIBRATION_FILE.read_text(encoding="utf-8"))
+    rate = float(cal["rate"])
+    if measure == "rbergomi":
+        return {"eta": float(cal["eta"]), "rho": float(cal["rho"]),
+                "H": float(cal["H"]), "xi": float(cal["xi"]), "rate": rate,
+                "jumps": None, "source": str(ROUGH_CALIBRATION_FILE.name)}
+    fit = json.loads(JUMP_FIT_FILE.read_text(encoding="utf-8"))
+    eta, rho, H, xi, lam, mu_j, sig_j = (float(v)
+                                         for v in fit["jumps"]["theta"])
+    return {"eta": eta, "rho": rho, "H": H, "xi": xi, "rate": rate,
+            "jumps": (lam, mu_j, sig_j),
+            "source": f"{JUMP_FIT_FILE.name} (rate from "
+                      f"{ROUGH_CALIBRATION_FILE.name})"}
+
+
+def rough_log_returns(measure: str, n_paths: int, sigma: float, rate: float,
+                      seed: int | None = None) -> torch.Tensor:
+    """(n_paths, N_STEPS) log returns under a rough measure at vol level sigma.
+
+    sigma sets the forward variance xi = sigma^2 (E[V_t] = xi for every t, so
+    sigma is the model's flat forward vol); eta, rho, H and the jump
+    parameters come from rough_measure_params(measure).
+    """
+    p = rough_measure_params(measure)
+    return rough_bergomi_log_returns(
+        n_paths, N_STEPS, DT, xi=sigma ** 2, eta=p["eta"], rho=p["rho"],
+        H=p["H"], rate=rate, seed=seed, jumps=p["jumps"])
+
+
+def measure_log_returns(measure: str, n_paths: int, sigma: float,
+                        rate: float, seed: int | None = None,
+                        generator: PathGenerator | None = None
+                        ) -> torch.Tensor:
+    """(n_paths, N_STEPS) log returns under any measure in MEASURES.
+
+    The 'gan' measure needs the WGAN `generator`; the others do not.
+    """
+    if measure == "gbm":
+        gen = torch.Generator().manual_seed(seed) if seed is not None else None
+        return gbm_log_returns(n_paths, sigma, rate, N_STEPS, generator=gen)
+    if measure in ROUGH_MEASURES:
+        return rough_log_returns(measure, n_paths, sigma, rate, seed)
+    if measure == "gan":
+        if generator is None:
+            raise ValueError("the 'gan' measure needs the WGAN generator")
+        gen = torch.Generator().manual_seed(seed) if seed is not None else None
+        z = torch.randn(n_paths, generator.noise_dim, generator=gen)
+        st = torch.full((n_paths, 1), float(sigma), dtype=torch.float32)
+        rt = torch.full((n_paths, 1), float(rate), dtype=torch.float32)
+        with torch.no_grad():
+            raw = generator(z, st, rt)
+        return risk_neutralize(raw, st, rt)
+    raise ValueError(f"unknown measure {measure!r}; use one of {MEASURES}")
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +250,100 @@ def cvar_bootstrap_se(pl: np.ndarray, alpha: float = CVAR_ALPHA,
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, pl.size, size=(n_boot, pl.size))
     return float(np.std([cvar(pl[i], alpha) for i in idx], ddof=1))
+
+
+# ---------------------------------------------------------------------------
+# Linear-regression hedge (Ruf & Wang, JBES 2022)
+# ---------------------------------------------------------------------------
+
+LINEAR_FEATURES = ("const", "delta", "delta_1m_delta", "vega_norm")
+
+
+def linear_hedge_features(spot, tau, sigma: float, rate: float,
+                          n_features: int = 3) -> np.ndarray:
+    """Black-Scholes features of the linear hedge, shape (n, n_features).
+
+    Column order follows LINEAR_FEATURES: 1, delta, delta*(1-delta) and,
+    with n_features=4, vega/(S*sqrt(tau)) = phi(d1). The third and fourth
+    are both bell-shaped in d1 and nearly collinear, which is why the
+    default fits three.
+    """
+    if n_features not in (3, 4):
+        raise ValueError("n_features must be 3 or 4")
+    spot = np.asarray(spot, dtype=np.float64)
+    d = bs_call_delta(spot, 1.0, tau, sigma, rate)
+    cols = [np.ones_like(d), d, d * (1.0 - d)]
+    if n_features == 4:
+        tau_c = np.maximum(tau, 1e-12)
+        sd = sigma * np.sqrt(tau_c)
+        d1 = (np.log(spot) + (rate + 0.5 * sigma ** 2) * tau_c) / sd
+        cols.append(norm.pdf(d1))
+    return np.stack(cols, axis=-1)
+
+
+def fit_linear_hedge(spots: np.ndarray, sigma: float, rate: float,
+                     n_features: int = 3) -> dict:
+    """OLS fit of h_i = c0 + c1*delta + c2*delta*(1-delta) [+ c3*phi(d1)]
+    that minimises the VARIANCE of terminal P&L, costs ignored.
+
+    Why OLS is exact here. With the book's accounting (docstring at the top
+    of the module) and no costs, terminal P&L is linear in the holdings:
+
+        PL = premium*g^N - (S_N - K)+ + sum_i h_i G_i,
+        G_i = S_{i+1} g^{N-i-1} - S_i g^{N-i},   g = e^{r dt},
+
+    G_i being the forward value at T of one share bought at S_i and sold at
+    S_{i+1}. With h_i = sum_k c_k f_k(S_i, tau_i) that is
+    PL = const - payoff + sum_k c_k X_k, X_k = sum_i f_k(i) G_i, so
+    argmin_c Var[PL] is the ordinary least-squares regression of the payoff
+    on the aggregated feature gains X_k with an intercept (which absorbs the
+    mean; the premium is irrelevant to the fit). No iteration, no
+    hyper-parameters, and the same information the delta hedge uses: the
+    fit is cost-blind, so it is a min-variance baseline rather than a
+    cost-aware one, and the coefficients are fitted on a SEPARATE set of
+    training paths from the same measure, then evaluated with costs on the
+    test paths.
+
+    On a complete-market GBM measure the min-variance holding is (up to the
+    daily discretisation) the Black-Scholes delta, so the fit should return
+    c1 ~ 1 and c0, c2 ~ 0; that is a test. Under rho < 0 the literature
+    (Hull & White 2017, Ruf & Wang 2022) finds the min-variance delta of a
+    call BELOW the Black-Scholes delta, which shows up here as c1 < 1 or a
+    negative c2.
+
+    spots: (n, N_STEPS+1) with spots[:, 0] = 1 = K. Returns a dict with
+    `coef` (n_features,), `features`, `r2` of the payoff regression, and
+    `n_paths`.
+    """
+    spots = np.asarray(spots, dtype=np.float64)
+    n, n_steps_plus = spots.shape
+    if n_steps_plus != N_STEPS + 1:
+        raise ValueError(f"expected {N_STEPS + 1} columns, got {n_steps_plus}")
+    g = math.exp(rate * DT)
+    X = np.zeros((n, n_features))
+    for i in range(N_STEPS):
+        tau = (N_STEPS - i) * DT
+        gain = spots[:, i + 1] * g ** (N_STEPS - i - 1) \
+            - spots[:, i] * g ** (N_STEPS - i)
+        X += linear_hedge_features(spots[:, i], tau, sigma, rate,
+                                   n_features) * gain[:, None]
+    y = np.maximum(spots[:, -1] - 1.0, 0.0)
+    A = np.column_stack([np.ones(n), X])
+    beta, *_ = np.linalg.lstsq(A, y, rcond=None)
+    resid = y - A @ beta
+    r2 = 1.0 - float(resid.var()) / float(y.var()) if y.var() > 0 else 0.0
+    return {"coef": beta[1:], "features": LINEAR_FEATURES[:n_features],
+            "r2": r2, "n_paths": int(n)}
+
+
+def linear_hedge_fn(coef: np.ndarray, sigma: float, rate: float):
+    """Holdings rule for _run_book from a fit_linear_hedge() result."""
+    coef = np.asarray(coef, dtype=np.float64)
+    k = coef.size
+
+    def f(i, tau, s, h):
+        return linear_hedge_features(s, tau, sigma, rate, k) @ coef
+    return f
 
 
 # ---------------------------------------------------------------------------
@@ -217,16 +421,41 @@ def simulate_pl(policy: HedgePolicy, log_returns: torch.Tensor, sigma: torch.Ten
 # Training
 # ---------------------------------------------------------------------------
 
+def train_box_for(measure: str) -> dict:
+    """The (sigma, rate, cost) box a policy is trained over under `measure`.
+
+    gbm / gan: TRAIN_BOX, so one policy serves any ticker's live parameters.
+    Rough measures: sigma and rate are PINNED at the calibrated forward vol
+    sqrt(xi) and rate, and only the cost is sampled. The rough measure is a
+    calibration, not a family (eta = 3.9 with H = 0.26 at sigma = 0.65 would
+    be a market nobody calibrated), and the experiment evaluates at the
+    calibrated level, so a rough policy spends its capacity there. This is
+    also the setup most favourable to the learned hedger, which is the right
+    way to look for the regime where it wins.
+    """
+    if measure in ROUGH_MEASURES:
+        p = rough_measure_params(measure)
+        s = math.sqrt(p["xi"])
+        return {"sigma": (s, s), "rate": (p["rate"], p["rate"]),
+                "cost": TRAIN_BOX["cost"]}
+    return dict(TRAIN_BOX)
+
+
 def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
           seed: int = 21, measure: str = "gan",
-          out_name: str | None = None) -> None:
-    """Train the CVaR policy under `measure` ('gan' or 'gbm').
+          out_name: str | None = None, box: dict | None = None,
+          log_every: int = 500) -> dict:
+    """Train the CVaR policy under `measure` (any of MEASURES).
 
     The measure is recorded in the checkpoint meta, because a policy trained
     under one measure and evaluated under another is not a meaningful test -
     and the shipped hedger.pt was trained under a risk_neutralize that has
     since been corrected (it was neither a martingale nor correctly scaled).
+    `box` overrides train_box_for(measure). Returns the checkpoint meta.
     """
+    if measure not in MEASURES:
+        raise ValueError(f"unknown measure {measure!r}; use one of {MEASURES}")
+    box = dict(box or train_box_for(measure))
     torch.manual_seed(seed)
     policy = HedgePolicy()
     head = CVaRHead()
@@ -234,17 +463,19 @@ def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
                             + list(head.parameters()), lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=iters)
 
-    generator = PathGenerator()
-    gen_ckpt = ARTIFACTS / "generator.pt"
-    if gen_ckpt.exists():
-        blob = torch.load(gen_ckpt, map_location="cpu", weights_only=True)
-        generator.load_state_dict(blob["generator"])
-        print("Loaded WGAN-GP market simulator.")
-    else:
-        print("Warning: WGAN-GP not found, using untrained generator.")
-    generator.eval()
-    for param in generator.parameters():
-        param.requires_grad = False
+    generator = None
+    if measure == "gan":
+        generator = PathGenerator()
+        gen_ckpt = ARTIFACTS / "generator.pt"
+        if gen_ckpt.exists():
+            blob = torch.load(gen_ckpt, map_location="cpu", weights_only=True)
+            generator.load_state_dict(blob["generator"])
+            print("Loaded WGAN-GP market simulator.")
+        else:
+            print("Warning: WGAN-GP not found, using untrained generator.")
+        generator.eval()
+        for param in generator.parameters():
+            param.requires_grad = False
 
     t0 = time.perf_counter()
     for it in range(1, iters + 1):
@@ -254,25 +485,21 @@ def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
         # would learn to exploit). Conditional coverage of the training box
         # comes from iterating thousands of batches.
         sigma = torch.full((batch,),
-                           float(torch.empty(1).uniform_(*TRAIN_BOX["sigma"])))
+                           float(torch.empty(1).uniform_(*box["sigma"])))
         rate = torch.full((batch,),
-                          float(torch.empty(1).uniform_(*TRAIN_BOX["rate"])))
+                          float(torch.empty(1).uniform_(*box["rate"])))
         cost = torch.full((batch,),
-                          float(torch.empty(1).uniform_(*TRAIN_BOX["cost"])))
-        z = torch.randn(batch, generator.noise_dim)
+                          float(torch.empty(1).uniform_(*box["cost"])))
 
         # Paths on the pricing measure - the policy must learn hedging skill,
         # not the generator's drift bias. NOTE: risk_neutralize now enforces
         # the martingale condition and the terminal variance, which the version
-        # this checkpoint family was originally trained under did not.
-        if measure == "gbm":
-            log_returns = gbm_log_returns(batch, float(sigma[0]),
-                                          float(rate[0]), N_STEPS)
-        else:
-            with torch.no_grad():
-                raw = generator(z, sigma.unsqueeze(-1), rate.unsqueeze(-1))
-            log_returns = risk_neutralize(raw, sigma.unsqueeze(-1),
-                                          rate.unsqueeze(-1))
+        # this checkpoint family was originally trained under did not. The
+        # rough measures are risk-neutral by construction (left-point
+        # variance, per-step jump compensation). Unseeded here: the global
+        # torch seed set above makes the run reproducible.
+        log_returns = measure_log_returns(measure, batch, float(sigma[0]),
+                                          float(rate[0]), generator=generator)
 
         pl = simulate_pl(policy, log_returns, sigma, rate, cost)
         loss_var = -pl                                    # hedging shortfall
@@ -285,7 +512,7 @@ def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
         opt.step()
         sched.step()
 
-        if it % 500 == 0 or it == 1:
+        if log_every and (it % log_every == 0 or it == 1):
             with torch.no_grad():
                 print(f"iter {it:>5}/{iters}  "
                       f"CVaR objective {cvar.item():+.5f}  "
@@ -294,16 +521,17 @@ def train(iters: int = 6000, batch: int = 2048, lr: float = 1e-3,
 
     ARTIFACTS.mkdir(exist_ok=True)
     out = ARTIFACTS / (out_name or "hedger.pt")
-    torch.save({
-        "policy": policy.state_dict(),
-        "meta": {"n_steps": N_STEPS, "maturity": MATURITY,
-                 "cvar_alpha": CVAR_ALPHA, "train_box": TRAIN_BOX,
-                 "iters": iters, "batch": batch, "lr": lr, "seed": seed,
-                 "train_measure": measure,
-                 "martingale_enforced": True,
-                 "train_seconds": round(time.perf_counter() - t0, 1)},
-    }, out)
+    meta = {"n_steps": N_STEPS, "maturity": MATURITY,
+            "cvar_alpha": CVAR_ALPHA, "train_box": box,
+            "iters": iters, "batch": batch, "lr": lr, "seed": seed,
+            "train_measure": measure,
+            "martingale_enforced": True,
+            "train_seconds": round(time.perf_counter() - t0, 1)}
+    if measure in ROUGH_MEASURES:
+        meta["measure_params"] = rough_measure_params(measure)
+    torch.save({"policy": policy.state_dict(), "meta": meta}, out)
     print(f"saved {out}  ({time.perf_counter() - t0:.0f}s, measure={measure})")
+    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -338,20 +566,16 @@ class HedgingEngine:
     @torch.no_grad()
     def _spots(self, measure: str, sigma: float, rate: float, n_paths: int,
                seed: int) -> np.ndarray:
-        """Spot paths (n_paths, N_STEPS+1) under the requested measure."""
-        if measure == "gbm":
-            gen = torch.Generator().manual_seed(seed)
-            log_incr = gbm_log_returns(n_paths, sigma, rate, N_STEPS,
-                                       generator=gen).numpy().astype(np.float64)
-        elif measure == "gan":
-            gen = torch.Generator().manual_seed(seed)
-            z = torch.randn(n_paths, self.generator.noise_dim, generator=gen)
-            st = torch.full((n_paths, 1), sigma, dtype=torch.float32)
-            rt = torch.full((n_paths, 1), rate, dtype=torch.float32)
-            raw = self.generator(z, st, rt)
-            log_incr = risk_neutralize(raw, st, rt).numpy().astype(np.float64)
-        else:
-            raise ValueError(f"unknown measure {measure!r}; use 'gbm' or 'gan'")
+        """Spot paths (n_paths, N_STEPS+1) under any measure in MEASURES.
+
+        'gbm' and 'gan' are unchanged from before the rough measures were
+        added (same generator, same draw order, so seeded paths are
+        bit-identical). 'rbergomi' and 'rbergomi_jumps' use the calibrated
+        rough dynamics at forward vol `sigma`; see rough_log_returns().
+        """
+        log_incr = measure_log_returns(
+            measure, n_paths, sigma, rate, seed=seed,
+            generator=self.generator).numpy().astype(np.float64)
         spots = np.empty((n_paths, N_STEPS + 1))
         spots[:, 0] = 1.0
         spots[:, 1:] = np.exp(np.cumsum(log_incr, axis=1))
@@ -417,17 +641,27 @@ class HedgingEngine:
             return np.clip(h, lo, hi)
         return f
 
+    @staticmethod
+    def _linear_fn(coef, sigma, rate):
+        """Ruf-Wang linear-regression hedge; see fit_linear_hedge()."""
+        return linear_hedge_fn(coef, sigma, rate)
+
     # -------------------------------------------------------------- compare
     @torch.no_grad()
     def compare(self, sigma: float, rate: float, cost: float,
                 n_paths: int = 3000, seeds: tuple[int, ...] = (17, 18, 19, 20, 21),
-                primary: str = "gbm", seed: int | None = None) -> dict:
-        """Deep hedge vs delta and Whalley-Wilmott, on BOTH measures.
+                primary: str = "gbm", seed: int | None = None,
+                measures: tuple[str, ...] = ("gbm", "gan")) -> dict:
+        """Deep hedge vs delta, Whalley-Wilmott and the linear-regression
+        hedge, on every measure in `measures`.
 
         The headline numbers ("deep"/"delta" at the top level) come from
         `primary`, which defaults to out-of-sample GBM. The in-sample GAN
         numbers are still returned under `by_measure` so the difference is
-        visible rather than hidden.
+        visible rather than hidden. The rough measures ('rbergomi',
+        'rbergomi_jumps') can be requested through `measures`; the default
+        stays at the two the dashboard was built on so the served request
+        keeps its memory and latency budget.
 
         Every statistic is averaged over `seeds` and carries a bootstrap
         standard error, because CVaR is a tail statistic estimated from only
@@ -435,6 +669,8 @@ class HedgingEngine:
         """
         if seed is not None:               # back-compat with the old signature
             seeds = (seed,)
+        if primary not in measures:
+            raise ValueError(f"primary {primary!r} must be one of {measures}")
         sigma_c = float(np.clip(sigma, *TRAIN_BOX["sigma"]))
         rate_c = float(np.clip(rate, *TRAIN_BOX["rate"]))
         cost_c = float(np.clip(cost, *TRAIN_BOX["cost"]))
@@ -442,7 +678,7 @@ class HedgingEngine:
 
         by_measure: dict[str, dict] = {}
         example: dict[str, dict] = {}
-        for measure in ("gbm", "gan"):
+        for measure in measures:
             # Book the premium at the option's value UNDER THE MEASURE BEING
             # SIMULATED, not at Black-Scholes. On GBM the two agree; on the
             # fat-tailed GAN measure they differ, and booking the BS premium
@@ -468,6 +704,10 @@ class HedgingEngine:
                 if c < best_c:
                     best_g, best_c = ra, c
 
+            # Linear-regression hedge (Ruf & Wang): OLS on the same in-sample
+            # baseline paths, costs ignored in the fit, evaluated with costs.
+            lin_fit = fit_linear_hedge(tune, realized_vol, rate_c)
+
             strategies = {
                 "deep": self._deep_fn(sigma_c, rate_c, cost_c),
                 # vol-matched: hedge at the vol the paths actually realize
@@ -475,6 +715,8 @@ class HedgingEngine:
                 "delta_naive": self._delta_fn(sigma_c, rate_c),
                 "whalley_wilmott": self._whalley_wilmott_fn(
                     realized_vol, rate_c, cost_c, best_g),
+                "linear": self._linear_fn(lin_fit["coef"], realized_vol,
+                                          rate_c),
             }
             acc = {k: {"pl": [], "costs": []} for k in strategies}
             for sd in seeds:
@@ -510,6 +752,8 @@ class HedgingEngine:
                 "premium_mc": premium_mc, "premium_bs": premium_bs,
                 "realized_vol": realized_vol,
                 "whalley_wilmott_risk_aversion": best_g,
+                "linear_coef": np.round(lin_fit["coef"], 6).tolist(),
+                "linear_features": list(lin_fit["features"]),
                 "deep_over_delta_cvar95": ratio,
                 "deep_beats_delta": bool(ratio < 1.0),
                 **out,
@@ -532,6 +776,7 @@ class HedgingEngine:
             "deep": p["deep"], "delta": p["delta"],
             "delta_naive": p["delta_naive"],
             "whalley_wilmott": p["whalley_wilmott"],
+            "linear": p["linear"],
             "deep_over_delta_cvar95": p["deep_over_delta_cvar95"],
             "deep_beats_delta": p["deep_beats_delta"],
             "by_measure": by_measure,
@@ -547,5 +792,9 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--iters", type=int, default=6000)
     p.add_argument("--batch", type=int, default=2048)
+    p.add_argument("--measure", choices=MEASURES, default="gan")
+    p.add_argument("--out", default=None,
+                   help="checkpoint file name under artifacts/")
     args = p.parse_args()
-    train(iters=args.iters, batch=args.batch)
+    train(iters=args.iters, batch=args.batch, measure=args.measure,
+          out_name=args.out)

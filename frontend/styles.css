@@ -455,7 +455,7 @@ input[type="range"]::-moz-range-thumb {
 .cost-slider-row input[type="range"] { width: 130px; }
 
 .hedge-stats {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;
   margin: 8px 0 14px;
 }
 @media (max-width: 980px) { .hedge-stats { grid-template-columns: repeat(2, 1fr); } }
