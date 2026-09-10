@@ -122,6 +122,15 @@ HEDGE_DYNAMICS = {
     "gbm": {"checkpoint": "hedger_gbm.pt", "measure": "gbm",
             "label": "Black-Scholes (GBM)"},
 }
+# Arbitrage-free implied-volatility surface for the 0DTE regime (a small
+# network trained against the served ensemble with autograd butterfly and
+# calendar penalties). Optional: the dashboard hides the panel if absent.
+try:
+    from ..quant.iv_surface import IVSurface
+    IV_SURFACE: "IVSurface | None" = IVSurface.load()
+except (FileNotFoundError, ImportError):
+    IV_SURFACE = None
+
 HEDGERS: dict[str, HedgingEngine] = {}
 if HEDGER is not None:
     _artifacts = Path(__file__).resolve().parents[2] / "artifacts"
@@ -503,6 +512,66 @@ def hedge(req: HedgeRequest) -> dict:
         f"under the same dynamics. Baselines are vol-matched to the realized "
         f"volatility of the simulated paths.")
     return out
+
+
+class IVSurfaceRequest(BaseModel):
+    sigma: float = Field(0.25, ge=0.05, le=0.8)
+    rate: float = Field(0.04, ge=0, le=0.1)
+    resolution: int = Field(41, ge=11, le=81)
+
+
+def _iv_fit_summary(fit: dict) -> dict:
+    """Flatten the checkpoint's fit metrics to the two numbers the panel shows:
+    IV RMSE (vol points) on the vega-resolved validation region and price
+    RMSE (bps of strike), whichever key spelling the checkpoint uses."""
+    val = fit.get("validation", fit) if isinstance(fit, dict) else {}
+    def pick(*names):
+        for n in names:
+            v = val.get(n)
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, dict):
+                for inner in ("rmse", "resolved", "value"):
+                    if isinstance(v.get(inner), (int, float)):
+                        return float(v[inner])
+        return None
+    return {
+        "iv_rmse_volpts_resolved": pick("iv_rmse_volpts_resolved", "iv_rmse_resolved_volpts",
+                                        "iv_rmse_resolved", "iv_rmse_volpts", "iv_rmse"),
+        "price_rmse_bps": pick("price_rmse_bps", "price_rmse_bps_of_strike", "price_rmse"),
+        "raw": val,
+    }
+
+
+@app.post("/api/iv-surface")
+def iv_surface(req: IVSurfaceRequest) -> dict:
+    """Arbitrage-free implied-vol surface over (log-moneyness, days) for the
+    0DTE regime, with the Durrleman butterfly function and the calendar
+    slope evaluated by autograd on the same grid."""
+    if IV_SURFACE is None:
+        raise HTTPException(503, "IV surface checkpoint not available.")
+    rng = IV_SURFACE.meta.get("ranges", {})
+    k_lo, k_hi = rng.get("k", (-0.139, 0.157))
+    T_lo, T_hi = rng.get("T", (1 / 252.0, 12 / 252.0))
+    n = req.resolution
+    k_axis = np.linspace(k_lo, k_hi, n)
+    T_axis = np.linspace(T_lo, T_hi, max(11, n // 2))
+    t0 = time.perf_counter()
+    with heavy_job():
+        g = IV_SURFACE.grid(req.sigma, req.rate, k_axis, T_axis)
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    audit = (IV_SURFACE.meta.get("audit") or {})
+    return {
+        "k": g["k"].tolist(), "days": (g["T"] * 252.0).tolist(),
+        "iv": g["iv"].tolist(), "g": g["g"].tolist(),
+        "calendar": g["calendar"].tolist(),
+        "g_min": float(g["g_min"]), "g_min_at": g["g_min_at"].tolist(),
+        "calendar_min": float(g["calendar_min"]),
+        "calendar_min_at": g["calendar_min_at"].tolist(),
+        "n_points": int(g["iv"].size), "latency_ms": elapsed_ms,
+        "fit": _iv_fit_summary(IV_SURFACE.meta.get("fit_metrics", {})),
+        "audit": audit,
+    }
 
 
 @app.post("/api/explain")

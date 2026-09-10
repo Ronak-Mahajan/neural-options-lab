@@ -232,6 +232,62 @@ async function updateConvergence() {
   }, PLOT_CONFIG);
 }
 
+// ─────────────────────────────────────────────────────── IV surface plot ──
+// The 0DTE implied-vol surface depends only on (sigma, r): it is the
+// no-arbitrage surrogate's smile at every maturity in the 0DTE box, with the
+// Durrleman butterfly function g and the calendar slope dw/dT evaluated by
+// autograd on the same grid so the "arbitrage-free" claim is checked live.
+async function updateIVSurface() {
+  const panel = $("panel-ivsurface");
+  if (!panel) return;
+  try {
+    const d = await api("/api/iv-surface",
+      { sigma: state.sigma, rate: state.rate, resolution: 41 });
+    clearShimmer("plot-ivsurface");
+    const fmtK = (v) => v.toFixed(3);
+    const okB = d.g_min > 0, okC = d.calendar_min > 0;
+    $("ivsurface-stats").innerHTML =
+      hedgeStatChip("Butterfly: min g", d.g_min.toFixed(3) +
+        " at k " + fmtK(d.g_min_at[1]) + ", " + (d.g_min_at[0] * 252).toFixed(1) + "d",
+        okB ? "good" : "") +
+      hedgeStatChip("Calendar: min ∂w/∂T", d.calendar_min.toExponential(2),
+        okC ? "good" : "") +
+      hedgeStatChip("Grid points checked", d.n_points.toLocaleString() +
+        (okB && okC ? " · no violations" : " · violation"), okB && okC ? "good" : "") +
+      hedgeStatChip("IV RMSE vs ensemble",
+        (d.fit && d.fit.iv_rmse_volpts_resolved != null
+          ? d.fit.iv_rmse_volpts_resolved.toFixed(2) + " vol pts" : "—"));
+    $("ivsurface-stat").textContent =
+      d.n_points.toLocaleString() + " points in " + fmtMs(d.latency_ms);
+
+    Plotly.react("plot-ivsurface", [{
+      type: "surface",
+      x: d.k, y: d.days, z: d.iv.map((row) => row.map((v) => v * 100)),
+      colorscale: [[0, "#0a2a55"], [0.5, "#0A84FF"], [1, "#dbe9ff"]],
+      showscale: false,
+      contours: { z: { show: true, usecolormap: true, width: 1,
+                       highlightcolor: "#fff" } },
+      hovertemplate: "k %{x:.3f} · %{y:.1f}d → IV %{z:.2f}%<extra></extra>",
+    }], {
+      ...PLOT_BASE, showlegend: false,
+      margin: { l: 0, r: 0, t: 6, b: 0 },
+      scene: {
+        xaxis: { title: { text: "log-moneyness k = ln(K/F)" }, gridcolor: COLORS.grid,
+                 color: COLORS.ink },
+        yaxis: { title: { text: "days to expiry" }, gridcolor: COLORS.grid,
+                 color: COLORS.ink },
+        zaxis: { title: { text: "implied vol (%)" }, gridcolor: COLORS.grid,
+                 color: COLORS.ink },
+        bgcolor: "rgba(0,0,0,0)",
+        camera: { eye: { x: -1.7, y: -1.5, z: 0.9 } },
+      },
+    }, PLOT_CONFIG);
+  } catch (err) {
+    const sub = $("ivsurface-sub");
+    if (sub) sub.textContent = err.message;
+  }
+}
+
 // ─────────────────────────────────────────────────────────── latency plot ──
 async function updateBenchmark() {
   const btn = $("btn-benchmark");
@@ -405,7 +461,7 @@ async function loadModelInfo() {
 
 // ─────────────────────────────────────────────────────────────── wire up ──
 const refreshFast = debounce(updatePrice, 220);
-const refreshSlow = debounce(() => { updateConvergence(); updateSurface(); updateXAI(); }, 650);
+const refreshSlow = debounce(() => { updateConvergence(); updateSurface(); updateXAI(); updateIVSurface(); }, 650);
 const refreshAll = () => { refreshReadouts(); refreshFast(); refreshSlow(); syncURL(); };
 
 bindSlider("spot", (v) => { state.spot = v; refreshAll(); });
@@ -731,6 +787,10 @@ const CHIP_HELP = {
   "Tail-risk reduction": "How much smaller the deep hedge's worst-5% loss is than the delta hedge's",
   "Tail-risk increase": "How much larger the deep hedge's worst-5% loss is than the delta hedge's",
   "Avg costs deep vs delta": "Average transaction costs paid per path by each policy",
+  "Butterfly: min g": "Minimum of the Durrleman function g(k) over the grid; g >= 0 everywhere means every butterfly spread has a non-negative price (no negative risk-neutral density)",
+  "Calendar: min ∂w/∂T": "Minimum slope of total implied variance in maturity; non-negative means no calendar-spread arbitrage",
+  "Grid points checked": "Grid points at which both conditions were evaluated by automatic differentiation for the current sigma and rate",
+  "IV RMSE vs ensemble": "Implied-vol error of the constrained surface against the 0DTE pricing ensemble it was fitted to, on held-out points where the implied vol is resolved",
 };
 function hedgeStatChip(k, v, cls) {
   const help = CHIP_HELP[k] ? " title='" + CHIP_HELP[k] + "'" : "";
@@ -1050,6 +1110,7 @@ loadErrorDistribution();
   await updateConvergence().catch(() => {});
   await updateSurface().catch(() => {});
   await updateXAI().catch(() => {});
+  await updateIVSurface().catch(() => {});
   if (currentTab === "hedging" && urlParams.run === "1") runHedge();
 })();
 const latencyShimmer = $("plot-latency").querySelector(".shimmer");
