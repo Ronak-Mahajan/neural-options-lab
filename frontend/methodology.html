@@ -292,6 +292,57 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <figcaption>ATM skew term structure. Left: SPY, model (blue) against listed expiries (amber), with the fitted power laws and the reference slope H &minus; &frac12;. Right: Bitcoin on Deribit, where the short-dated skew is positive and no power law applies. Reproduce with <code>scripts/atm_skew_term_structure.py</code>.</figcaption>
 </figure>
 
+<h3>An arbitrage-free implied-volatility surface</h3>
+<p>
+  A network that outputs option prices can be smooth and still wrong in a way no market
+  allows: nothing stops it from pricing a butterfly spread below zero or a longer option below
+  a shorter one. Audited by automatic differentiation on 134,100 points across its trained
+  box, the 0DTE pricing ensemble does exactly that at the edges: its implied total variance
+  violates the Durrleman butterfly condition <code>g(k) &ge; 0</code> on 4.9% of the points
+  where an implied vol exists and the calendar condition on 10.5%, concentrated deep
+  in-the-money at very low volatility and one to two days to expiry; inside the region
+  where its implied vol is resolved by vega, violations are rare (0.06% and 0.18%). The
+  surface served on the dashboard is a second, small network (12,929 parameters) that
+  models total implied variance as a positive output times a Black-Scholes prior and is
+  trained against the ensemble with autograd penalties on both conditions and on the
+  large-moneyness slope, following Ackerer, Tagasovska and Vatter (2020). On the same
+  134,100 points it has zero violations (minimum <code>g</code> +0.072, minimum
+  <code>&part;w/&part;T</code> +6.5&times;10<sup>&minus;5</sup>), never prices below intrinsic value, and
+  reproduces the ensemble to 0.22 vol points where the implied vol is resolved. It inherits
+  the ensemble's short-end error against a 400,000-path Monte Carlo of the true dynamics
+  (up to 3 vol points at one day and 10% vol), so it is arbitrage-free, not more accurate.
+  The dashboard evaluates both conditions on the displayed grid for every setting of
+  &sigma; and r.
+</p>
+<figure class="fig">
+  <img src="/assets/no_arbitrage_surface.png" alt="Heatmaps of the Durrleman butterfly function over log-moneyness and days to expiry for the served price surrogate (with violation regions marked) and for the constrained implied-volatility surface (none), and implied-vol smile slices at 1, 5 and 12 days against Monte Carlo" loading="lazy">
+  <figcaption>Static-arbitrage audit of the 0DTE ensemble (top left) against the constrained implied-volatility surface (top right), one (&sigma;, r) slice of 134,100 audited points; smile slices at 1, 5 and 12 trading days below, with the rough Bergomi Monte Carlo. Reproduce with <code>scripts/no_arbitrage_surface.py</code>.</figcaption>
+</figure>
+
+<h3>Heston as the classical reference</h3>
+<p>
+  Every neural number above is checked against Monte Carlo, whose error is statistical. A
+  semi-analytic reference has none: <code>backend/quant/heston.py</code> prices European
+  options under Heston (1993) by the COS method of Fang and Oosterlee (2008) with the
+  characteristic function in the numerically stable form of Albrecher and coauthors, and
+  reproduces the published reference value 5.785155450 to 8&times;10<sup>&minus;9</sup>,
+  satisfies put-call parity to 10<sup>&minus;11</sup>, recovers Black-Scholes in the
+  zero-vol-of-vol limit to 10<sup>&minus;13</sup>, and agrees with an independent Euler Monte
+  Carlo within one standard error, pricing a 100-strike smile in 3.6 ms. Calibrated to the same
+  SPY captures as the rough Bergomi map, Heston fits the two-to-ten-day smiles slightly better
+  (0.85 versus 1.10 vol points RMSE over five captures) but only by pushing the mean-reversion
+  speed to its 100-per-year bound with a vol-of-variance near 4.7, and its at-the-money skew
+  then steepens into expiry with exponent &minus;0.66 against the market's &minus;0.25, twice
+  too fast; with mean reversion capped at 10 per year the fit worsens to 1.11 vol points and
+  the exponent is &minus;0.45. Textbook Heston parameters give the classical flat short-dated
+  skew (exponent near 0). A single-day smile does not identify the model; the term structure
+  of the skew does.
+</p>
+<figure class="fig">
+  <img src="/assets/heston_reference.png" alt="Calibrated Heston smiles against SPY market implied vols for three expiries, and a log-log plot of the at-the-money skew term structure for the market, rough Bergomi and Heston with fitted exponents" loading="lazy">
+  <figcaption>Left: Heston (COS) calibrated to one SPY capture against the market implied vols and the rough Bergomi map fit, three of seven expiries. Right: the at-the-money skew term structure for the market, rough Bergomi and the calibrated Heston variants. Reproduce with <code>scripts/heston_reference.py</code>.</figcaption>
+</figure>
+
 <h3>Deep hedging and the CVaR objective</h3>
 <p>
   Following Buehler and coauthors (2019), a policy network maps the hedging state to a position
@@ -442,6 +493,31 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
     <tr><td>SPY listed expiries, 8 captures &times; 7 expiries</td><td class="n">&minus;0.249 &plusmn; 0.033</td><td class="n">&minus;0.239</td></tr>
     <tr><td>Rough Bergomi, calibrated &eta; = 3.9</td><td class="n">&minus;0.321 &plusmn; 0.007</td><td class="n">&minus;0.239</td></tr>
     <tr><td>Rough Bergomi, &eta; = 0.5 (asymptotic regime)</td><td class="n">&minus;0.233 &plusmn; 0.011</td><td class="n">&minus;0.239</td></tr>
+    <tr><td>Heston, least-squares optimum (&kappa; at the 100/yr bound)</td><td class="n">&minus;0.660 (sd 0.003 across captures)</td><td class="n">n/a</td></tr>
+    <tr><td>Heston, &kappa; &le; 10/yr</td><td class="n">&minus;0.453 (sd 0.013)</td><td class="n">n/a</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Smile calibration to five SPY captures (2-10 trading days to expiry), implied-vol RMSE in vol points</caption>
+  <thead><tr><th>Model</th><th class="n">RMSE (mean over captures)</th></tr></thead>
+  <tbody>
+    <tr><td>Heston, least squares (5 parameters)</td><td class="n">0.85</td></tr>
+    <tr><td>Heston, &kappa; &le; 10/yr</td><td class="n">1.11</td></tr>
+    <tr><td>Rough Bergomi, pricing-map calibration (4 parameters)</td><td class="n">1.10</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Static-arbitrage audit of the 0DTE regime, 134,100 grid points over the trained box, both conditions by automatic differentiation</caption>
+  <thead><tr><th>Surface</th><th class="n">Butterfly g &lt; 0</th><th class="n">Calendar &part;w/&part;T &lt; 0</th><th class="n">Price below intrinsic</th><th class="n">IV RMSE vs ensemble</th></tr></thead>
+  <tbody>
+    <tr><td>0DTE pricing ensemble (prices)</td><td class="n">4.9%</td><td class="n">10.5%</td><td class="n">6.8%</td><td class="n">&mdash;</td></tr>
+    <tr><td>Constrained implied-vol surface (served)</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0.22 vol pts</td></tr>
   </tbody>
 </table>
 </div>
@@ -487,6 +563,8 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">Source code on GitHub</a>: the README, the trained checkpoints, and the evaluation scripts.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/deep_hedging_regimes.md" rel="noopener">docs/deep_hedging_regimes.md</a>: the deep hedging experiment under rough volatility, jumps and costs, every cell with standard errors.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/atm_skew_term_structure.md" rel="noopener">docs/atm_skew_term_structure.md</a>: the skew term-structure measurement, model and market.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/no_arbitrage_surface.md" rel="noopener">docs/no_arbitrage_surface.md</a>: the static-arbitrage audit and the constrained implied-vol surface.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/heston_reference.md" rel="noopener">docs/heston_reference.md</a>: the Heston COS pricer, its verification, calibration and skew term structure.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the Black-Scholes deep hedging evaluation.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/real_market_data.md" rel="noopener">docs/real_market_data.md</a>: the Deribit chain, its conventions and its diagnostics.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/DEPLOY.md" rel="noopener">DEPLOY.md</a>: hosting notes.</li>

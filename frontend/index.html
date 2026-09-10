@@ -286,6 +286,18 @@
         </header>
         <div class="plot tall" id="plot-surface"><div class="shimmer"></div></div>
       </article>
+
+      <article class="panel chart-panel" id="panel-ivsurface">
+        <header class="chart-head">
+          <div>
+            <h3>Implied-Volatility Surface, 0DTE regime</h3>
+            <p id="ivsurface-sub" title="Total implied variance modelled as a positive network output with autograd penalties on the Durrleman butterfly function and the calendar slope, trained against the 0DTE pricing ensemble">Arbitrage-free by construction: butterfly and calendar conditions checked on this grid</p>
+          </div>
+          <span class="meta mono accent" id="ivsurface-stat"></span>
+        </header>
+        <div class="hedge-stats" id="ivsurface-stats"></div>
+        <div class="plot tall" id="plot-ivsurface"><div class="shimmer"></div></div>
+      </article>
     </section>
 
     <!-- Tab: Live Stream -->
