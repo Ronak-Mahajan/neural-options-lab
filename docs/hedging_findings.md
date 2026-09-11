@@ -6,8 +6,19 @@ against a handicapped baseline on a measure that was not a valid pricing measure
 fixing all three problems, **the deep hedger does not beat a properly specified baseline**,
 and the honest headline is a negative result.
 
-Everything below was measured by running the code in this repository. Reproduce with
-`python _hedgeresult.py` and `python _hedgefinal.py`.
+Everything below was measured by running the code in this repository. The two scratch
+scripts that drove the run (`_hedgeresult.py`, `_hedgefinal.py`) matched the `_*.py`
+ignore rule and were never committed, so they are not in the tree. The committed record
+of the run is `artifacts/hedging_final.json` (the 12-cell CVaR ratios against delta and
+Whalley-Wilmott for all three policies; the table in section 2 is read from it) and
+`artifacts/hedging_honest.json` (24 rows: the per-cell CVaR₉₅ of deep, delta, naive and
+Whalley-Wilmott on the GBM and GAN measures, with bootstrap standard errors); the
+measurement they called is
+`HedgingEngine.compare()` in `backend/quant/hedging.py`, which regenerates any cell of
+the grid from a checkpoint, a (σ, cost) pair and a seed. The follow-up experiments are
+fully scripted: `scripts/deep_hedging_regimes.py` produces
+[deep_hedging_regimes.md](deep_hedging_regimes.md) and `scripts/hedge_real_paths.py`
+produces [hedging_real_paths.md](hedging_real_paths.md).
 
 ---
 
