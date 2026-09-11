@@ -118,7 +118,13 @@ jobs:
           fi
 
       - name: Publish captures to the orphan surfaces branch
+        # Teed into publish.log so the failure step can write it back. This is
+        # the step with the git race in it - a lost rebase or a rejected push
+        # is precisely the outcome worth reading, and it was the one step
+        # producing no log at all.
         run: |
+          set -o pipefail
+          {
           set -euo pipefail
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           WT="$RUNNER_TEMP/surfaces-wt"
@@ -180,15 +186,28 @@ jobs:
             git pull --rebase origin surfaces
             git push origin surfaces
           }
+          } 2>&1 | tee "$GITHUB_WORKSPACE/publish.log"
+          exit ${PIPESTATUS[0]}
 
       - name: Commit failure log
         # Never writes to main; a cron run from the default branch that fails
         # is read from the Actions UI. On a branch smoke test the tail of the
         # failing run is committed so it can be read from the repository.
+        #
+        # All three legs are concatenated, each guarded by a touch: which step
+        # failed is exactly what the reader needs, and a failure before any of
+        # them wrote anything must still produce a file rather than failing
+        # this step on a missing one.
         if: failure() && github.ref != 'refs/heads/main'
         run: |
           mkdir -p .ci
-          tail -c 60000 ci.log > .ci/last-failure-record.log
+          touch ci.log spy.log publish.log
+          {
+            for f in ci.log spy.log publish.log; do
+              echo "===== $f ====="
+              tail -c 20000 "$f"
+            done
+          } > .ci/last-failure-record.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .ci/last-failure-record.log
