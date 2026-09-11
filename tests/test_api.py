@@ -298,6 +298,10 @@ def test_stream_prices_while_the_heavy_gate_is_held(client, monkeypatch):
         the gate really is the contended one;
       * were the stream ever changed to take the gate, this blocks for
         HEAVY_JOB_TIMEOUT_S and then fails instead of hanging the suite.
+        Checked, not assumed: wrapping the handler's pricing call in
+        heavy_job() off-tree and re-running this made the frame arrive after
+        73 ms as {'tick': 1, 'spot': 99.9992, 'error': 'out of domain'}, so
+        the `"error" not in frame` assertion below is the one that fires.
 
     What this does NOT claim: Starlette dispatches sync handlers on anyio's
     default thread limiter (40 tokens) and the websocket's pricing call draws
