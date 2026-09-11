@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Methodology: Neural Options Lab</title>
-<meta name="description" content="How the Neural Options Lab prices arithmetic Asian options with a neural surrogate, the measured results, and the record of earlier claims that did not survive measurement.">
+<meta name="description" content="How the Neural Options Lab prices arithmetic Asian options with a neural network, how each figure was measured, and what the models cover.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -177,7 +177,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <a href="#looking">1. What you are looking at</a>
   <a href="#how">2. How it works</a>
   <a href="#results">3. Results</a>
-  <a href="#limits">4. Limitations</a>
+  <a href="#limits">4. Scope</a>
   <a href="#links">5. Links</a>
 </nav>
 
@@ -364,11 +364,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <p>
   Following Buehler and coauthors (2019), a policy network maps the hedging state to a position
   and is trained to minimize the 95% conditional value at risk of the terminal loss, with
-  transaction costs inside the objective. The dashboard simulates 3,000 paths of hedging a short
-  option to expiry and shows the learned policy's profit-and-loss distribution next to a
-  Black-Scholes delta hedge on the same paths. On Black-Scholes dynamics the learned policy does
-  not beat a vol-matched delta hedge or a cost-aware Whalley-Wilmott no-trade band on tail risk;
-  under rough volatility with transaction costs it does, which is the experiment below.
+  transaction costs inside the objective. The Hedging tab simulates 15,000 paths (five seeds of
+  3,000) of hedging a short 30-day at-the-money call to expiry, and shows the learned policy's
+  profit-and-loss distribution against a vol-matched Black-Scholes delta hedge and a cost-aware
+  Whalley-Wilmott no-trade band on the same paths. On Black-Scholes dynamics the learned policy
+  does not beat either baseline on tail risk; under rough volatility with transaction costs it
+  beats the delta hedge, which is the experiment below.
 </p>
 
 <h3>Deep hedging under rough volatility, jumps and costs</h3>
@@ -376,10 +377,11 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   On Black-Scholes paths the market is complete and a delta hedge is close to optimal, so a learned
   policy has little to win there. The dashboard's Deep Hedging tab therefore simulates the
   SPY-calibrated rough Bergomi model with compensated jumps (H = 0.25, &rho; = &minus;0.55, an
-  incomplete market with stochastic rough volatility correlated with spot) and runs four hedgers on
-  identical paths: the learned policy, a vol-matched Black-Scholes delta, a Whalley-Wilmott
-  no-trade band tuned in the baseline's favour, and a linear-regression hedge in the style of
-  Ruf and Wang. Across 15,000 paths per cost the learned policy's tail loss crosses below the
+  incomplete market with stochastic rough volatility correlated with spot) and runs three hedgers
+  on identical paths: the learned policy, a vol-matched Black-Scholes delta, and a
+  Whalley-Wilmott no-trade band tuned in the baseline's favour. A fourth, a linear-regression
+  hedge in the style of Ruf and Wang, is reported in
+  <a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/deep_hedging_regimes.md" rel="noopener">docs/deep_hedging_regimes.md</a>. Across 15,000 paths per cost the learned policy's tail loss crosses below the
   delta hedge at 50 bp of proportional cost (CVaR<sub>95</sub> 404 &plusmn; 7 versus
   493 &plusmn; 11 bp of strike) and below the Whalley-Wilmott band at 100 bp
   (452 &plusmn; 8 versus 498 &plusmn; 10), reaching half the delta hedge's tail loss at 200 bp.
@@ -540,9 +542,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 </table>
 </div>
 <p>
-  As implemented, deep hedging here does not beat a properly specified baseline. Even trained
-  and evaluated on the same correct measure, the learned policy loses to a vol-matched delta
-  hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
+  The advantage above is specific to rough volatility with costs. On Black-Scholes paths the
+  market is complete and the classical baselines hold: across a 12-cell sweep of training and
+  evaluation measures on those paths, the learned policy loses to a vol-matched delta hedge in
+  7 cells and to the Whalley-Wilmott band in 11. Even under rough volatility the band remains
+  the stronger baseline until costs reach 100 bp. The dashboard reports whichever policy wins
+  the run in front of you.
 </p>
 
 <div class="tbl-wrap">
@@ -560,13 +565,13 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 </div>
 
 <!-- ---------------------------------------------------------------- -->
-<h2 id="limits">4. Limitations</h2>
+<h2 id="limits">4. Scope</h2>
 
 <ul>
   <li>This is a research and portfolio project, not production trading infrastructure. Nothing here is investment advice.</li>
-  <li>The pricer takes a single flat volatility rather than a full surface, and there is no arbitrage-free constraint built into the learned surface.</li>
-  <li>The rough volatility model uses a fixed Hurst index rather than calibrating it jointly with the smile, and the served 0DTE checkpoint is not fitted to a live market; the calibration scripts in the repository fit the SPY and Deribit smiles offline.</li>
-  <li>The deep hedger does not beat a properly specified delta-hedging baseline out of sample. The GAN market simulator used in training is not a reliable evaluation measure, so results are reported on GBM paths.</li>
+  <li>The Asian pricer takes a single flat volatility rather than a full surface, and carries no arbitrage constraint of its own; the short-dated implied-volatility surface described above is the one component built to be arbitrage-free.</li>
+  <li>The served rough-volatility checkpoint fixes the Hurst index rather than fitting it jointly with the smile; refitting the two together moves it (see the joint refit above) but the served model was not retrained on the result. Its calibration comes from committed SPY option captures fitted offline, not from a live feed.</li>
+  <li>The deep hedger's advantage holds under rough volatility with transaction costs and not on Black-Scholes paths, where the classical baselines win. The GAN market simulator used in early training is not a reliable evaluation measure, so no result is reported on it.</li>
   <li>The served pricer favours price accuracy: its delta and vega are 5.9% and 1.2% less accurate than an alternative head that prices slightly worse. A service hedging off these Greeks should weigh that differently from a service pricing with them.</li>
   <li>The absolute price RMSE moves with the test draw (1.301 to 1.488 bps across four independent draws); only paired comparisons on identical points and references are treated as meaningful.</li>
   <li>Market data for the ticker feature comes from yfinance, which is retail-grade and has stale or missing quotes. The Deribit chain is a committed snapshot, not a live feed.</li>
