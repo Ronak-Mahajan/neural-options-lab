@@ -243,7 +243,17 @@ function refreshReadouts() {
 
   document.querySelectorAll("#maturity-quickpick .pick").forEach((b) =>
     b.classList.toggle("active", Math.abs(+b.dataset.t - state.maturity) < 1e-6));
+
+  // The short-dated volatility surface only describes contracts of 12
+  // trading days or less, so open it when the reader moves into that regime.
+  const short = is0dte();
+  if (short !== wasShortDated) {
+    const g = $("group-domain");
+    if (short && g) g.open = true;
+    wasShortDated = short;
+  }
 }
+let wasShortDated = null;
 
 function bindSegmented(containerId, onPick) {
   const box = $(containerId);
@@ -267,6 +277,7 @@ async function updatePrice() {
     if (seq !== priceSeq) return; // a newer request superseded this one
 
     lastNNPrice = d.nn.price;
+    renderReportInputs();
     animateNumber($("nn-price"), d.nn.price, fmtMoney);
     animateNumber($("mc-price"), d.mc.price, fmtMoney);
     $("nn-sub").textContent = is0dte()
@@ -801,6 +812,7 @@ function showTab(key) {
   const id = TAB_IDS[key] || TAB_IDS.pricing;
   currentTab = TAB_IDS[key] ? key : "pricing";
   $("rail-note").hidden = currentTab === "hedging";
+  if (currentTab === "ai") renderReportInputs();
   renderContractLine();
   paintRailScope();
   document.querySelectorAll(".tab-btn").forEach((b) =>
@@ -815,6 +827,19 @@ function showTab(key) {
       .forEach((p) => Plotly.Plots.resize(p));
   });
   syncURL();
+}
+
+// The Write summary button used to be a black box: it silently ran the
+// hedging simulation and the attribution before writing anything.
+function renderReportInputs() {
+  const el = $("report-inputs");
+  if (!el) return;
+  const ready = (ok) => ok ? "ready" : "will be computed";
+  el.innerHTML =
+    hedgeStatChip("Price", ready(lastNNPrice != null), lastNNPrice != null ? "good" : "") +
+    hedgeStatChip("Attribution", ready(!!lastAttributions), lastAttributions ? "good" : "") +
+    hedgeStatChip("Hedging run", ready(!!lastHedge), lastHedge ? "good" : "");
+  el.className = "hedge-stats";
 }
 
 function applyPreset(p) {
@@ -1005,6 +1030,7 @@ async function updateXAI() {
     const d = await api("/api/explain", optionBody());
     clearShimmer("plot-xai");
     lastAttributions = d.attributions;
+    renderReportInputs();
 
     const bT = d.baseline.maturity;
 
@@ -1104,6 +1130,7 @@ async function runHedge() {
     clearShimmer("plot-hedge");
     clearShimmer("plot-holdings");
     lastHedge = d;
+    renderReportInputs();
     const K = state.strike;
     const $$ = (v) => (v < 0 ? "−$" : "$") + Math.abs(v * K).toFixed(2);
 
@@ -1258,16 +1285,23 @@ $("btn-hedge").addEventListener("click", runHedge);
 $("btn-risk").addEventListener("click", async () => {
   const btn = $("btn-risk");
   btn.textContent = "Writing…";
+  let step = 0;
   btn.disabled = true;
   const out = $("ai-report");
   try {
     // Auto-gather any missing inputs instead of bouncing the user around.
-    if (!lastAttributions) { out.textContent = "Working out what drives the price…"; await updateXAI(); }
-    if (!lastHedge) { out.textContent = "Running the hedging simulation…"; await runHedge(); }
+    if (!lastAttributions) {
+      out.textContent = "Working out what drives the price… (1 of 3)";
+      await updateXAI();
+    }
+    if (!lastHedge) {
+      out.textContent = "Running the hedging simulation… (2 of 3)";
+      await runHedge();
+    }
+    out.textContent = "Writing the summary… (3 of 3)";
     if (lastNNPrice == null || !lastAttributions || !lastHedge)
       throw new Error("pricing/hedging inputs unavailable; is the backend up?");
 
-    out.textContent = "Writing the summary…";
     out.classList.add("streaming");
     const K = state.strike;
     const req = {
