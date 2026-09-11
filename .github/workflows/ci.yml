@@ -36,12 +36,21 @@ jobs:
           cache: pip
 
       - name: Install dependencies
+        # Teed into the same ci.log the failure step writes back. A resolver
+        # failure here used to produce NO readable log at all: ci.log did not
+        # exist yet, so the write-back step's own `tail` failed and the branch
+        # got nothing. That is the failure mode the write-back exists for -
+        # the 3.10 matrix leg died at this step on every commit for weeks.
         run: |
-          python -m pip install --upgrade pip
-          # CPU-only torch: the GPU wheel is ~2.5 GB and nothing in CI needs it.
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
-          pip install pytest
+          set -o pipefail
+          {
+            python -m pip install --upgrade pip
+            # CPU-only torch: the GPU wheel is ~2.5 GB and CI needs none of it.
+            pip install torch --index-url https://download.pytorch.org/whl/cpu
+            pip install -r requirements.txt
+            pip install pytest
+          } 2>&1 | tee -a ci.log
+          exit ${PIPESTATUS[0]}
 
       - name: Show resolved versions
         run: pip list
@@ -57,7 +66,7 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests/ -v -m "not network" --durations=10 \
-            2>&1 | tee ci.log
+            2>&1 | tee -a ci.log
           exit ${PIPESTATUS[0]}
 
       - name: Commit failure log
@@ -66,6 +75,9 @@ jobs:
         if: failure() && github.ref != 'refs/heads/main'
         run: |
           mkdir -p .ci
+          # Guard: a failure before any step teed anything (checkout, setup)
+          # must still write back a file rather than failing on a missing one.
+          touch ci.log
           tail -c 60000 ci.log > .ci/last-failure-test.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
