@@ -109,10 +109,14 @@ stochastic-volatility smile is nearly stationary, and without it a 1-day, 5%-vol
 
 **Labels.** The served ensemble is the teacher: it is deterministic, differentiable and
 cheap (262,144 samples in 9 s), and its systematic error against high-precision rough
-Bergomi references is 1.48 bps RMSE (README), below the 2.35 bps per-label noise of a
-fresh 20,000-path Monte Carlo set. Regenerating labels by Monte Carlo at that accuracy
-would have cost the whole compute budget for a noisier target. The price the teacher
-returns, not its implied vol, is the label, because the vol does not exist on 6.8% of the
+Bergomi references is smaller than the noise a fresh label set would carry over most of
+the box: on the six smiles Section 4 re-prices against 4 x 400,000-path references the
+teacher's price RMSE is 0.79 to 3.76 bps of strike, against the 2.35 bps per-label noise
+of a fresh 20,000-path Monte Carlo set, and it is only at the 1-day, 10%-vol corner that
+the teacher is the worse of the two. Regenerating labels by Monte Carlo at that accuracy
+would have cost the whole compute budget for a target that is noisier everywhere else.
+The price the teacher returns, not its implied vol, is the label, because the vol does
+not exist on 6.8% of the
 box (Section 2). Samples are drawn half uniformly in k and half uniformly in
 z = k / (sigma sqrt T) on [-8, 8], so the narrow low-vol smiles are sampled as densely as
 the wide ones; 7,091 of 262,144 samples (2.7%) whose teacher price lies outside the
@@ -262,9 +266,11 @@ the MC vol >= 0.02, SE < 0.5 vol points.
 Three things follow. (i) The Monte Carlo error is not the limiting factor anywhere: with
 median |z| of 4 to 958 the disagreements are systematic, and the largest are the
 teacher's, at 1-5 days and 10% vol, exactly where its price errors against the same
-engine are 2-4 bps RMSE and up to 14 bps (its README figure of 1.48 bps is a box-wide
-average). The sign is instructive: at sigma = 0.10 the teacher prices the k = 0.019 call
-at 5.32 / 6.80 / 16.30 bps at 1 / 5 / 12 days where the Monte Carlo says 0.00 / 1.59 /
+engine are 1.9-3.8 bps RMSE and up to 14.4 bps on a single strike; the six smiles in the
+table above are the only places the teacher has been re-priced against high-precision
+references, so there is no box-wide figure to average them into. The sign is instructive:
+at sigma = 0.10 the teacher prices the k = 0.019 call at
+5.32 / 6.80 / 16.30 bps at 1 / 5 / 12 days where the Monte Carlo says 0.00 / 1.59 /
 8.80 (standard error <= 0.1 bp), i.e. it over-prices the out-of-the-money wing by
 5-8 bps while under-pricing the in-the-money side below intrinsic - the two faces of a
 smooth function fitted to a hinge. (ii) The constrained surface is *not* a more accurate pricer than its teacher
@@ -404,6 +410,7 @@ constrained surface.
 Reproduce: `python -m scripts.no_arbitrage_surface` (matplotlib from
 `requirements-dev.txt`); `--quick` for a one-minute smoke run to a temp directory;
 `--skip-train` to re-audit the saved surface; `--figure-only` to redraw the PNG from the
-JSON. Tests: `tests/test_iv_surface.py` (11 tests, 12 s measured; the whole fast suite,
+JSON. Tests: `tests/test_iv_surface.py` (11 tests, 11-12 s measured; the whole fast suite,
 `python -m pytest tests/ -q -m "not network"`, was 158 tests / 44 s when this package was
-written and is 188 tests / 97 s now that `tests/test_api.py` runs the service in-process).
+written and is 188 tests / 86-97 s across runs on one laptop now that `tests/test_api.py`
+runs the service in-process).

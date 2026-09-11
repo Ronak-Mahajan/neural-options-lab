@@ -271,7 +271,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   RMSE, the fit passed the quality gate, and the checkpoint records that provenance in its
   own metadata. Its ensemble validation RMSE is 3.3 bps of strike against its 20,000-path
   training labels; re-priced against 400,000-path rough Bergomi references at its hardest
-  smiles (one to five days at 10% vol) the price RMSE is 2 to 4 bps.
+  smiles (one to five days at 10% vol) the price RMSE is 1.9 to 3.8 bps.
 </p>
 
 <h3>The rough-volatility signature: how fast the skew steepens</h3>
@@ -463,8 +463,8 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <tbody>
     <tr><td>Calibration fit, 618 live SPY quotes across 7 expiries</td><td class="n">1.57 vol points IV RMSE</td></tr>
     <tr><td>Ensemble validation RMSE against 20,000-path training labels</td><td class="n">3.3 bps of strike</td></tr>
-    <tr><td>Price RMSE against 4 &times; 400,000-path references, 1 to 5 days at 10% vol</td><td class="n">2 to 4 bps</td></tr>
-    <tr><td>Largest single-point error on those smiles</td><td class="n">14 bps</td></tr>
+    <tr><td>Price RMSE against 4 &times; 400,000-path references, six smiles at 1/5/12 days and 10%/20% vol</td><td class="n">0.79 to 3.76 bps</td></tr>
+    <tr><td>Largest single-strike error on those smiles</td><td class="n">14.4 bps</td></tr>
   </tbody>
 </table>
 </div>
