@@ -59,5 +59,18 @@ artifacts/ablation_probe.json
 *cv.pdf
 *.tex
 
-# Recorded market surfaces: grows without bound, never belongs in history.
-data/
+# Recorded market data. Three subtrees are tracked on purpose and are the
+# ground truth behind measured results (see "Data archive size" in README):
+#   data/surfaces/      626 gzipped SPY/BTC/ETH captures, 2026-08-20..23
+#   data/btc_series/    the Saturday BTC jump-premium series and its logs
+#   data/pricing_map*/  the GPU-labelled .npz shards the pricing map trained on
+# Everything else under data/ is ignored, and so are NEW recorder captures
+# under data/surfaces/ (scripts/record_surfaces.py writes there every few
+# minutes when running; that stream grows without bound and is banked
+# deliberately with `git add -f`, not swept in by `git add -A`). Files already
+# tracked are unaffected by these rules.
+data/*
+!data/surfaces/
+!data/btc_series/
+!data/pricing_map*/
+data/surfaces/**/*.json.gz
