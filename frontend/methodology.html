@@ -262,13 +262,16 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   Very short-dated option smiles show a power-law skew that classical models cannot reproduce,
   so a separate five-member ensemble serves maturities of 12 trading days or less, trained on a
   rough Bergomi Monte Carlo engine. The driver is the Riemann-Liouville Volterra process of
-  Bayer, Friz and Gatheral (2016), <code>W̃_t = √(2H) ∫₀ᵗ (t−s)^(H−½) dW_s</code>, with Hurst
-  index near 0.1, simulated exactly from the joint Gaussian law of the driving Brownian motion
-  and the Volterra integral; the scheme is verified against quadrature to 5.4e-08 and against
-  400,000 draws. On 400 held-out points against 500,000-path references the 0DTE ensemble
-  measures 1.48 bps RMSE with +0.13 bps bias, below the 2.35 bps noise floor of its own
-  20,000-path training labels. The served checkpoint uses fixed rough-volatility parameters
-  rather than a live market calibration.
+  Bayer, Friz and Gatheral (2016), <code>W̃_t = √(2H) ∫₀ᵗ (t−s)^(H−½) dW_s</code>, simulated
+  exactly from the joint Gaussian law of the driving Brownian motion and the Volterra
+  integral; the scheme is verified against quadrature to 5.4e-08 and against 400,000 draws.
+  The served ensemble is trained on the dynamics of a live SPY calibration: on 2026-08-20 the
+  calibrator fitted &eta; = 3.66, &rho; = &minus;0.63 and H = 0.26 jointly with the forward
+  variance to 618 live mid quotes across seven expiries at 1.57 vol points of implied-vol
+  RMSE, the fit passed the quality gate, and the checkpoint records that provenance in its
+  own metadata. Its ensemble validation RMSE is 3.3 bps of strike against its 20,000-path
+  training labels; re-priced against 400,000-path rough Bergomi references at its hardest
+  smiles (one to five days at 10% vol) the price RMSE is 2 to 4 bps.
 </p>
 
 <h3>The rough-volatility signature: how fast the skew steepens</h3>
@@ -280,7 +283,9 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   volatility cannot reproduce. Measured from the committed SPY option captures (8 captures across
   two trading days, 7 expiries each, 56 local-quadratic fits between 2 and 10 trading days), the
   market exponent is &minus;0.249 &plusmn; 0.033, against <code>H &minus; &frac12; = &minus;0.239</code>
-  for the calibrated H = 0.261. The model side is measured the same way, by Monte Carlo with 8 seeds
+  for H = 0.261, the value in the SPY calibration record the experiment reads (the served 0DTE
+  checkpoint's own fit has H = 0.255, whose <code>H &minus; &frac12; = &minus;0.245</code> is also
+  within one standard error of the market). The model side is measured the same way, by Monte Carlo with 8 seeds
   &times; 400,000 paths per maturity: at the calibrated vol-of-vol (&eta; = 3.9) the model's skew is
   steeper than the asymptotic law (exponent &minus;0.321 &plusmn; 0.007) because &eta;T<sup>H</sup> is
   already 0.9 at one day, while at &eta; = 0.5 the same engine returns &minus;0.233 &plusmn; 0.011
@@ -351,7 +356,11 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   option to expiry and shows the learned policy's profit-and-loss distribution next to a
   Black-Scholes delta hedge on the same paths. On Black-Scholes dynamics the learned policy does
   not beat a vol-matched delta hedge or a cost-aware Whalley-Wilmott no-trade band on tail risk;
-  under rough volatility with transaction costs it does, which is the experiment below.
+  under rough volatility with transaction costs it does, which is the experiment below. Replayed
+  over eight years of real SPY and BTC daily history with only ex-ante information, the served
+  policy keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY windows,
+  trading half as much as delta) but not its tail advantage; the paired tables are in
+  <code>docs/hedging_real_paths.md</code>.
 </p>
 
 <h3>Deep hedging under rough volatility, jumps and costs</h3>
@@ -449,13 +458,13 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <div class="tbl-wrap">
 <table>
-  <caption>0DTE ensemble, 400 held-out points versus 500,000-path references</caption>
+  <caption>0DTE ensemble, served checkpoint (calibrated to SPY, 2026-08-20: &eta; = 3.66, &rho; = &minus;0.63, H = 0.26)</caption>
   <thead><tr><th>Quantity</th><th class="n">Value</th></tr></thead>
   <tbody>
-    <tr><td>RMSE</td><td class="n">1.48 bps of strike</td></tr>
-    <tr><td>Bias</td><td class="n">+0.13 bps</td></tr>
-    <tr><td>p95 absolute error</td><td class="n">2.76 bps</td></tr>
-    <tr><td>Training-label noise floor (20,000 paths per label)</td><td class="n">2.35 bps</td></tr>
+    <tr><td>Calibration fit, 618 live SPY quotes across 7 expiries</td><td class="n">1.57 vol points IV RMSE</td></tr>
+    <tr><td>Ensemble validation RMSE against 20,000-path training labels</td><td class="n">3.3 bps of strike</td></tr>
+    <tr><td>Price RMSE against 4 &times; 400,000-path references, 1 to 5 days at 10% vol</td><td class="n">2 to 4 bps</td></tr>
+    <tr><td>Largest single-point error on those smiles</td><td class="n">14 bps</td></tr>
   </tbody>
 </table>
 </div>
@@ -546,9 +555,9 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <ul>
   <li>This is a research and portfolio project, not production trading infrastructure. Nothing here is investment advice.</li>
-  <li>The pricer takes a single flat volatility rather than a full surface, and there is no arbitrage-free constraint built into the learned surface.</li>
-  <li>The rough volatility model uses a fixed Hurst index rather than calibrating it jointly with the smile, and the served 0DTE checkpoint is not fitted to a live market; the calibration scripts in the repository fit the SPY and Deribit smiles offline.</li>
-  <li>The deep hedger does not beat a properly specified delta-hedging baseline out of sample. The GAN market simulator used in training is not a reliable evaluation measure, so results are reported on GBM paths.</li>
+  <li>The pricer takes a single flat volatility rather than a full surface. The 0DTE pricing ensemble is not arbitrage-free by construction; the implied-volatility surface on the dashboard is the separately trained constrained network, which is, and the two are compared above.</li>
+  <li>The rough Bergomi model has constant parameters: &eta;, &rho;, H and the forward variance are fitted jointly to the live SPY or Deribit smile, but none of them varies with maturity, so one fit covers the 0DTE range and longer expiries need their own fit.</li>
+  <li>The deep hedger's edge is regime-specific. On Black-Scholes paths it does not beat a vol-matched delta hedge or a Whalley-Wilmott band; under rough volatility with transaction costs it does; on eight years of real SPY and BTC daily history it keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY windows) but not its tail advantage. The GAN market simulator is not used as an evaluation measure.</li>
   <li>The served pricer favours price accuracy: its delta and vega are 5.9% and 1.2% less accurate than an alternative head that prices slightly worse. A service hedging off these Greeks should weigh that differently from a service pricing with them.</li>
   <li>The absolute price RMSE moves with the test draw (1.301 to 1.488 bps across four independent draws); only paired comparisons on identical points and references are treated as meaningful.</li>
   <li>Market data for the ticker feature comes from yfinance, which is retail-grade and has stale or missing quotes. The Deribit chain is a committed snapshot, not a live feed.</li>
@@ -566,6 +575,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/no_arbitrage_surface.md" rel="noopener">docs/no_arbitrage_surface.md</a>: the static-arbitrage audit and the constrained implied-vol surface.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/heston_reference.md" rel="noopener">docs/heston_reference.md</a>: the Heston COS pricer, its verification, calibration and skew term structure.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the Black-Scholes deep hedging evaluation.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_real_paths.md" rel="noopener">docs/hedging_real_paths.md</a>: the same hedgers replayed over real SPY and BTC price history.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/real_market_data.md" rel="noopener">docs/real_market_data.md</a>: the Deribit chain, its conventions and its diagnostics.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/DEPLOY.md" rel="noopener">DEPLOY.md</a>: hosting notes.</li>
 </ul>
