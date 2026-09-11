@@ -12,11 +12,17 @@ Two sources, both free:
                          market is closed so nothing downstream mistakes
                          last-session prints for a live book
 
-Files land under data/surfaces/ (gitignored - this grows without bound and
-does not belong in history), gzipped JSON, named to sort chronologically:
+Files land under data/surfaces/, gzipped JSON, named to sort chronologically:
 
     data/surfaces/deribit/btc_20260820T171500Z.json.gz
     data/surfaces/equity/spy_20260820T171500Z.json.gz
+
+NEW captures written there are gitignored: this stream grows without bound and
+a running recorder must never dirty the tree. The 626 captures from 2026-08-20
+to 2026-08-23 that ARE tracked were banked deliberately with `git add -f`
+because measured results cite them; see the `data/` rules in .gitignore. The
+scheduled recorder (.github/workflows/record_surfaces.yml) does not add to
+main at all - it commits its captures to the orphan `surfaces` branch.
 
 Each equity capture stores the CLEANED quotes (the same filtering the
 calibrator applies: two-sided, liquid, OTM, moneyness-banded) plus the

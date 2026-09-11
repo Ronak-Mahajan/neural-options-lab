@@ -21,10 +21,14 @@ name: Record surfaces
 #
 # Captures NEVER land on main. They are committed to an orphan `surfaces`
 # branch, which shares no history with main, so cloning the code does not drag
-# the capture stream with it. At roughly 100 KB per Deribit capture and twelve
-# runs a day, that branch grows by about 2.5 MB a day; prune or roll it to
-# releases when it becomes inconvenient, but do not rewrite main's history to
-# do it.
+# the capture stream with it.
+#
+# Growth, measured on the first three runs of this workflow rather than
+# estimated: BTC 58-59 KB, ETH 48-54 KB, SPY 14 KB, all gzipped. Twelve
+# two-hourly runs a day is ~1.3 MB/day of crypto plus ~14 KB per in-hours SPY
+# capture, so about 1.4 MB/day and roughly 0.5 GB/year. Prune or roll the
+# branch to releases when that becomes inconvenient, but do not rewrite main's
+# history to do it.
 
 on:
   schedule:

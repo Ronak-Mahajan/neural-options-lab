@@ -405,4 +405,5 @@ Reproduce: `python -m scripts.no_arbitrage_surface` (matplotlib from
 `requirements-dev.txt`); `--quick` for a one-minute smoke run to a temp directory;
 `--skip-train` to re-audit the saved surface; `--figure-only` to redraw the PNG from the
 JSON. Tests: `tests/test_iv_surface.py` (11 tests, 12 s measured; the whole fast suite,
-158 tests, 44 s).
+`python -m pytest tests/ -q -m "not network"`, was 158 tests / 44 s when this package was
+written and is 188 tests / 97 s now that `tests/test_api.py` runs the service in-process).
