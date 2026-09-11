@@ -313,7 +313,11 @@ def health() -> dict:
 
 @app.get("/api/model-info")
 def model_info() -> dict:
+    from ..quant.llm import llm_available
     meta = dict(engine().meta)
+    # The Report tab names its writer rather than promising an analyst and
+    # delivering a template.
+    meta["report_writer"] = "model" if llm_available() else "rules"
     eval_file = Path(__file__).resolve().parents[2] / "artifacts" / "eval.json"
     if eval_file.exists():
         report = json.loads(eval_file.read_text())
@@ -585,18 +589,30 @@ def explain(req: OptionParams) -> dict:
 
 
 class RiskReportRequest(BaseModel):
-    ticker: str
+    ticker: str = ""
     nn_price: float
     bs_cvar: float
     deep_cvar: float
     attributions: dict
+    # The hedging run's own description, so the note never narrates a
+    # comparison that did not happen (an earlier template called the delta
+    # hedge "frictionless" while the simulation charged it the same costs).
+    contract: str = ""
+    ww_cvar: float | None = None
+    deep_cost: float | None = None
+    delta_cost: float | None = None
+    dynamics_label: str = ""
+    cost_bps: int | None = None
 
 
 @app.post("/api/risk-report")
 def risk_report(req: RiskReportRequest):
     from ..quant.llm import get_risk_report_stream
     return get_risk_report_stream(
-        req.ticker, req.nn_price, req.bs_cvar, req.deep_cvar, req.attributions
+        req.ticker, req.nn_price, req.bs_cvar, req.deep_cvar, req.attributions,
+        contract=req.contract, ww_cvar=req.ww_cvar, deep_cost=req.deep_cost,
+        delta_cost=req.delta_cost, dynamics_label=req.dynamics_label,
+        cost_bps=req.cost_bps,
     )
 
 
