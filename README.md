@@ -20,7 +20,7 @@ Every figure here is measured; the sections below say how.
 
 - **Pricing.** The neural surrogate prices an arithmetic Asian option in ~714 µs (p50), 500x faster than 200,000-path Monte Carlo, with a price RMSE of 1.4 basis points of strike on 600 held-out points. Against Levy (1992) moment matching it is 33x more accurate at 13x the cost.
 - **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications.
-- **0DTE.** The rough Bergomi ensemble serving maturities of 12 trading days or less is calibrated to the live SPY smile: the served checkpoint carries the accepted 2026-08-20 fit (η 3.657, ρ −0.628, H 0.255; 1.568 vol points over 618 quotes, adopted in commit `82c54bb`), and `train_0dte.py` stamps a `calibrated` flag and the provenance note into the checkpoint metadata. Its recorded ensemble validation RMSE is 3.3 bps of strike against its 20,000-path training labels; the arbitrage audit, which re-prices the served checkpoint against 4 × 400,000-path rough Bergomi references, measures 2-4 bps of price RMSE at its hardest smiles (1-5 days, 10% vol) with individual errors up to 14 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md)). A held-out evaluation against high-precision references, comparable to `artifacts/eval.json` for the main pricer, is still to be re-measured for this checkpoint; see [the 0DTE section](#the-0dte-model-driver-fix-regeneration-and-live-calibration).
+- **0DTE.** The rough Bergomi ensemble serving maturities of 12 trading days or less is calibrated to the live SPY smile: the served checkpoint carries the accepted 2026-08-20 fit (η 3.657, ρ −0.628, H 0.255; 1.568 vol points over 618 quotes, adopted in commit `82c54bb`), and `train_0dte.py` stamps a `calibrated` flag and the provenance note into the checkpoint metadata. Its recorded ensemble validation RMSE is 3.3 bps of strike against its 20,000-path training labels; the arbitrage audit, which re-prices the served checkpoint against 4 × 400,000-path rough Bergomi references, measures 1.9-3.8 bps of price RMSE at its hardest smiles (1-5 days, 10% vol) and 0.8-2.3 bps on the rest, with a largest single-strike error of 14.4 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md)). A held-out evaluation against high-precision references, comparable to `artifacts/eval.json` for the main pricer, is still to be re-measured for this checkpoint; see [the 0DTE section](#the-0dte-model-driver-fix-regeneration-and-live-calibration).
 - **Deep hedging.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
 - **Deep hedging under rough volatility.** On a rough Bergomi + jumps measure with transaction costs, a policy trained under those dynamics beats a vol-matched delta hedge from 50 bp of cost (CVaR₉₅ 404 ± 7 vs 493 ± 11 bp of strike) and a Whalley-Wilmott band from 100 bp, at a third of the delta hedge's turnover; evaluated on Black-Scholes paths the same policy loses. Caveat: the measure's parameters come from `artifacts/rough_calibration.json`, the 2026-08-21 SPY fit whose own quality gate marks it `accepted: false` (η at the 4.0 bound); the served 0DTE checkpoint carries a different, accepted fit (H 0.255). The rejection is a caveat on the dynamics, not on the paired comparison. Full grid with standard errors in [docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md).
 - **Deep hedging on real paths.** Replaying the same three hedgers over 384 SPY and 567 BTC-USD rolling 30-day windows of real daily closes with ex-ante vol, the simulated tail advantage does not transfer (at 10 bp of cost plain delta has the better CVaR₉₅ on both assets: SPY 0.027 vs 0.041), while the cost efficiency does (at 50 bp the deep policy has the better mean P&L on SPY, −0.65% vs −1.35%, on 69% of windows, trading half as much, with still wider tails). Measured 2026-08-20 (commit `0785c91`) and replayed 2026-09-11 with the output committed. [docs/hedging_real_paths.md](docs/hedging_real_paths.md).
@@ -276,7 +276,7 @@ What is measured on the served checkpoint:
 | 0DTE ensemble, served checkpoint (2026-08-20 SPY calibration) | |
 |---|---|
 | ensemble validation RMSE vs 20,000-path training labels | 3.3 bps of strike (recorded at training, `82c54bb`) |
-| price RMSE vs 4 × 400,000-path references, 1-5 days at 10% vol | 2-4 bps, individual errors up to 14 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md), section 4) |
+| price RMSE vs 4 × 400,000-path references, six smiles at 1/5/12 days and 10%/20% vol | 0.79 to 3.76 bps of strike (worst at 1 day, 10% vol), largest single strike 14.4 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md), section 4) |
 | below-intrinsic prices, 134,100-point audit grid | 6.8% of the trained box, by up to 24.8 bps (same doc) |
 | held-out RMSE and bias vs 500,000-path references (the `eval.json` protocol) | to be re-measured |
 
@@ -417,7 +417,7 @@ data/                     Recorded option surfaces and pricing-map training shar
 tests/                    Test suite (run in CI on every push)
 ```
 
-Two pieces of the repository that the sections above do not cover:
+Four parts of the repository that the sections above do not cover:
 
 **The CPU pricing map.** `artifacts/pricing_map.pt` is a neural surrogate for the rough
 Bergomi (optionally with Merton jumps) implied-vol surface as a function of the model
@@ -425,11 +425,14 @@ parameters, trained on 6.2 million GPU-labelled rows banked in `data/pricing_map
 `calibrate_map.py` calibrates on it in about 3 seconds on a CPU where the Monte Carlo
 calibrator needs 68 seconds on an RTX 5080; on a live 618-quote SPY capture the map's
 parameters, repriced under the true Monte Carlo model, sat within 0.046 vol points of the
-MC fit (whose own noise floor is about 0.97 vol points), and the same certification was
-repeated on SPY 3-56 day and BTC full-surface captures (commit `054a9d7`;
-`scripts/validate_pricing_map.py`, `scripts/validate_longtau.py`). It is what lets the
-project keep calibrating live surfaces after the GPU went back, and what makes every
-recorded capture replayable as a parameter time series (`scripts/intraday_params.py`,
+MC fit (whose own noise floor is about 0.97 vol points; commit `054a9d7`). The same
+certification was then repeated out to longer maturities: a live 1,284-quote, 13-expiry
+SPY surface spanning 3-56 days, fitted in 25 s on CPU, where the map's own RMSE
+(2.483 vol points) matched a 200,000-path Monte Carlo repricing of its parameters
+(2.457) to 0.03 vol points (commit `22edbf5`; `scripts/validate_pricing_map.py`,
+`scripts/validate_longtau.py`). It is what lets the project keep calibrating live
+surfaces after the GPU went back, and what makes every recorded capture
+replayable as a parameter time series (`scripts/intraday_params.py`,
 `artifacts/intraday_params.json`).
 
 **The BTC jump-premium series.** `data/btc_series/SERIES.md` records 11 full-surface BTC
@@ -439,12 +442,13 @@ jump arm wins on every point after the first (by 0.20 to 0.69 vol points), with 
 cumulant holding in a 0.055-0.094 per year band and the mean jump mostly near +3%; point 1
 is retracted in place as an optimizer basin miss and replayed from the archived capture.
 
-**Data archive size.** `data/` holds 1,125 tracked files, 163 MB (155 MiB), and `.git` is
+**Data archive size.** `data/` holds 1,125 tracked files, 163 MB, and `.git` is
 around 190 MB as a result: 626 gzipped surface captures (208 SPY, 209 BTC, 209 ETH;
-2026-08-20 to 2026-08-23; 29 MB), the BTC series logs, and nine `pricing_map*/` shard
-directories of `.npz` training labels (126 MB). The clone is therefore slower than the
-code alone would warrant; the shards are kept in history because they are the ground
-truth behind the certified map and cannot be regenerated without the GPU. `.gitignore`
+2026-08-20 to 2026-08-23; 30 MB), the BTC series logs, and nine `pricing_map*/` shard
+directories holding 482 `.npz` files of training labels (132 MB). The clone is therefore
+slower than the code alone would warrant; the shards are kept in history because they
+are the ground truth behind the certified map and cannot be regenerated without the
+GPU. `.gitignore`
 tracks exactly these three subtrees and ignores everything else under `data/`, including
 new recorder captures, so a running recorder never dirties the tree; a capture is banked
 deliberately with `git add -f`.
@@ -484,7 +488,7 @@ python -m backend.quant.train_0dte --ensemble 5 --epochs 500
 python -m backend.quant.calibrate --retrain
 ```
 
-There is also a drift monitor (`backend/quant/drift_monitor.py`) that compares the deployed 0DTE model against live quotes and kicks off recalibration and retraining if the error crosses a threshold, gated on the test suite passing. That is the automation loop that keeps the model current with the market.
+There is also a drift monitor (`backend/quant/drift_monitor.py`): one command that re-prices the deployed 0DTE surrogate against a live SPY chain and, if the error crosses a threshold, runs the recalibrate-and-retrain pipeline with promotion gated on the tests. It is a command you run, not a loop that runs itself — nothing schedules it, no drift log is committed, and the error it reports is not yet a clean drift measurement (see *Honest limitations*). The scheduled automation this project does run is the surface recorder above, which banks the data any future drift study will be measured on.
 
 ## API
 
@@ -493,11 +497,16 @@ There is also a drift monitor (`backend/quant/drift_monitor.py`) that compares t
 | `POST /api/price` | Surrogate price and Greeks against a Monte Carlo price with confidence interval |
 | `POST /api/convergence` | Monte Carlo estimate versus path count against the surrogate price |
 | `POST /api/surface` | Batched price surface over moneyness and maturity |
+| `POST /api/iv-surface` | Arbitrage-free implied-vol surface for the 0DTE regime, with the butterfly and calendar conditions evaluated by autograd on the same grid |
+| `POST /api/benchmark` | Latency shoot-out: Monte Carlo at rising path budgets against single-shot and batched inference |
 | `POST /api/hedge` | Deep hedge versus delta hedge profit-and-loss distributions |
 | `POST /api/explain` | Integrated Gradients attributions |
 | `POST /api/risk-report` | Streamed text risk report |
 | `GET /api/market/{ticker}` | Live spot, realized volatility, risk-free rate |
 | `GET /api/model-info` | Architecture, measured accuracy, and the served 0DTE checkpoint's own provenance |
+| `GET /api/error-distribution` | Signed pricing errors of the single model and the ensemble from `artifacts/eval.json` |
+| `GET /api/health` | Liveness and whether the checkpoints loaded (Render's health check path) |
+| `WS /ws/stream` | Live price and Greeks on a simulated spot walk, capped at 15 Hz, priced off the request thread |
 
 The Monte Carlo benchmark switches with the pricing regime automatically: Asian under geometric Brownian motion above 12 trading days to expiry, rough Bergomi at or below.
 
@@ -515,6 +524,7 @@ This is a research and portfolio project, not production trading infrastructure.
 - The served 0DTE pricing ensemble is not arbitrage-free by construction: on its 134,100-point audit grid it violates the butterfly condition on 4.9% of the box, the calendar condition on 10.5%, and prices below intrinsic on 6.8%. The dashboard's implied-vol surface is the separately trained constrained network, which has zero violations on the same grid. `POST /api/price` and the tick stream still serve the raw ensemble price unchanged, but they now report the European floor next to it (`intrinsic`, `below_intrinsic`, and the shortfall in bps of strike), so the region is visible rather than silent: a 1-day 1.10-moneyness call, for example, comes back at 10.0044 against a floor of 10.0159, flagged 1.15 bps under. That is disclosure, not a repair: the violation rates above are unchanged ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md)).
 - The 0DTE accuracy figures are a training-time validation RMSE and the arbitrage audit's smile-level measurement; the held-out evaluation against 500,000-path references that `artifacts/eval.json` provides for the main pricer has not been re-run on the served checkpoint.
 - The deep hedger beats its baselines only under rough volatility with transaction costs, in simulation, on a measure whose calibration record failed its own quality gate; on Black-Scholes paths it loses, and on real SPY and BTC history it keeps its cost efficiency but not its tail advantage.
+- The drift monitor is a command, not a closed loop, and it has never produced a committed drift log. Two things have to change before its number means what it says: it feeds each quote's own Black-Scholes implied volatility into the surrogate's `sigma` input, which is the *flat forward vol* √ξ of the rough-Bergomi dynamics (`dataset_0dte.py`: `xi = sigma ** 2`), so what it would report is how far a rough smile sits from flat vol strike by strike, not how far the model has drifted from the market; and it admits 0-5 calendar-day quotes without the tau floor and `in_domain` check that `POST /api/price` applies, so the shortest quotes are extrapolated rather than refused. The recorded surface archive is the input a corrected version would be measured on.
 
 ## License
 
