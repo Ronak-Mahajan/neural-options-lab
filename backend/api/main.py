@@ -834,8 +834,14 @@ async def ws_stream(ws: WebSocket):
                         (time.perf_counter() - t0) * 1e6, 0),
                 }
                 if regime == "rough_bergomi_european":
-                    # Same floor as /api/price, per tick: two exp/max calls,
-                    # no allocation.
+                    # Exactly the same floor the REST path reports, computed
+                    # by the same function so the two can never disagree. It
+                    # is not free - it builds one 184-byte dict per frame -
+                    # but it is 1.12 us/call (best of 7 x 200,000, this
+                    # machine) against a frame whose pricing call is ~13.7 ms,
+                    # i.e. under 1e-4 of the work already being done, and at
+                    # the 15 Hz cap that is ~17 us and ~2.8 KB per second.
+                    # Cheap enough to keep one implementation of the floor.
                     bound = intrinsic_fields(
                         regime, result["price"], spot, strike, maturity,
                         rate, option_type)
