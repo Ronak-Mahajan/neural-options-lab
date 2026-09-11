@@ -20,7 +20,9 @@ layer:
       endpoints - up to 6,400 rows through a 5-member ensemble is not a free
       request on a 512 MB container. `test_surface_takes_the_heavy_job_gate`
       is the evidence it is gated; it saturates the gate and expects a 503
-      rather than an unbounded queue.
+      rather than an unbounded queue. `test_stream_prices_while_the_heavy_gate
+      _is_held` is the other half: the websocket prices off the gate entirely,
+      so adding /api/surface to it introduced no cycle.
 
 No test here needs the network: every route is served in-process by
 fastapi.testclient against the committed artifacts, so the module carries no
@@ -281,3 +283,42 @@ def test_surface_takes_the_heavy_job_gate(client, monkeypatch):
         api._HEAVY_JOB_GATE.release()
     assert resp.status_code == 503
     assert resp.headers.get("Retry-After") == "10"
+
+
+def test_stream_prices_while_the_heavy_gate_is_held(client, monkeypatch):
+    """The gate /api/surface now takes cannot deadlock against the stream.
+
+    The websocket prices through `anyio.to_thread.run_sync` and never touches
+    `_HEAVY_JOB_GATE`, so a surface (or Monte Carlo) job holding the gate
+    leaves the stream delivering frames. Held here for the whole exchange:
+
+      * the gate is confirmed still held while the frame is priced, so the
+        stream demonstrably did not get it by the holder letting go;
+      * a /api/surface request issued in the same window is refused 503, so
+        the gate really is the contended one;
+      * were the stream ever changed to take the gate, this blocks for
+        HEAVY_JOB_TIMEOUT_S and then fails instead of hanging the suite.
+
+    What this does NOT claim: Starlette dispatches sync handlers on anyio's
+    default thread limiter (40 tokens) and the websocket's pricing call draws
+    on the same pool, so enough handlers queued on the gate can still make a
+    frame wait for a thread. That is bounded starvation - every gate holder
+    finishes and releases - not a cycle.
+    """
+    monkeypatch.setattr(api, "HEAVY_JOB_TIMEOUT_S", 0.05)
+    assert api._HEAVY_JOB_GATE.acquire(timeout=5.0)
+    try:
+        with client.websocket_connect("/ws/stream") as ws:
+            ws.send_json({"spot": 100, "strike": 100, "maturity": ASIAN_T,
+                          "sigma": 0.25, "rate": 0.04, "hz": 15})
+            assert ws.receive_json()["status"] == "ready"
+            frame = ws.receive_json()
+            assert "error" not in frame
+            assert frame["price"] > 0.0
+            # Still held: the stream priced without acquiring it.
+            assert api._HEAVY_JOB_GATE.acquire(blocking=False) is False
+            # And the gate it did not take is the one that is contended.
+            assert client.post("/api/surface",
+                               json={"resolution": 10}).status_code == 503
+    finally:
+        api._HEAVY_JOB_GATE.release()

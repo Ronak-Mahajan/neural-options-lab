@@ -524,7 +524,12 @@ def surface(req: SurfaceRequest) -> dict:
     # (the comment on the gate always said it did; the code did not). The
     # gate is a plain threading.Semaphore taken from this sync handler's
     # pool thread; the websocket prices through anyio.to_thread without
-    # touching it, so nothing here can wait on itself.
+    # touching it, so nothing here can wait on itself. Held-gate evidence:
+    # tests/test_api.py::test_stream_prices_while_the_heavy_gate_is_held.
+    # The residual coupling is Starlette's default thread limiter (40
+    # tokens), which both paths draw on: enough handlers queued on the gate
+    # can make a frame wait for a thread. That is bounded starvation - every
+    # holder finishes and releases - not a cycle.
     with heavy_job():
         t0 = time.perf_counter()
         prices = eng.price_batch(spots, strikes, mats, sigs, rates,
