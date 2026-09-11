@@ -137,6 +137,10 @@ function bindSegmented(containerId, onPick) {
 // ───────────────────────────────────────────────────────── price + greeks ──
 let priceSeq = 0;
 let lastNNPrice = null;
+// The price card's subtitle doubles as the 0DTE no-arbitrage readout. Its
+// resting text and tooltip are authored in index.html; capture them once so
+// the card can go back to describing the autograd pass.
+let nnSubRest = null;
 async function updatePrice() {
   document.querySelector(".results").classList.add("updating");
   const seq = ++priceSeq;
@@ -157,12 +161,34 @@ async function updatePrice() {
 
     animateNumber($("speedup"), d.comparison.speedup,
       (v) => v >= 100 ? Math.round(v).toLocaleString() + "×" : v.toFixed(1) + "×");
-    const bps = d.comparison.diff_bps_of_spot;
-    const ok = bps < 10; // surrogate tolerance: 10 bps of spot
+    // bps of strike: the unit every README and docs figure is quoted in.
+    const bps = d.comparison.diff_bps_of_strike ?? d.comparison.diff_bps_of_spot;
+    const ok = bps < 10; // surrogate tolerance: 10 bps of strike
     const agr = $("agreement");
     agr.textContent = "Δ " + bps.toFixed(1) +
-      " bps of spot vs MC" + (d.comparison.within_mc_ci ? " · inside 95% CI" : "");
+      " bps of strike vs MC" + (d.comparison.within_mc_ci ? " · inside 95% CI" : "");
     agr.className = "card-sub centered " + (ok ? "agreement-ok" : "agreement-warn");
+
+    // 0DTE regime: the response carries the European no-arbitrage floor
+    // (discounted intrinsic) alongside the price. Where the ensemble prices
+    // under that floor, the card names the gap and points at the constrained
+    // surface panel, which is the arbitrage-free view of the same corner.
+    const sub = $("nn-sub");
+    if (nnSubRest === null) nnSubRest = { text: sub.textContent, title: sub.title };
+    if (d.nn.below_intrinsic) {
+      sub.textContent = d.nn.below_intrinsic_bps_of_strike.toFixed(1) +
+        " bps of strike under the European floor · arbitrage-free surface below";
+      sub.title = "Discounted intrinsic, max(S − Ke^(−rT), 0), is the " +
+        "no-arbitrage floor of the European contract this maturity trades. " +
+        "The ensemble price is shown unchanged; the constrained IV surface " +
+        "panel prices the same corner with butterfly and calendar conditions " +
+        "imposed.";
+      sub.className = "card-sub agreement-warn";
+    } else {
+      sub.textContent = nnSubRest.text;
+      sub.title = nnSubRest.title;
+      sub.className = "card-sub";
+    }
 
     document.querySelector(".results").classList.remove("errored");
     const g = d.nn.greeks;
@@ -449,10 +475,23 @@ async function loadModelInfo() {
       ? "RMSE " + m.eval.ensemble.price.rmse_bps.toFixed(1) + " bps vs " +
         (m.eval.ref_paths / 1000).toFixed(0) + "k-path MC"
       : "val RMSE " + m.val_rmse_bps_of_strike.toFixed(1) + " bps";
+    // The 0DTE checkpoint carries its own provenance: whether its
+    // rough-Bergomi parameters came from an accepted market calibration, and
+    // which one. The badge states the flag; the tooltip names the fit.
+    // Nothing here is hardcoded — every field comes from the checkpoint.
+    const z = m.zero_dte;
+    const hurst = (z && typeof z.H === "number")
+      ? " (H " + z.H.toFixed(3) + ")" : "";
+    const zdte = z && z.available
+      ? " · 0DTE: " + (z.calibrated
+          ? "market-calibrated rough Bergomi" + hurst
+          : "rough Bergomi, default parameters" + hurst)
+      : "";
     txt.textContent = members + m.n_parameters.toLocaleString() +
       " params" + (m.differential_ml ? " · Differential ML" : "") +
       " · " + acc + " · " +
-      m.n_samples.toLocaleString() + " MC-labelled samples";
+      m.n_samples.toLocaleString() + " MC-labelled samples" + zdte;
+    if (z && z.calibration_note) txt.title = z.calibration_note;
   } catch {
     dot.className = "status-dot bad";
     txt.textContent = "backend unreachable";
