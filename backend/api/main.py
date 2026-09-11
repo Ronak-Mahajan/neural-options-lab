@@ -319,7 +319,105 @@ def model_info() -> dict:
         report = json.loads(eval_file.read_text())
         meta["eval"] = {k: report[k] for k in
                         ("n_points", "ref_paths", "single", "ensemble")}
+    meta["zero_dte"] = zero_dte_info()
     return meta
+
+
+def _checkpoint_git_stamp(path: Path) -> dict:
+    """Commit and date that last touched a checkpoint, if this is a git
+    checkout; the container that serves the site may not carry .git, so
+    both fields are None when the lookup fails."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%H %cI", "--", path.name],
+            cwd=str(path.parent), capture_output=True, text=True, timeout=5)
+        sha, _, date = out.stdout.strip().partition(" ")
+        if out.returncode == 0 and sha:
+            return {"commit": sha, "commit_date": date or None}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"commit": None, "commit_date": None}
+
+
+def _compute_zero_dte_info() -> dict:
+    """What the served 0DTE checkpoint says about itself.
+
+    The rough-Bergomi parameters (eta, rho, H), the Volterra kernel stamp,
+    whether they came from an accepted market calibration and the note
+    naming that calibration are all written into artifacts/model_0dte.pt by
+    train_0dte.py. The engine has loaded them (as meta_0dte) since that
+    landed; this endpoint simply had never returned them, so the site could
+    not show a provenance the checkpoint already carried. Forward variance
+    xi = sigma^2 is a per-request input to the surrogate, not a checkpoint
+    parameter, and is therefore not listed here.
+
+    Called ONCE, at import, by the assignment directly below: the checkpoint
+    meta cannot change while the process lives, and the git stamp shells out.
+    Neither belongs on a request path in a 512 MB container.
+    """
+    if ENGINE is None or not getattr(ENGINE, "has_0dte", False):
+        return {"available": False}
+    m0 = dict(getattr(ENGINE, "meta_0dte", {}) or {})
+    ckpt = Path(__file__).resolve().parents[2] / "artifacts" / "model_0dte.pt"
+    info = {
+        "available": True,
+        "checkpoint": ckpt.name,
+        "model": m0.get("model", "rough_bergomi"),
+        "n_members": m0.get("n_members"),
+        "calibrated": bool(m0.get("calibrated", False)),
+        "calibration_note": m0.get("calibration_note"),
+        "eta": m0.get("eta"), "rho": m0.get("rho"), "H": m0.get("H"),
+        "kernel": m0.get("kernel"),
+        "val_rmse_bps_of_strike": m0.get("val_rmse_bps"),
+        "maturity_cutoff_years": ZERO_DTE_CUTOFF,
+        "maturity_floor_years": ZERO_DTE_MIN_MATURITY,
+        "moneyness": list(ZERO_DTE_MONEYNESS),
+        "contract": "european",
+        "training": {k: m0.get(k) for k in ("epochs", "lr", "batch", "seed")},
+    }
+    info.update(_checkpoint_git_stamp(ckpt))
+    return info
+
+
+#: Immutable provenance block, resolved at import and served as-is.
+_ZERO_DTE_INFO: dict = _compute_zero_dte_info()
+
+
+def zero_dte_info() -> dict:
+    """The cached provenance block. No I/O, no subprocess, no allocation."""
+    return _ZERO_DTE_INFO
+
+
+def discounted_intrinsic(spot: float, strike: float, maturity: float,
+                         rate: float, option_type: str) -> float:
+    """No-arbitrage floor of a EUROPEAN option: max(S - K e^{-rT}, 0) for a
+    call, max(K e^{-rT} - S, 0) for a put. This is the bound the 0DTE
+    regime's contract must respect; the arbitrage audit in
+    docs/no_arbitrage_surface.md measured the raw ensemble below it on 6.8%
+    of its trained box, so every served 0DTE price now says whether it is.
+    The Asian regime's lower bound is a different quantity and is not
+    reported."""
+    df = math.exp(-rate * maturity)
+    if option_type == "put":
+        return max(strike * df - spot, 0.0)
+    return max(spot - strike * df, 0.0)
+
+
+def intrinsic_fields(regime: str, price: float, spot: float, strike: float,
+                     maturity: float, rate: float, option_type: str) -> dict:
+    """`intrinsic`, `below_intrinsic` and the shortfall in bps of strike for
+    the 0DTE (European) regime; None-valued for the Asian regime, whose
+    floor is not the European one. Prices are never altered."""
+    if regime != "rough_bergomi_european":
+        return {"intrinsic": None, "below_intrinsic": None,
+                "below_intrinsic_bps_of_strike": None}
+    floor = discounted_intrinsic(spot, strike, maturity, rate, option_type)
+    shortfall = max(floor - price, 0.0)
+    # Float noise on an exactly-at-the-floor price must not raise the flag.
+    below = shortfall > 1e-9 * strike
+    return {"intrinsic": floor, "below_intrinsic": below,
+            "below_intrinsic_bps_of_strike": shortfall / strike * 1e4}
 
 
 @app.get("/api/error-distribution")
@@ -340,7 +438,7 @@ def error_distribution() -> dict:
 @app.post("/api/price")
 def price(req: PriceRequest) -> dict:
     eng = engine()
-    validate_moneyness(req)
+    regime = validate_domain(req)
 
     nn_ms, nn_out = time_call(
         eng.price_with_greeks, req.spot, req.strike, req.maturity,
@@ -352,15 +450,24 @@ def price(req: PriceRequest) -> dict:
         mc_ms = (time.perf_counter() - t0) * 1000.0
 
     diff = nn_out["price"] - mc.price
+    nn = {"price": nn_out["price"], "greeks": nn_out["greeks"],
+          "latency_ms": nn_ms}
+    # The served 0DTE price is the raw ensemble, unchanged; the response now
+    # carries its no-arbitrage floor and whether the price sits under it.
+    nn.update(intrinsic_fields(regime, nn_out["price"], req.spot, req.strike,
+                               req.maturity, req.rate, req.option_type))
     return {
-        "nn": {"price": nn_out["price"], "greeks": nn_out["greeks"],
-               "latency_ms": nn_ms},
+        "regime": regime,
+        "nn": nn,
         "mc": {"price": mc.price, "std_error": mc.std_error,
                "ci_low": mc.ci_low, "ci_high": mc.ci_high,
                "n_paths": mc.n_paths, "n_steps": mc.n_steps,
                "engine": mc_engine, "latency_ms": mc_ms},
         "comparison": {
             "abs_diff": abs(diff),
+            # Every figure in the README and docs is in bps of STRIKE; this
+            # is the same unit. bps of spot is kept for older clients.
+            "diff_bps_of_strike": abs(diff) / req.strike * 1e4,
             "diff_bps_of_spot": abs(diff) / req.spot * 1e4,
             "within_mc_ci": mc.ci_low <= nn_out["price"] <= mc.ci_high,
             "speedup": mc_ms / max(nn_ms, 1e-6),
@@ -412,10 +519,17 @@ def surface(req: SurfaceRequest) -> dict:
     sigs = np.full(spots.shape, req.sigma)
     rates = np.full(spots.shape, req.rate)
 
-    t0 = time.perf_counter()
-    prices = eng.price_batch(spots, strikes, mats, sigs, rates,
-                             option_type=req.option_type)
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    # Up to 80x80 = 6,400 rows through the 5-member ensemble: batched
+    # inference, so it takes the same gate as the Monte Carlo endpoints
+    # (the comment on the gate always said it did; the code did not). The
+    # gate is a plain threading.Semaphore taken from this sync handler's
+    # pool thread; the websocket prices through anyio.to_thread without
+    # touching it, so nothing here can wait on itself.
+    with heavy_job():
+        t0 = time.perf_counter()
+        prices = eng.price_batch(spots, strikes, mats, sigs, rates,
+                                 option_type=req.option_type)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
     return {"moneyness": m_axis.tolist(), "maturity": t_axis.tolist(),
             "prices": prices.reshape(n, n).tolist(),
@@ -714,6 +828,14 @@ async def ws_stream(ws: WebSocket):
                     "latency_us": round(
                         (time.perf_counter() - t0) * 1e6, 0),
                 }
+                if regime == "rough_bergomi_european":
+                    # Same floor as /api/price, per tick: two exp/max calls,
+                    # no allocation.
+                    bound = intrinsic_fields(
+                        regime, result["price"], spot, strike, maturity,
+                        rate, option_type)
+                    frame["intrinsic"] = round(bound["intrinsic"], 4)
+                    frame["below_intrinsic"] = bound["below_intrinsic"]
             except Exception:
                 # Out of domain - send spot only
                 frame = {"tick": tick, "spot": round(spot, 4),
