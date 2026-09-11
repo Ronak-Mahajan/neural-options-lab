@@ -291,6 +291,23 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <img src="/assets/atm_skew_term_structure.png" alt="Log-log plot of the at-the-money implied-volatility skew against maturity: rough Bergomi model curve with Monte Carlo error band, SPY market points from listed expiries, fitted power laws and the H minus one-half reference slope; Bitcoin panel alongside" loading="lazy">
   <figcaption>ATM skew term structure. Left: SPY, model (blue) against listed expiries (amber), with the fitted power laws and the reference slope H &minus; &frac12;. Right: Bitcoin on Deribit, where the short-dated skew is positive and no power law applies. Reproduce with <code>scripts/atm_skew_term_structure.py</code>.</figcaption>
 </figure>
+<p>
+  The term structure also identifies the parameters better than a single day's smile. A smile
+  calibration never sees it explicitly, and buys short-dated curvature most cheaply with more
+  vol-of-vol, which is why the calibrated &eta; sits at its bound. Refitting (H, &eta;, &rho;, &xi;)
+  jointly against the smiles <em>and</em> the per-expiry ATM skew, on a 12 &times; 12 profile
+  over (H, &eta;) with the remaining parameters optimised at every cell, moves the optimum to
+  H = 0.31, &rho; = &minus;0.50 and a forward vol of 12.5 % (bootstrap: H 0.308 &plusmn; 0.011) and
+  puts the Monte Carlo skew exponent at &minus;0.264 &plusmn; 0.007, within half a market standard
+  error of &minus;0.249, for a cost of 0.45 vol points of smile fit (1.31 &rarr; 1.76). A solution
+  with &eta; off its bound reaches the same exponent for 0.15 vol points more. The served 0DTE model
+  was trained on the earlier calibration and is unchanged; the refit is recorded as an analysis
+  artifact.
+</p>
+<figure class="fig">
+  <img src="/assets/joint_skew_refit.png" alt="Heatmaps of smile RMSE and of the model skew exponent over the (H, eta) plane with the market-exponent contour, the Pareto front of smile fit against skew-exponent error, and the skew term structure for the market, the served calibration and the joint refit" loading="lazy">
+  <figcaption>Joint (H, &eta;) refit. Top left: smile RMSE over the (H, &eta;) plane with (&rho;, &xi;) optimised at every cell; bottom left: the model's skew exponent with the market's contour; top right: the Pareto front of smile fit against skew-exponent error with the knee at &lambda; = 0.1; bottom right: the term structure for the market, the served calibration and the joint refit, both from Monte Carlo. Reproduce with <code>scripts/joint_skew_refit.py</code>.</figcaption>
+</figure>
 
 <h3>An arbitrage-free implied-volatility surface</h3>
 <p>
@@ -493,6 +510,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
     <tr><td>SPY listed expiries, 8 captures &times; 7 expiries</td><td class="n">&minus;0.249 &plusmn; 0.033</td><td class="n">&minus;0.239</td></tr>
     <tr><td>Rough Bergomi, calibrated &eta; = 3.9</td><td class="n">&minus;0.321 &plusmn; 0.007</td><td class="n">&minus;0.239</td></tr>
     <tr><td>Rough Bergomi, &eta; = 0.5 (asymptotic regime)</td><td class="n">&minus;0.233 &plusmn; 0.011</td><td class="n">&minus;0.239</td></tr>
+    <tr><td>Rough Bergomi, joint (H, &eta;) refit against smiles + skew (H = 0.31)</td><td class="n">&minus;0.264 &plusmn; 0.007</td><td class="n">&minus;0.190</td></tr>
     <tr><td>Heston, least-squares optimum (&kappa; at the 100/yr bound)</td><td class="n">&minus;0.660 (sd 0.003 across captures)</td><td class="n">n/a</td></tr>
     <tr><td>Heston, &kappa; &le; 10/yr</td><td class="n">&minus;0.453 (sd 0.013)</td><td class="n">n/a</td></tr>
   </tbody>
@@ -563,6 +581,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">Source code on GitHub</a>: the README, the trained checkpoints, and the evaluation scripts.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/deep_hedging_regimes.md" rel="noopener">docs/deep_hedging_regimes.md</a>: the deep hedging experiment under rough volatility, jumps and costs, every cell with standard errors.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/atm_skew_term_structure.md" rel="noopener">docs/atm_skew_term_structure.md</a>: the skew term-structure measurement, model and market.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/joint_skew_refit.md" rel="noopener">docs/joint_skew_refit.md</a>: the joint (H, &eta;) refit against smiles and skew term structure, with the Pareto front and Monte Carlo validation.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/no_arbitrage_surface.md" rel="noopener">docs/no_arbitrage_surface.md</a>: the static-arbitrage audit and the constrained implied-vol surface.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/heston_reference.md" rel="noopener">docs/heston_reference.md</a>: the Heston COS pricer, its verification, calibration and skew term structure.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the Black-Scholes deep hedging evaluation.</li>
