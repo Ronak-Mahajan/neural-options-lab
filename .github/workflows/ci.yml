@@ -2,8 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # Feature branches run CI too. A branch that only builds once it reaches
+    # main is a branch whose failures are discovered by the merge.
+    branches: [main, master, "fix/**", "rebuild/**"]
   pull_request:
+
+# The failure-log step below commits the tail of a failed run back to the
+# branch. Actions logs are not readable without a token, so that write-back is
+# the only way a failure on a feature branch gets read.
+permissions:
+  contents: write
 
 jobs:
   test:
@@ -40,5 +48,28 @@ jobs:
 
       - name: Run tests
         # Network-dependent tests (yfinance, Deribit) are marked and skipped;
-        # everything else must pass, including the shipped-checkpoint load.
-        run: python -m pytest tests/ -v -m "not network" --durations=10
+        # everything else must pass, including the shipped-checkpoint load and
+        # the API surface (tests/test_api.py runs the app in-process).
+        #
+        # tee, then exit on pytest's status rather than tee's: without
+        # PIPESTATUS a failing suite would be reported as a passing step
+        # because tee exited 0.
+        run: |
+          set -o pipefail
+          python -m pytest tests/ -v -m "not network" --durations=10 \
+            2>&1 | tee ci.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Commit failure log
+        # main is never written to by CI. On a feature branch the tail of the
+        # failing run is committed so it can be read from the repository.
+        if: failure() && github.ref != 'refs/heads/main'
+        run: |
+          mkdir -p .ci
+          tail -c 60000 ci.log > .ci/last-failure-test.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/last-failure-test.log
+          git commit -m "ci: failure log [skip ci]" || exit 0
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"

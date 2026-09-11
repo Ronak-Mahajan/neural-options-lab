@@ -449,13 +449,23 @@ tracks exactly these three subtrees and ignores everything else under `data/`, i
 new recorder captures, so a running recorder never dirties the tree; a capture is banked
 deliberately with `git add -f`.
 
+**The recorder keeps running without a laptop.**
+`.github/workflows/record_surfaces.yml` captures the live Deribit BTC and ETH chains every
+two hours and commits them to an orphan `surfaces` branch, which shares no history with
+`main` — the stream grows without enlarging a code clone, and nothing about the archive
+above changes. The Deribit leg is standard-library only, so the job installs nothing and
+finishes in under a minute. The delayed SPY leg runs only inside US regular trading hours
+and never fails the job; whether it captured or was rate-limited is appended to
+`equity/_spy_status.log` on the same branch, so an empty `equity/` is never ambiguous. The
+four days of captures above were recorded by hand; this is the same stream, continued.
+
 ## Tests
 
 ```bash
 python -m pytest tests/ -q
 ```
 
-The suite checks the parts that are easy to get subtly wrong: Asian put-call parity for both the Monte Carlo engine and the neural surrogate, that the control variate reduces variance without biasing the price, and that the autograd Greeks match finite-difference perturbations.
+The suite checks the parts that are easy to get subtly wrong: Asian put-call parity for both the Monte Carlo engine and the neural surrogate, that the control variate reduces variance without biasing the price, and that the autograd Greeks match finite-difference perturbations. `tests/test_api.py` runs the service in-process and checks it at the boundary the browser sees: the 0DTE provenance the checkpoint carries, the European no-arbitrage floor reported next to the served price, the trained-domain gate, put-call parity under both regimes, and the surface endpoint's resolution and queueing.
 
 ## Retraining from scratch
 

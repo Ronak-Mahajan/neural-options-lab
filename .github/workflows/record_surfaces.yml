@@ -1,0 +1,197 @@
+name: Record surfaces
+
+# Forward-record the option surfaces this project already knows how to fetch.
+# Historical surface data is the expensive ingredient in every question the
+# repo can ask next (out-of-sample calibration, hedging on real paths, fill
+# models), and the only free way to get it is to start recording and let time
+# compound. scripts/record_surfaces.py is the recorder; this is the schedule.
+#
+# The Deribit leg is the primary asset: 24/7, public, no key, and - verified -
+# it needs nothing but the standard library (backend/quant/deribit.py is pure
+# urllib), so this job installs no dependencies at all and finishes in well
+# under a minute.
+#
+# The yfinance/SPY leg is best-effort. Hosted runners are rate-limited by
+# Yahoo often enough that a job which failed on it would be red most days, and
+# a delayed quote outside US market hours is a last-session print the
+# calibrator would tag stale anyway. It therefore runs only inside regular
+# trading hours, never fails the job, and its outcome - ok, failed or skipped -
+# is written into the captures branch so an empty equity/ directory is never
+# ambiguous.
+#
+# Captures NEVER land on main. They are committed to an orphan `surfaces`
+# branch, which shares no history with main, so cloning the code does not drag
+# the capture stream with it. At roughly 100 KB per Deribit capture and twelve
+# runs a day, that branch grows by about 2.5 MB a day; prune or roll it to
+# releases when it becomes inconvenient, but do not rewrite main's history to
+# do it.
+
+on:
+  schedule:
+    # Two-hourly, off the hour: the top of the hour is when every cron on
+    # GitHub fires at once and the queue is longest.
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+  push:
+    # Smoke test on the branch that changes the recorder or this file.
+    branches: ["fix/**", "rebuild/**"]
+    paths:
+      - ".github/workflows/record_surfaces.yml"
+      - "scripts/record_surfaces.py"
+      - "backend/quant/deribit.py"
+
+# The publish step commits to the surfaces branch.
+permissions:
+  contents: write
+
+# Two recorders pushing to the same branch race on the rebase. Let a slow run
+# finish rather than starting a second.
+concurrency:
+  group: record-surfaces
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Mark the start of this run
+        # Everything the recorder writes is identified by being newer than
+        # this marker. data/surfaces/ already holds 626 captures tracked on
+        # main; without the marker the publish step would copy all of them.
+        run: touch "$RUNNER_TEMP/run-start"
+
+      - name: Capture Deribit (BTC, ETH)
+        # No pip install: verified to import and run on a bare Python 3.12.
+        # tee, then exit on the recorder's status rather than tee's.
+        run: |
+          set -o pipefail
+          python -m scripts.record_surfaces --once \
+            --currencies BTC,ETH --tickers "" 2>&1 | tee ci.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Decide whether to run the SPY leg
+        id: spy_gate
+        run: |
+          dow=$(date -u +%u)   # 1=Mon .. 7=Sun
+          hour=$(date -u +%H)
+          # 14:00-20:00 UTC covers the US regular session across both DST
+          # states. Outside it yfinance returns last-session prints.
+          if [ "$dow" -le 5 ] && [ "$hour" -ge 14 ] && [ "$hour" -le 20 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "skipped (outside US regular trading hours)" \
+              > "$RUNNER_TEMP/spy-status.txt"
+          fi
+
+      - name: Install the SPY leg's dependencies
+        if: steps.spy_gate.outputs.run == 'true'
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          # calibrate.py imports torch and scipy; the CPU wheel is the only
+          # one this needs and the GPU wheel is ~2.5 GB.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy scipy yfinance
+
+      - name: Capture SPY (best effort)
+        if: steps.spy_gate.outputs.run == 'true'
+        run: |
+          set -o pipefail
+          if python -m scripts.record_surfaces --once \
+               --currencies "" --tickers SPY 2>&1 | tee spy.log; then
+            echo "ok" > "$RUNNER_TEMP/spy-status.txt"
+          else
+            # Rate limits and missing deps both land here. Record WHY, then
+            # let the job continue: the Deribit capture is the asset.
+            {
+              echo "failed: $(tail -n 1 spy.log | tr -d '\r')"
+            } > "$RUNNER_TEMP/spy-status.txt"
+            echo "::warning::SPY leg failed; see equity/_spy_status.log on the surfaces branch"
+          fi
+
+      - name: Publish captures to the orphan surfaces branch
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          WT="$RUNNER_TEMP/surfaces-wt"
+          SPY_STATUS="$(cat "$RUNNER_TEMP/spy-status.txt" 2>/dev/null || echo 'not run')"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin surfaces >/dev/null 2>&1; then
+            git fetch --depth=1 --force origin surfaces:refs/heads/surfaces
+            HAVE_REMOTE=1
+          else
+            # First run: a root commit over the empty tree. No parent, so the
+            # branch shares nothing with main.
+            EMPTY=$(git hash-object -t tree /dev/null)
+            ROOT=$(git commit-tree "$EMPTY" \
+              -m "surfaces: orphan branch for recorded option-surface captures")
+            git branch surfaces "$ROOT"
+            HAVE_REMOTE=0
+          fi
+
+          git worktree add "$WT" surfaces
+          mkdir -p "$WT/deribit" "$WT/equity"
+
+          n=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            rel="${f#data/surfaces/}"
+            mkdir -p "$WT/$(dirname "$rel")"
+            cp "$f" "$WT/$rel"
+            n=$((n + 1))
+          done < <(find data/surfaces -name '*.json.gz' \
+                     -newer "$RUNNER_TEMP/run-start" -print | sort)
+
+          # Log the SPY outcome only when the leg actually ran. Logging every
+          # skip would put a commit on the branch every two hours whether or
+          # not anything was recorded, and the interesting line - "it ran and
+          # was rate-limited" - would be buried in them.
+          case "$SPY_STATUS" in
+            skipped*) : ;;
+            *) printf '%s  %s\n' "$STAMP" "$SPY_STATUS" \
+                 >> "$WT/equity/_spy_status.log" ;;
+          esac
+          echo "captured $n file(s); spy: $SPY_STATUS"
+
+          cd "$WT"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new to publish"
+            exit 0
+          fi
+          git commit -m "surfaces: $STAMP ($n capture(s), spy: $SPY_STATUS)"
+          if [ "$HAVE_REMOTE" = "1" ]; then
+            git pull --rebase origin surfaces
+          fi
+          git push origin surfaces || {
+            # Lost a race with another run: rebase onto what landed and retry
+            # once rather than force anything.
+            git pull --rebase origin surfaces
+            git push origin surfaces
+          }
+
+      - name: Commit failure log
+        # Never writes to main; a cron run from the default branch that fails
+        # is read from the Actions UI. On a branch smoke test the tail of the
+        # failing run is committed so it can be read from the repository.
+        if: failure() && github.ref != 'refs/heads/main'
+        run: |
+          mkdir -p .ci
+          tail -c 60000 ci.log > .ci/last-failure-record.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .ci/last-failure-record.log
+          git commit -m "ci: failure log [skip ci]" || exit 0
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
