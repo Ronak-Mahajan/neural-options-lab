@@ -3,17 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Neural Options Lab: Deep Learning for Options Pricing</title>
-<meta name="description" content="A neural surrogate that prices arithmetic Asian options in about a millisecond with exact autograd Greeks, benchmarked live against Monte Carlo; a rough-volatility model for 0DTE; and a deep hedging policy benchmarked against delta hedging.">
+<title>Neural Options Lab — price options, size the risk, hedge it</title>
+<meta name="description" content="Price Asian and short-dated options in milliseconds, with all five Greeks, a position size, and an independent Monte Carlo check on every number. Then hedge the position under transaction costs.">
 <meta name="theme-color" content="#1c1c1e">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Neural Options Lab">
-<meta property="og:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and a deep hedging policy benchmarked against delta hedging.">
+<meta property="og:description" content="Price an option, size the position, see what it risks. Every number is computed live and checked against an independent simulation.">
 <meta property="og:url" content="https://neural-options-lab.onrender.com/">
 <meta property="og:image" content="https://neural-options-lab.onrender.com/hero.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Neural Options Lab">
-<meta name="twitter:description" content="Neural option pricing benchmarked live against Monte Carlo, rough volatility for 0DTE, and a deep hedging policy benchmarked against delta hedging.">
+<meta name="twitter:description" content="Price an option, size the position, see what it risks. Every number is computed live and checked against an independent simulation.">
 <meta name="twitter:image" content="https://neural-options-lab.onrender.com/hero.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c2c2e'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='JetBrains Mono,Consolas,monospace' font-size='38' font-weight='600' fill='%23f5f5f7'%3E%E2%88%82%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,25 +30,36 @@
     <div class="brand-mark">∂</div>
     <div class="brand-copy">
       <span class="brand-name">Neural Options Lab</span>
-      <span class="brand-sub">Deep Pricing | Deep Hedging | XAI</span>
+      <span class="brand-sub">by Ronak Mahajan</span>
     </div>
   </div>
 
   <nav class="tab-nav" aria-label="Sections">
-    <button class="tab-btn active" data-tab="tab-pricing">Pricing Lab</button>
-    <button class="tab-btn" data-tab="tab-stream">Live Stream</button>
-    <button class="tab-btn" data-tab="tab-hedging">Deep Hedging</button>
-    <button class="tab-btn" data-tab="tab-ai">AI Risk Analyst</button>
+    <button class="tab-btn active" data-tab="tab-pricing">Quote</button>
+    <button class="tab-btn" data-tab="tab-hedging">Hedge</button>
+    <button class="tab-btn" data-tab="tab-stream">Live</button>
+    <button class="tab-btn" data-tab="tab-ai">Desk note</button>
   </nav>
 
   <div class="bar-right">
-    <div class="status-cluster" id="model-badge">
-      <span class="status-dot" id="status-dot"></span>
-      <span class="status-text mono" id="model-badge-text">Connecting...</span>
+    <!-- Status only. The model's specification lives in the card below, not
+         in the chrome: a truncated spec string in an 11px pill reads as a
+         stray number, which is the opposite of informative. -->
+    <div class="status-cluster">
+      <button class="status-pill" id="model-badge" aria-expanded="false" aria-controls="model-card"
+              title="About the served models">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-text" id="model-badge-text">Connecting</span>
+      </button>
+      <div class="model-card" id="model-card" hidden>
+        <h3>Served models</h3>
+        <dl id="model-card-body"><dt>Status</dt><dd>Loading…</dd></dl>
+        <a class="model-card-link" href="/methodology">How these were built and tested →</a>
+      </div>
     </div>
     <nav class="meta-links" aria-label="Project links">
-      <button class="btn btn-ghost" id="btn-share" title="Copy a link that reproduces the current sliders and tab">Copy link</button>
-      <a class="btn btn-ghost" href="/methodology" title="How it works, results, and what went wrong along the way">Methodology</a>
+      <button class="btn btn-ghost" id="btn-share" title="Copy a link that reproduces the current inputs and tab">Copy link</button>
+      <a class="btn btn-ghost" href="/methodology" title="How the numbers on the dashboard are made">Methodology</a>
       <a class="btn btn-ghost" href="https://github.com/Ronak-Mahajan/neural-options-lab" target="_blank" rel="noopener" title="Source code, tests and training scripts">GitHub</a>
     </nav>
   </div>
@@ -56,24 +67,14 @@
 
 <div class="shell">
 
-  <!-- Parameter Rail -->
+  <!-- Input Rail -->
   <aside class="rail" id="controls">
     <!-- Phones: the rail is taller than the screen, so it starts collapsed
          behind a one-line summary and the results come first. -->
     <button class="rail-toggle" id="rail-toggle" aria-expanded="true" aria-controls="controls">
-      <span class="kicker">Parameters</span>
-      <span class="rail-summary mono" id="rail-summary"></span>
-      <span class="rail-caret" aria-hidden="true">▾</span>
+      <span class="rail-summary" id="rail-summary"></span>
+      <span class="rail-edit">Edit</span>
     </button>
-
-    <section class="rail-section">
-      <h2 class="kicker">Live Market</h2>
-      <div class="ticker-row">
-        <input type="text" id="in-ticker" class="ticker-input mono" placeholder="TICKER" maxlength="10">
-        <button class="btn btn-accent" id="btn-fetch-ticker">Fetch</button>
-      </div>
-      <div class="market-chip mono" id="market-chip"></div>
-    </section>
 
     <section class="rail-section">
       <h2 class="kicker">Contract</h2>
@@ -83,44 +84,98 @@
       </div>
 
       <div class="param">
-        <div class="param-head"><label title="Current price of the underlying asset">Spot <i class="sym">S₀</i></label>
-          <output class="param-val mono" id="val-spot">100</output></div>
-        <input type="range" id="in-spot" min="55" max="195" step="1" value="100">
+        <div class="param-head"><label for="in-spot">Spot <i class="sym">S₀</i>
+          <button type="button" class="help" data-help="Today's price of the underlying stock. Only the ratio of spot to strike affects the price, so the level itself does not matter.">?</button></label>
+          <input class="param-val mono" id="val-spot" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="spot value, type to set exactly"></div>
+        <input type="range" id="in-spot" min="55" max="195" step="1" value="100" aria-label="Spot price">
       </div>
 
       <div class="param">
-        <div class="param-head"><label title="Price at which the option can be exercised. The models work in moneyness S₀/K, so only the ratio matters">Strike <i class="sym">K</i></label>
-          <output class="param-val mono" id="val-strike">100</output></div>
-        <input type="range" id="in-strike" min="55" max="195" step="1" value="100">
+        <div class="param-head"><label for="in-strike">Strike <i class="sym">K</i>
+          <button type="button" class="help" data-help="The price at which the option can be exercised. At-the-money means strike equals spot.">?</button></label>
+          <input class="param-val mono" id="val-strike" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="strike value, type to set exactly"></div>
+        <input type="range" id="in-strike" min="55" max="195" step="1" value="100" aria-label="Strike price">
       </div>
 
       <div class="param">
-        <div class="param-head"><label title="Time to expiry in years. At or below 12 trading days the 0DTE rough-volatility model takes over; the slider skips the short gap between the two models' ranges">Maturity <i class="sym">T</i></label>
-          <output class="param-val mono" id="val-maturity">1.00y</output></div>
+        <div class="param-head"><label for="in-maturity">Time to expiry <i class="sym">T</i>
+          <button type="button" class="help" data-help="How long until the option expires, in years. Contracts of 12 trading days or less are priced by a second model trained on rough volatility, so the price is not continuous across that boundary.">?</button></label>
+          <input class="param-val mono" id="val-maturity" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="1.00y" aria-label="maturity value, type to set exactly"></div>
         <!-- min is a hair above the 0DTE surrogate's trained floor of 1/252 = 0.003968;
              the old 0.0039 minimum was rejected by the API with a 422 at the slider's
              own leftmost position. -->
-        <input type="range" id="in-maturity" min="0.004" max="2" step="0.001" value="1">
+        <input type="range" id="in-maturity" min="0.004" max="2" step="0.001" value="1" aria-label="Time to expiry in years">
+        <div class="quickpick" id="maturity-quickpick" aria-label="Common expiries">
+          <button class="pick" data-t="0.004">1d</button>
+          <button class="pick" data-t="0.02">5d</button>
+          <button class="pick" data-t="0.047">12d</button>
+          <button class="pick" data-t="0.25">3m</button>
+          <button class="pick" data-t="1">1y</button>
+          <button class="pick" data-t="2">2y</button>
+        </div>
       </div>
     </section>
 
     <section class="rail-section">
-      <h2 class="kicker">Model Inputs</h2>
+      <h2 class="kicker">Position</h2>
+      <div class="param-row">
+        <div class="param-inline">
+          <label for="in-qty">Contracts
+            <button type="button" class="help" data-help="How many contracts you hold. A negative number is a short position, which flips the sign of the premium and of every Greek.">?</button></label>
+          <input class="param-val mono" id="in-qty" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" value="1" aria-label="Number of contracts">
+        </div>
+        <div class="param-inline">
+          <label for="in-mult">Shares each
+            <button type="button" class="help" data-help="Shares of the underlying per contract. Listed equity options are usually 100.">?</button></label>
+          <input class="param-val mono" id="in-mult" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" value="100" aria-label="Shares per contract">
+        </div>
+      </div>
+      <p class="rail-hint" id="position-hint"></p>
+    </section>
+
+    <section class="rail-section">
+      <h2 class="kicker">Market assumptions</h2>
       <div class="param">
-        <div class="param-head"><label title="Annualised volatility of the underlying (its Black-Scholes sigma). Trained range 5% to 80%">Volatility <i class="sym">σ</i></label>
-          <output class="param-val mono" id="val-sigma">25%</output></div>
-        <input type="range" id="in-sigma" min="5" max="80" step="1" value="25">
+        <div class="param-head"><label for="in-sigma">Volatility <i class="sym">σ</i>
+          <button type="button" class="help" data-help="How much the underlying moves, annualised. Supported range 5% to 80%.">?</button></label>
+          <input class="param-val mono" id="val-sigma" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="25%" aria-label="sigma value, type to set exactly"></div>
+        <input type="range" id="in-sigma" min="5" max="80" step="1" value="25" aria-label="Volatility in percent">
       </div>
 
       <div class="param">
-        <div class="param-head"><label title="Continuously compounded risk-free rate. Trained range 0% to 10%">Risk-free rate <i class="sym">r</i></label>
-          <output class="param-val mono" id="val-rate">4.0%</output></div>
-        <input type="range" id="in-rate" min="0" max="10" step="0.25" value="4">
+        <div class="param-head"><label for="in-rate">Risk-free rate <i class="sym">r</i>
+          <button type="button" class="help" data-help="The interest rate used for discounting, continuously compounded. Supported range 0% to 10%.">?</button></label>
+          <input class="param-val mono" id="val-rate" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="4.0%" aria-label="rate value, type to set exactly"></div>
+        <input type="range" id="in-rate" min="0" max="10" step="0.25" value="4" aria-label="Risk-free rate in percent">
+      </div>
+
+      <div class="solve-row">
+        <label for="in-target-price">Premium you see
+          <button type="button" class="help" data-help="Type a premium and the pricer searches for the volatility that reproduces it, within the range the model was trained on. Above 12 trading days this contract is an average-price option, so this is the volatility input that reproduces your premium under this model, not a market-convention implied volatility.">?</button></label>
+        <div class="solve-controls">
+          <input class="param-val mono" id="in-target-price" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="6.73" aria-label="Premium to solve for">
+          <button class="btn" id="btn-solve-iv">Solve</button>
+        </div>
+      </div>
+      <p class="rail-hint" id="iv-solve-note"></p>
+
+      <div class="readout-row">
+        <span>Moneyness S/K</span>
+        <span class="mono" id="moneyness-val">1.00</span>
+      </div>
+      <p class="rail-inactive-note" id="rail-inactive-note" hidden>
+        Not used on this tab: the rough-volatility market supplies its own
+        volatility and rate from the calibration. Switch to Black-Scholes to
+        drive them from here.
+      </p>
+      <div class="domain-warning" id="domain-warning">
+        Spot over strike is outside the range this model was trained on.
       </div>
     </section>
 
     <section class="rail-section">
-      <h2 class="kicker">Simulation</h2>
+      <h2 class="kicker">Cross-check precision</h2>
+      <p class="rail-hint">How many simulated paths the cross-check runs. More paths, tighter error bar, slower quote.</p>
       <div class="segmented dense" id="mc-paths">
         <!-- 100k is also the server-side cap (PriceRequest.mc_paths); the old
              250k option would now be rejected with a 422. -->
@@ -128,291 +183,411 @@
         <button class="seg-btn mono active" data-value="50000">50k</button>
         <button class="seg-btn mono" data-value="100000">100k</button>
       </div>
-
-      <div class="readout-row">
-        <span>Moneyness S/K</span>
-        <span class="mono" id="moneyness-val">1.00</span>
-      </div>
-      <div class="domain-warning" id="domain-warning">
-        Outside trained domain [0.5, 2.0] (Surrogate is extrapolating)
-      </div>
     </section>
 
-    <p class="rail-note">
-      Discrete arithmetic-average Asian, 50 monitoring dates. MC uses
-      antithetic sampling + geometric-Asian control variate. Greeks are exact
-      autograd derivatives of the network.
+    <!-- Optional, and last: the page prices a hypothetical contract out of
+         the box. Putting an empty ticker box first made it look required. -->
+    <section class="rail-section">
+      <h2 class="kicker">Underlying <span class="kicker-note">optional</span></h2>
+      <div class="ticker-row">
+        <input type="text" id="in-ticker" class="ticker-input mono" placeholder="SPY" maxlength="10" aria-label="Ticker symbol">
+        <button class="btn" id="btn-fetch-ticker">Load</button>
+      </div>
+      <p class="rail-hint">Leave it blank to price a hypothetical $100 stock. Type a symbol to set spot to the last traded price, the strike at the money, volatility to one-year realised volatility and the rate to a short Treasury yield; the chip below names which instrument supplied it.</p>
+      <div class="market-chip mono" id="market-chip"></div>
+    </section>
+
+    <p class="rail-note" id="rail-note">
+      Above 12 trading days the contract is a discrete arithmetic-average
+      Asian option with 50 monitoring dates. The simulation it is checked
+      against uses antithetic sampling and a geometric-Asian control
+      variate. Greeks are exact derivatives of the network.
     </p>
   </aside>
 
   <!-- Stage -->
   <main class="stage">
 
-    <!-- Tab: Pricing Lab -->
+    <!-- What is being priced, in one line, on every tab: the numbers in the
+         Hedging, Stream and Report panes had no subject without it. -->
+    <div class="contract-line" id="contract-line">
+      <span class="contract-pill" id="contract-pill">Example</span>
+      <span class="contract-text" id="contract-text">Pricing a hypothetical contract.</span>
+      <span class="contract-scope" id="contract-scope"></span>
+    </div>
+
+    <!-- Tab: Pricing -->
     <section id="tab-pricing" class="tab-pane results active">
 
-      <!-- First-visit explainer. Dismissable; the choice is remembered. -->
-      <section class="explainer panel" id="explainer">
-        <div class="explainer-copy">
-          <h2>What you are looking at</h2>
-          <p>
-            A small neural network has learned to price an exotic option (an
-            <span title="An option whose payoff depends on the average price of the underlying over its life, not just the final price">arithmetic-average Asian option</span>)
-            directly from Monte Carlo simulations, so it answers in about a
-            millisecond with the Greeks as exact derivatives. Move the sliders:
-            the <span class="hl-nn">blue</span> number is the network's price, the
-            <span class="hl-mc">amber</span> one is a fresh 50,000-path Monte Carlo run,
-            and the middle card says whether they agree. At or below 12 trading
-            days a second model trained on rough volatility takes over. The
-            Deep Hedging tab pits a learned hedging policy against delta hedging
-            under transaction costs, on rough-volatility or Black-Scholes dynamics.
-          </p>
-          <div class="preset-row" aria-label="Guided experiments">
-            <span class="preset-label">Try:</span>
-            <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call"}' title="5 trading days to expiry: the 0DTE rough-Bergomi surrogate serves this contract">0DTE regime</button>
-            <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put"}' title="A far out-of-the-money put, priced close to zero">Deep OTM put</button>
-            <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call"}' title="The most expensive corner of the trained box">2y at 80% vol</button>
-            <button class="chip-btn" data-preset='{"tab":"hedging","cost":100,"dyn":"rough","run":true}' title="Runs the hedging simulation on SPY-calibrated rough-volatility dynamics with 100 bps costs: tail loss of the learned policy vs delta hedging and a Whalley-Wilmott band">Deep hedger vs delta</button>
-          </div>
-        </div>
-        <button class="explainer-close" id="explainer-close" aria-label="Dismiss explainer" title="Dismiss">×</button>
-      </section>
+      <header class="lede">
+        <h1>Price an option, size the position, see what it risks.</h1>
+      </header>
 
-      <!-- Hero: neural price dominates; conic speedup dial pivots the duel -->
+      <div class="lede-body">
+        <p>
+          Set the contract on the left, or type a ticker to use a real one.
+          Everything reprices as you change it, and an independent simulation
+          checks the price on every change.
+          <button type="button" class="lede-more" id="btn-howto" aria-expanded="false" aria-controls="howto">What this tool does</button>
+        </p>
+        <div class="howto" id="howto" hidden>
+          <p>
+            The <strong>Network price</strong> is what the pricer returns: one pass
+            through a five-model ensemble, which also gives the five Greeks as exact
+            derivatives. The <strong>Monte Carlo price</strong> beside it is an
+            independent simulation of the same contract, run fresh, with a 95%
+            interval. <strong>Agreement</strong> in the middle is how far apart they
+            are, so you can see how much to trust the number before you use it.
+          </p>
+          <p>
+            The contract is an
+            <span class="glossary" data-help="An option whose payoff depends on the average price of the underlying over the option's life, not just the price at expiry. There is no closed-form price, which is why it is a good target for a learned model.">arithmetic-average Asian option</span>
+            above 12 trading days. At or below 12 trading days a second model
+            trained on rough volatility takes over and prices a standard European
+            option, so the price jumps across that boundary: they are different
+            contracts under different dynamics.
+          </p>
+          <p>
+            Nothing here is market data unless you load a ticker in the sidebar.
+            The <strong>Hedging</strong> tab takes a short position in a 30-day call
+            and hedges it under transaction costs, so you can see what a learned
+            policy and the textbook rules each cost you in the tail.
+          </p>
+        </div>
+        <div class="preset-row" aria-label="Example contracts">
+          <span class="preset-label">Start from</span>
+          <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call","qty":10}'>
+            <b>Same-week call</b><span>five days out, short-dated model</span></button>
+          <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put","qty":10}'>
+            <b>Far out-of-the-money put</b><span>cheap tail protection, one year</span></button>
+          <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call","qty":10}'>
+            <b>Two years at 80% volatility</b><span>the hardest corner of the range</span></button>
+          <button class="chip-btn" data-preset='{"tab":"hedging","cost":100,"dyn":"rough","run":true}'>
+            <b>Hedge at 100 bps costs</b><span>learned policy against the textbook rules</span></button>
+        </div>
+      </div>
+
+      <p class="hero-error" id="hero-error" hidden></p>
+
+      <!-- The quote: what it costs, what the position costs, how far to trust it -->
       <div class="hero">
         <article class="panel hero-card hero-nn" id="card-nn">
           <header class="panel-tag">
-            <span class="tag tag-nn">Neural Net</span>
-            <span class="meta mono" id="nn-latency">-</span>
+            <span class="tag tag-nn">Fair value<button type="button" class="help" data-help="One forward pass through the five-network ensemble returns this price and all five Greeks as exact derivatives, not finite differences.">?</button></span>
           </header>
           <div class="price mono" id="nn-price">-</div>
-          <p class="card-sub" id="nn-sub" title="One forward pass through the 5-member ensemble plus reverse-mode autograd for all Greeks">price + 5 Greeks in one autograd pass</p>
+          <p class="card-sub" id="nn-sub">per contract</p>
         </article>
 
-        <article class="panel hero-card hero-vs" id="card-speedup">
-          <div class="dial-core">
-            <span class="dial-label">Speedup</span>
-            <span class="speedup mono" id="speedup">-</span>
+        <article class="panel hero-card" id="card-position">
+          <header class="panel-tag">
+            <span class="dial-label">Position</span>
+          </header>
+          <div class="price mono" id="pos-value">-</div>
+          <p class="card-sub mono" id="pos-sub"></p>
+          <div class="quote-actions">
+            <button class="btn" id="btn-copy-quote" disabled>Copy quote</button>
+            <button class="btn" id="btn-download-quote" disabled>Download CSV</button>
+            <span class="quote-actions-note" id="quote-note"></span>
           </div>
-          <p class="card-sub centered" id="agreement">-</p>
         </article>
 
-        <article class="panel hero-card hero-mc" id="card-mc">
+        <article class="panel hero-card hero-vs" id="card-agreement">
           <header class="panel-tag">
             <span class="tag tag-mc">Monte Carlo</span>
-            <span class="meta mono" id="mc-latency">-</span>
           </header>
           <div class="price mono" id="mc-price">-</div>
           <p class="card-sub mono" id="mc-ci">-</p>
+          <div class="dial-core">
+            <span class="dial-label">Cross-check<button type="button" class="help" data-help="The same contract priced again by Monte Carlo, on every change. The big number is how far the two prices sit apart, in basis points of the strike - one basis point is a hundredth of a percent. Below it, whether that gap falls inside the simulation's own 95% error bar.">?</button></span>
+            <span class="speedup mono" id="speedup">-</span>
+          </div>
+          <p class="card-sub" id="agreement">-</p>
         </article>
       </div>
+
+      <p class="timing-line" id="timing-line"></p>
 
       <!-- Greeks: one dense instrument strip, hairline-divided -->
+      <div class="greek-head">
+        <h2 class="kicker greek-kicker">Risk</h2>
+        <div class="segmented dense" id="greek-basis">
+          <button class="seg-btn active" data-value="unit">Per contract</button>
+          <button class="seg-btn" data-value="position">Whole position</button>
+        </div>
+      </div>
       <div class="panel greek-strip" id="greeks-row">
         <div class="greek"><span class="greek-sym">Δ</span>
-          <span class="greek-name" title="Change in option price per $1 move in spot">Delta</span><span class="greek-val mono" id="g-delta">-</span></div>
+          <span class="greek-name">Delta<button type="button" class="help" data-help="Change in the option's price for a $1 move in the underlying. A delta of 0.57 means the option gains about 57 cents when the stock gains a dollar.">?</button><span class="greek-unit">per $1 of spot</span></span><span class="greek-val mono" id="g-delta">-</span></div>
         <div class="greek"><span class="greek-sym">Γ</span>
-          <span class="greek-name" title="Change in delta per $1 move in spot">Gamma</span><span class="greek-val mono" id="g-gamma">-</span></div>
+          <span class="greek-name">Gamma<button type="button" class="help" data-help="Change in delta for a $1 move in the underlying: how fast the hedge needs to be adjusted.">?</button><span class="greek-unit">per $1 of spot²</span></span><span class="greek-val mono" id="g-gamma">-</span></div>
         <div class="greek"><span class="greek-sym">ν</span>
-          <span class="greek-name" title="Change in price per 1 volatility point">Vega</span><span class="greek-val mono" id="g-vega">-</span></div>
+          <span class="greek-name">Vega<button type="button" class="help" data-help="Change in the option's price for a one-point rise in volatility (from 25% to 26%, say).">?</button><span class="greek-unit">per volatility point</span></span><span class="greek-val mono" id="g-vega">-</span></div>
         <div class="greek"><span class="greek-sym">Θ</span>
-          <span class="greek-name" title="Change in price per calendar day of time decay">Theta</span><span class="greek-val mono" id="g-theta">-</span></div>
+          <span class="greek-name">Theta<button type="button" class="help" data-help="Change in the option's price per calendar day that passes, with everything else unchanged.">?</button><span class="greek-unit">per calendar day</span></span><span class="greek-val mono" id="g-theta">-</span></div>
         <div class="greek"><span class="greek-sym">ρ</span>
-          <span class="greek-name" title="Change in price per 1 point of the risk-free rate">Rho</span><span class="greek-val mono" id="g-rho">-</span></div>
+          <span class="greek-name">Rho<button type="button" class="help" data-help="Change in the option's price for a one-point rise in the risk-free rate.">?</button><span class="greek-unit">per rate point</span></span><span class="greek-val mono" id="g-rho">-</span></div>
       </div>
+      <p class="panel-note" id="greek-cash"></p>
 
-      <!-- Analytics grid: asymmetric 7/5 rhythm -->
-      <div class="grid-75">
-        <article class="panel chart-panel">
-          <header class="chart-head">
-            <div>
-              <h3>Monte Carlo Convergence</h3>
-              <p>MC estimate ±95% CI vs path count (against the instant neural price)</p>
-            </div>
-          </header>
-          <div class="plot" id="plot-convergence"><div class="shimmer"></div></div>
-        </article>
+      <!-- ── Section 1: this contract ───────────────────────────────── -->
+      <section class="group">
+        <header class="group-head">
+          <h2>Check this quote</h2>
+          <p>Both panels recompute as you change the contract.</p>
+        </header>
 
-        <article class="panel chart-panel">
-          <header class="chart-head">
-            <div>
-              <h3>Latency</h3>
-              <p>wall-clock per pricing task (log scale)</p>
-            </div>
-            <button class="btn" id="btn-benchmark">Re-run</button>
-          </header>
-          <div class="plot" id="plot-latency"><div class="shimmer"></div></div>
-        </article>
-      </div>
-
-      <div class="grid-75">
-        <article class="panel chart-panel">
-          <header class="chart-head">
-            <div>
-              <h3>Error Distribution: Single vs. Ensemble</h3>
-              <p id="error-sub">signed pricing error vs high-precision Monte Carlo references</p>
-            </div>
-            <div class="chart-tools">
-              <div class="segmented dense" id="error-metric">
-                <button class="seg-btn active" data-value="price">Price</button>
-                <button class="seg-btn" data-value="delta">Delta</button>
-                <button class="seg-btn" data-value="vega">Vega</button>
+        <div class="grid-75">
+          <article class="panel chart-panel">
+            <header class="chart-head">
+              <div>
+                <h3>Price against simulated paths</h3>
+                <p>The simulation's estimate and its 95% band as the path count grows, with your price as the dashed line. Use it to decide how many paths this quote needs; the count is set in the sidebar.</p>
               </div>
-              <span class="meta mono" id="error-stat"></span>
-            </div>
-          </header>
-          <div class="plot" id="plot-errors"><div class="shimmer"></div></div>
-        </article>
+            </header>
+            <div class="plot" id="plot-convergence"><div class="shimmer"></div></div>
+            <details class="panel-details">
+              <summary>Method</summary>
+              <p>These runs are seeded, so the curve is reproducible; the high-precision reference uses an independent seed.</p>
+            </details>
+          </article>
 
-        <article class="panel chart-panel">
-          <header class="chart-head">
-            <div>
-              <h3>Feature Attributions</h3>
-              <p id="xai-sub">Integrated Gradients vs an ATM minimal-option baseline</p>
-            </div>
-            <span class="meta mono" id="xai-stat"></span>
-          </header>
-          <div class="plot" id="plot-xai"><div class="shimmer"></div></div>
-        </article>
-      </div>
+          <article class="panel chart-panel">
+            <header class="chart-head">
+              <div>
+                <h3>What you're paying for</h3>
+                <p id="xai-sub">How much each input adds to the price, starting from a minimal at-the-money option.</p>
+              </div>
+            </header>
+            <div class="plot" id="plot-xai"><div class="shimmer"></div></div>
+            <details class="panel-details">
+              <summary>Method and checks</summary>
+              <p id="xai-stat">Integrated Gradients against an at-the-money baseline option. The four contributions sum to the price; the residual is the completeness error.</p>
+            </details>
+          </article>
+        </div>
+      </section>
+
+      <!-- ── Section 2: model accuracy (collapsed) ──────────────────── -->
+      <section class="group">
+        <details class="group-details" id="group-accuracy">
+          <summary>
+            <span class="group-summary-title">How far to trust this number</span>
+            <span class="group-summary-sub" id="accuracy-teaser">Measured once on held-out contracts; does not change with the inputs.</span>
+          </summary>
+          <div class="grid-75">
+            <article class="panel chart-panel">
+              <header class="chart-head">
+                <div>
+                  <h3>How wrong this pricer has been</h3>
+                  <p id="error-sub">Measured against high-precision simulation on contracts the model never saw.</p>
+                </div>
+                <div class="chart-tools">
+                  <div class="segmented dense" id="error-metric">
+                    <button class="seg-btn active" data-value="price">Price</button>
+                    <button class="seg-btn" data-value="delta">Delta</button>
+                    <button class="seg-btn" data-value="vega">Vega</button>
+                  </div>
+                </div>
+              </header>
+              <div class="hedge-stats" id="accuracy-stats"></div>
+              <p class="panel-verdict" id="error-stat"></p>
+              <div class="plot" id="plot-errors"><div class="shimmer"></div></div>
+            </article>
+
+            <article class="panel chart-panel">
+              <header class="chart-head">
+                <div>
+                  <h3>Response time on this server</h3>
+                  <p>Wall-clock for each pricing task on this shared instance, measured when you ask. Treat it as a floor.</p>
+                </div>
+                <button class="btn" id="btn-benchmark">Time it</button>
+              </header>
+              <div class="plot" id="plot-latency"><div class="shimmer"></div></div>
+            </article>
+          </div>
+        </details>
+      </section>
+
+      <!-- ── Section 3: the whole trained domain (collapsed) ────────── -->
+      <section class="group">
+        <details class="group-details" id="group-domain">
+          <summary>
+            <span class="group-summary-title">Browse every contract the pricer covers</span>
+            <span class="group-summary-sub">Every strike and expiry at the current volatility and rate. Click a point to price it.</span>
+          </summary>
+
+          <article class="panel chart-panel">
+            <header class="chart-head">
+              <div>
+                <h3>Strike and expiry grid</h3>
+                <p>Price divided by strike, over moneyness and time to expiry, at the current volatility and rate.</p>
+              </div>
+            </header>
+            <div class="plot tall" id="plot-surface"><div class="shimmer"></div></div>
+            <details class="panel-details">
+              <summary>Throughput</summary>
+              <p id="surface-stat"></p>
+            </details>
+          </article>
+
+          <article class="panel chart-panel" id="panel-ivsurface">
+            <header class="chart-head">
+              <div>
+                <h3>Short-dated volatility surface</h3>
+                <p id="ivsurface-sub">The volatility smile for expiries up to 12 trading days, from a surface built so that no butterfly or calendar spread can be arbitraged. Depends on volatility and rate only, not on the contract above.</p>
+              </div>
+            </header>
+            <div class="hedge-stats" id="ivsurface-stats"></div>
+            <div class="plot tall" id="plot-ivsurface"><div class="shimmer"></div></div>
+            <details class="panel-details">
+              <summary>Grid and checks</summary>
+              <p id="ivsurface-stat"></p>
+            </details>
+          </article>
+        </details>
+      </section>
+    </section>
+
+    <!-- Tab: Hedging -->
+    <section id="tab-hedging" class="tab-pane" style="display:none">
+      <header class="lede">
+        <h1>Hedge a short call and see what it costs you.</h1>
+        <p>
+          Sell one 30-day at-the-money call and hedge it daily, paying a
+          transaction cost on every trade. A learned policy, a Black-Scholes delta
+          hedge and a cost-aware Whalley-Wilmott band run on the same paths, so you
+          can see which one actually survives the tail and what each pays to get
+          there.
+        </p>
+      </header>
 
       <article class="panel chart-panel">
         <header class="chart-head">
           <div>
-            <h3>Price Surface</h3>
-            <p>Price / Strike over Moneyness and Maturity</p>
+            <h3>Hedging simulator</h3>
+            <p id="hedge-sub">Choose the market the hedgers face and what each trade costs, then run it.</p>
           </div>
-          <span class="meta mono accent" id="surface-stat"></span>
+          <div class="chart-tools">
+            <div class="segmented dense" id="hedge-dynamics" title="The simulated market the hedgers are run on">
+              <button class="seg-btn active" data-value="rough" title="Rough volatility with jumps, calibrated to SPY. Volatility is itself random and correlated with the spot, so the market is incomplete and no hedge is perfect.">Rough volatility</button>
+              <button class="seg-btn" data-value="gbm" title="Black-Scholes dynamics at the volatility and rate in the sidebar: a complete market where the delta hedge is the right answer.">Black-Scholes</button>
+            </div>
+            <div class="cost-slider-row">
+              <label for="in-cost">Cost per trade</label>
+              <input type="range" id="in-cost" min="0" max="200" step="5" value="50" aria-label="Transaction cost in basis points">
+              <span class="param-val mono" id="val-cost">50 bps</span>
+            </div>
+            <button class="btn btn-accent" id="btn-hedge">Run simulation</button>
+          </div>
         </header>
-        <div class="plot tall" id="plot-surface"><div class="shimmer"></div></div>
+        <p class="panel-verdict" id="hedge-verdict"></p>
+        <p class="panel-note" id="hedge-convention"></p>
+        <div class="hedge-stats" id="hedge-stats"></div>
+        <p class="panel-note" id="hedge-method"></p>
+        <div class="plot tall" id="plot-hedge">
+          <div class="empty-state" id="hedge-empty">
+            <p><strong>Nothing has been simulated yet.</strong></p>
+            <p>Press Run simulation to generate paths and hedge the same short
+               call three ways. It takes a few seconds on this server.</p>
+          </div>
+        </div>
       </article>
 
-      <article class="panel chart-panel" id="panel-ivsurface">
+      <article class="panel chart-panel">
         <header class="chart-head">
           <div>
-            <h3>Implied-Volatility Surface, 0DTE regime</h3>
-            <p id="ivsurface-sub" title="Total implied variance modelled as a positive network output with autograd penalties on the Durrleman butterfly function and the calendar slope, trained against the 0DTE pricing ensemble">Arbitrage-free by construction: butterfly and calendar conditions checked on this grid</p>
+            <h3>What each policy actually does</h3>
+            <p>Shares held against the short call, day by day, along one simulated path.</p>
           </div>
-          <span class="meta mono accent" id="ivsurface-stat"></span>
         </header>
-        <div class="hedge-stats" id="ivsurface-stats"></div>
-        <div class="plot tall" id="plot-ivsurface"><div class="shimmer"></div></div>
+        <div class="plot" id="plot-holdings">
+          <div class="empty-state" id="holdings-empty">
+            <p>Appears after the simulation runs.</p>
+          </div>
+        </div>
       </article>
     </section>
 
-    <!-- Tab: Live Stream -->
+    <!-- Tab: Stream -->
     <section id="tab-stream" class="tab-pane" style="display:none">
+      <header class="lede">
+        <h1>Watch it reprice, tick by tick.</h1>
+        <p>
+          A simulated tick feed drives the network in real time over a
+          WebSocket: every tick is a fresh price and a fresh set of Greeks.
+          The ticks are simulated, not a market feed.
+        </p>
+      </header>
+
       <article class="panel chart-panel">
         <header class="chart-head">
           <div>
-            <h3>Real-Time Neural Pricing</h3>
-            <p id="stream-sub">Simulated GBM market ticks priced by the neural surrogate in real time</p>
+            <h3>Live pricing feed</h3>
+            <p id="stream-sub">Not connected.</p>
           </div>
           <div class="chart-tools">
             <button class="btn btn-accent" id="btn-stream">Connect</button>
           </div>
         </header>
 
-        <div class="stream-stats" id="stream-stats">
-          <div class="stream-stat">
-            <span class="k">Spot</span>
-            <span class="v mono" id="ws-spot">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">NN Price</span>
-            <span class="v mono" id="ws-price">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">Delta</span>
-            <span class="v mono" id="ws-delta">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">Gamma</span>
-            <span class="v mono" id="ws-gamma">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">Vega</span>
-            <span class="v mono" id="ws-vega">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">Theta</span>
-            <span class="v mono" id="ws-theta">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">Latency</span>
-            <span class="v mono" id="ws-latency">--</span>
-          </div>
-          <div class="stream-stat">
-            <span class="k">Ticks</span>
-            <span class="v mono" id="ws-ticks">0</span>
-          </div>
+        <div class="stream-stats idle" id="stream-stats">
+          <div class="stream-stat"><span class="k">Spot</span><span class="v mono" id="ws-spot">--</span></div>
+          <div class="stream-stat"><span class="k">Price</span><span class="v mono" id="ws-price">--</span></div>
+          <div class="stream-stat"><span class="k">Delta</span><span class="v mono" id="ws-delta">--</span></div>
+          <div class="stream-stat"><span class="k">Gamma</span><span class="v mono" id="ws-gamma">--</span></div>
+          <div class="stream-stat"><span class="k">Vega</span><span class="v mono" id="ws-vega">--</span></div>
+          <div class="stream-stat"><span class="k">Theta</span><span class="v mono" id="ws-theta">--</span></div>
+          <div class="stream-stat"><span class="k">Rho</span><span class="v mono" id="ws-rho">--</span></div>
+          <div class="stream-stat"><span class="k">Time per tick</span><span class="v mono" id="ws-latency">--</span></div>
+          <div class="stream-stat"><span class="k">Ticks</span><span class="v mono" id="ws-ticks">0</span></div>
         </div>
 
-        <div class="plot tall" id="plot-stream"></div>
+        <div class="plot tall" id="plot-stream">
+          <div class="empty-state" id="stream-empty">
+            <p><strong>The feed is not running.</strong></p>
+            <p>Press Connect to start a simulated tick stream priced by the
+               network as it arrives.</p>
+          </div>
+        </div>
       </article>
     </section>
 
-    <!-- Tab: Deep Hedging -->
-    <section id="tab-hedging" class="tab-pane" style="display:none">
-      <article class="panel chart-panel">
-        <header class="chart-head">
-          <div>
-            <h3>Hedging Simulator</h3>
-            <p id="hedge-sub">Simulated 30-day paths | Short ATM call | Deep policy vs. delta hedge and a Whalley-Wilmott band, on rough-volatility or Black-Scholes dynamics</p>
-          </div>
-          <div class="chart-tools">
-            <div class="segmented dense" id="hedge-dynamics" title="The simulated market the hedgers are run on">
-              <button class="seg-btn active" data-value="rough" title="Rough Bergomi with compensated jumps, calibrated to SPY (its own forward vol and rate): stochastic rough volatility correlated with spot, an incomplete market">Rough vol + jumps</button>
-              <button class="seg-btn" data-value="gbm" title="Black-Scholes dynamics at the volatility and rate set in the rail: a complete market where the delta hedge is the benchmark">Black-Scholes</button>
-            </div>
-            <div class="cost-slider-row">
-              <label>Transaction cost</label>
-              <input type="range" id="in-cost" min="0" max="200" step="5" value="50">
-              <span class="param-val mono" id="val-cost">50 bps</span>
-            </div>
-            <button class="btn btn-accent" id="btn-hedge">Run Simulation</button>
-          </div>
-        </header>
-        <div class="hedge-stats" id="hedge-stats"></div>
-        <div class="plot tall" id="plot-hedge"><div class="shimmer"></div></div>
-      </article>
-
-      <article class="panel chart-panel">
-        <header class="chart-head">
-          <div>
-            <h3>Policy Behaviour</h3>
-            <p>holdings chosen by each strategy along one simulated spot path (median terminal spot)</p>
-          </div>
-        </header>
-        <div class="plot" id="plot-holdings"><div class="shimmer"></div></div>
-      </article>
-    </section>
-
-    <!-- Tab: AI Risk Analyst -->
+    <!-- Tab: Report -->
     <section id="tab-ai" class="tab-pane" style="display:none">
+      <header class="lede">
+        <h1>Take the numbers away as a note.</h1>
+        <p id="report-lede">A short risk summary assembled from the current price, its
+           attribution and the hedging run.</p>
+      </header>
+
       <article class="panel chart-panel report-panel">
         <header class="chart-head">
           <div>
-            <h3>Risk Report</h3>
-            <p>numerical outputs of the pricer, hedger and XAI, narrated for the desk</p>
+            <h3>Risk summary</h3>
+            <p>Uses the price, the attribution breakdown and the hedging simulation. Any of these that has not run yet will be computed first.</p>
           </div>
-          <button class="btn btn-accent" id="btn-risk">Generate Report</button>
+          <button class="btn btn-accent" id="btn-risk">Write summary</button>
         </header>
-        <div class="report-body" id="ai-report">Click Generate Report to narrate the current pricing, hedging and attribution numbers for the desk.</div>
+        <div id="report-inputs"></div>
+        <div class="report-body" id="ai-report">Press Write summary to turn the current pricing, hedging and attribution numbers into a short desk note.</div>
       </article>
     </section>
 
     <footer class="colophon">
-      Research tool. Prices come from neural surrogates trained on simulated
-      data and are not investment advice. Built with PyTorch, FastAPI and
-      Plotly.
       <span class="colophon-links">
+        Built by Ronak Mahajan ·
         <a href="/methodology">Methodology</a> ·
         <a href="https://github.com/Ronak-Mahajan/neural-options-lab" target="_blank" rel="noopener">Source on GitHub</a>
       </span>
+      Prices come from neural networks trained on simulated data and are not
+      investment advice. Built with PyTorch, FastAPI and Plotly.
     </footer>
   </main>
 </div>
+
+<!-- Tap/click help bubble, shared by every [data-help] control. -->
+<div class="help-bubble" id="help-bubble" role="tooltip" hidden></div>
 
 <script src="app.js"></script>
 </body>

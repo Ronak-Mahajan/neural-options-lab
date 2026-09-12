@@ -9,6 +9,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   spot: 100, strike: 100, maturity: 1.0, sigma: 0.25, rate: 0.04,
   optionType: "call", mcPaths: 50000,
+  // A position, so the premium and the Greeks describe something real.
+  qty: 1, mult: 100,
 };
 
 // Desaturated institutional palette: blue = neural/deep,
@@ -27,20 +29,46 @@ const PLOT_BASE = {
   showlegend: true,
   legend: { orientation: "h", y: 1.12, x: 0, font: { size: 11 } },
 };
-const PLOT_CONFIG = { displayModeBar: false, responsive: true };
+const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false };
 
 // ───────────────────────────────────────────────────────────── utilities ──
+const NL_CHAR = String.fromCharCode(10);
+
 const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
 
+// Backend exception text used to be written straight into panel subtitles,
+// where it read as a stray sentence about the model's internals.
+function friendlyError(status, detail) {
+  const d = String(detail || "");
+  if (status === 422 || /moneyness|domain|between|less than|greater than/i.test(d)) {
+    return "This contract is outside the range the models were trained on. "
+      + "Move spot and strike closer together, or pick another expiry.";
+  }
+  if (status === 503) return "The server is busy with another simulation. Try again in a moment.";
+  if (status === 0) return "Could not reach the server.";
+  return "This panel is unavailable right now.";
+}
+
 async function api(path, body) {
-  const res = await fetch(path, {
-    method: body ? "POST" : "GET",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  let res;
+  try {
+    res = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(friendlyError(0, ""));
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
+    const err = new Error(friendlyError(res.status, detail));
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -77,6 +105,22 @@ function clearShimmer(plotId) {
   if (shim) shim.remove();
 }
 
+function panelMessage(plotId, text) {
+  const el = $(plotId);
+  if (!el) return;
+  clearShimmer(plotId);
+  try { Plotly.purge(el); } catch { /* never had a plot */ }
+  el.querySelector(".panel-message")?.remove();
+  const box = document.createElement("div");
+  box.className = "empty-state panel-message";
+  box.innerHTML = "<p>" + text + "</p>";
+  el.appendChild(box);
+}
+
+function clearPanelMessage(plotId) {
+  $(plotId)?.querySelector(".panel-message")?.remove();
+}
+
 function optionBody() {
   return {
     spot: state.spot, strike: state.strike, maturity: state.maturity,
@@ -93,6 +137,61 @@ function bindSlider(id, onChange) {
   };
   el.addEventListener("input", () => { paint(); onChange(parseFloat(el.value)); });
   paint();
+
+  // The matching readout is a typed field: a slider cannot express a strike
+  // of 137.42, and a pricer that cannot take one is a demonstration.
+  const box = $("val-" + id);
+  if (!box) return;
+  const commit = () => {
+    const raw = box.value.trim().replace(/[%$,\s]/g, "");
+    // "1.5y" and "30d" both mean something for maturity.
+    const m = /^([0-9]*\.?[0-9]+)\s*([a-z]*)$/i.exec(raw);
+    if (!m) { box.classList.add("invalid"); return; }
+    let v = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    if (id === "maturity") {
+      if (unit === "d") v = v / 252;
+      else if (unit === "m") v = v / 12;
+      else if (unit === "w") v = v / 52;
+      // a bare number large enough to be days rather than years
+      else if (!unit && v > 3) v = v / 252;
+    }
+    const lo = parseFloat(el.min), hi = parseFloat(el.max);
+    // Volatility and rate are shown and typed in percent, and their sliders
+    // are in percent too; only the state is a fraction.
+    const sliderValue = v;
+    if (!isFinite(sliderValue) || sliderValue < lo || sliderValue > hi) {
+      box.classList.add("invalid");
+      return;
+    }
+    box.classList.remove("invalid");
+    // Typed values are exact: widen the step so the browser does not round
+    // 137.42 to 137 on its way into the slider.
+    el.step = "any";
+    el.value = sliderValue;
+    paint();
+    onChange(parseFloat(el.value));
+  };
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); box.blur(); }
+    if (e.key === "Escape") { box.classList.remove("invalid"); refreshReadouts(); box.blur(); }
+  });
+  // While a field has focus, refreshReadouts must not overwrite what is
+  // being typed.
+  box.addEventListener("focus", () => { box.dataset.editing = "1"; });
+  box.addEventListener("blur", () => {
+    box.classList.remove("invalid");
+    commit();
+    delete box.dataset.editing;
+    refreshReadouts();
+  });
+}
+
+// refreshReadouts writes into these fields, so it must skip the one the user
+// is typing in.
+function setReadout(id, text) {
+  const el = $(id);
+  if (el && !el.dataset.editing) el.value = text;
 }
 
 // Maturities at or below 12 trading days route to the 0DTE rough-vol
@@ -100,28 +199,220 @@ function bindSlider(id, onChange) {
 const ZERO_DTE_CUTOFF = 12 / 252;
 const is0dte = () => state.maturity <= ZERO_DTE_CUTOFF + 1e-9;
 
-function refreshReadouts() {
-  $("val-spot").textContent = state.spot;
-  $("val-strike").textContent = state.strike;
-  $("val-maturity").textContent = is0dte()
-    ? Math.max(1, Math.round(state.maturity * 252)) + "d"
-    : state.maturity.toFixed(2) + "y";
-  $("val-sigma").textContent = Math.round(state.sigma * 100) + "%";
-  $("val-rate").textContent = (state.rate * 100).toFixed(1) + "%";
-  $("rail-summary").textContent =
-    state.optionType + " · S " + state.spot + " · K " + state.strike +
-    " · T " + $("val-maturity").textContent +
-    " · σ " + $("val-sigma").textContent + " · r " + $("val-rate").textContent;
+// A position is contracts x shares each; a negative count is a short, which
+// flips the sign of the premium and of every Greek.
+const positionSize = () => state.qty * state.mult;
+
+// A quote with no price in it would still carry a real timestamp and the
+// model's identity, so the export stays closed until there is one.
+function paintQuoteActions() {
+  const ok = lastNNPrice != null;
+  const copy = $("btn-copy-quote"), dl = $("btn-download-quote");
+  if (copy) copy.disabled = !ok;
+  if (dl) dl.disabled = !ok;
+}
+
+function fmtSigned(v, digits) {
+  const sign = v < 0 ? "\u2212" : "";
+  return sign + "$" + Math.abs(v).toLocaleString(undefined, {
+    minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+// Whole-share and whole-dollar figures for a book; per-contract figures keep
+// the four decimals the model's own accuracy supports.
+function renderPosition() {
+  const value = $("pos-value"), sub = $("pos-sub");
+  const hint = $("position-hint");
+  if (!value) return;
+  const n = positionSize();
+  if (lastNNPrice == null || !isFinite(n) || n === 0) {
+    value.textContent = "-";
+    sub.textContent = "";
+  } else {
+    value.textContent = fmtSigned(lastNNPrice * n, 2);
+    sub.textContent = n === 1
+      ? "single option, unit size"
+      : (state.qty < 0 ? "short " : "") + Math.abs(state.qty).toLocaleString() +
+        (Math.abs(state.qty) === 1 ? " contract × " : " contracts × ") +
+        state.mult.toLocaleString() + " shares × $" +
+        lastNNPrice.toFixed(4) + (state.qty < 0 ? " — premium received" : "");
+  }
+  if (hint) {
+    hint.textContent = state.qty < 0
+      ? "A short position: the premium is received and every Greek changes sign."
+      : "Sets the scale of the premium and the Greeks below.";
+  }
+  paintQuoteActions();
+  renderGreeks();
+}
+
+// The Greeks strip shows either one contract or the whole position.
+function renderGreeks() {
+  if (!lastGreeks) return;
+  const n = greekBasis === "position" ? positionSize() : 1;
+  const digits = greekBasis === "position" ? 2 : 4;
+  const map = { delta: "g-delta", gamma: "g-gamma", vega: "g-vega",
+                theta: "g-theta", rho: "g-rho" };
+  for (const [k, id] of Object.entries(map)) {
+    const el = $(id);
+    if (!el) continue;
+    const v = lastGreeks[k] * n;
+    el.textContent = greekBasis === "position"
+      ? (v < 0 ? "\u2212" : "") + Math.abs(v).toLocaleString(undefined, {
+          minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : v.toFixed(digits);
+  }
+  // In position terms each Greek is a quantity, not a per-dollar rate, so
+  // the per-contract unit string would read as nonsense appended to itself.
+  const POSITION_UNITS = {
+    "g-delta": "shares of the underlying",
+    "g-gamma": "shares per $1 move",
+    "g-vega": "$ per volatility point",
+    "g-theta": "$ per calendar day",
+    "g-rho": "$ per rate point",
+  };
+  for (const [id, unit] of Object.entries(POSITION_UNITS)) {
+    const cell = $(id);
+    const el = cell && cell.closest(".greek").querySelector(".greek-unit");
+    if (!el) continue;
+    if (!el.dataset.unit) el.dataset.unit = el.textContent;
+    el.textContent = greekBasis === "position" ? unit : el.dataset.unit;
+  }
+  const cash = $("greek-cash");
+  if (cash) {
+    cash.textContent = greekBasis === "position" && lastGreeks
+      ? "Cash delta " + fmtSigned(lastGreeks.delta * positionSize() * state.spot, 2) +
+        ": the value of the underlying this position is equivalent to."
+      : "";
+  }
+}
+
+// How far the contract sits from at-the-money, in words. "At the money"
+// covers the ±2% band where the distinction stops being meaningful.
+function moneynessWords() {
   const m = state.spot / state.strike;
-  $("moneyness-val").textContent = m.toFixed(2) +
-    (is0dte() ? " · 0DTE" : "");
+  if (Math.abs(m - 1) < 0.02) return "at-the-money";
+  const pct = Math.round(Math.abs(m - 1) * 100);
+  const itm = state.optionType === "call" ? m > 1 : m < 1;
+  return pct + "% " + (itm ? "in-the-money" : "out-of-the-money");
+}
+
+function maturityWords() {
+  const T = state.maturity;
+  const days = Math.max(1, Math.round(T * 252));
+  if (days <= 45) return days === 1 ? "one-day" : days + "-day";
+  if (T < 0.95) return Math.round(T * 12) + "-month";
+  if (Math.abs(T - 1) < 0.03) return "one-year";
+  if (Math.abs(T - 2) < 0.03) return "two-year";
+  return T.toFixed(2) + "-year";
+}
+
+// The contract in one sentence. This is the page's answer to "what am I
+// looking at, and did I need to type a ticker first?" - so it always says
+// whether the underlying is hypothetical or a real one that was loaded.
+// Just the instrument, for prose that continues after it.
+function contractShort() {
+  const kind = is0dte() ? "European " + state.optionType
+                        : "Asian " + state.optionType;
+  const head = maturityWords() + " " + moneynessWords() + " " + kind;
+  return marketData ? head + " on " + marketData.ticker
+                    : head + " on a $" + state.spot + " stock";
+}
+
+function contractSentence() {
+  const kind = is0dte() ? "European " + state.optionType
+                        : "Asian " + state.optionType;
+  const head = maturityWords() + " " + moneynessWords() + " " + kind;
+  const vol = $("val-sigma").value, rate = $("val-rate").value;
+  if (marketData) {
+    return "Pricing a " + head + " on " + marketData.ticker + " at $" +
+      state.spot.toLocaleString() + ", volatility " + vol + ", rate " + rate +
+      ", from market data loaded " + marketData.as_of.slice(0, 10) + ".";
+  }
+  return "Pricing a " + head + " on a $" + state.spot + " stock, volatility " +
+    vol + ", rate " + rate + ".";
+}
+
+// What each tab does with the contract named above it. The Hedging tab in
+// particular runs its own instrument, which nothing on screen used to say.
+const CONTRACT_SCOPE = {
+  hedging: "The hedge bench trades its own 30-day at-the-money call, the contract its policies were trained on, not the one above.",
+  ai: "The note is written from the price, the attribution and the hedge run listed below.",
+  stream: "The feed prices this contract, tick by tick.",
+};
+
+function renderContractLine() {
+  const pill = $("contract-pill");
+  pill.textContent = marketData ? marketData.ticker : "Example";
+  pill.classList.toggle("live", !!marketData);
+  $("contract-text").textContent = contractSentence();
+  const scope = $("contract-scope");
+  const clause = CONTRACT_SCOPE[typeof currentTab === "string" ? currentTab : "pricing"];
+  scope.textContent = clause || "";
+  scope.hidden = !clause;
+}
+
+// Under rough volatility the hedging run supplies its own volatility and
+// rate, so the two sliders that look like they drive it do nothing.
+function paintRailScope() {
+  const idle = currentTab === "hedging" && state.hedgeDynamics === "rough";
+  for (const id of ["in-sigma", "in-rate"])
+    $(id).closest(".param").classList.toggle("rail-inactive", idle);
+  $("rail-inactive-note").hidden = !idle;
+}
+
+function refreshReadouts() {
+  setReadout("val-spot", String(+state.spot.toFixed(4)));
+  setReadout("val-strike", String(+state.strike.toFixed(4)));
+  setReadout("val-maturity", is0dte()
+    ? Math.max(1, Math.round(state.maturity * 252)) + "d"
+    : state.maturity.toFixed(2) + "y");
+  const sigPct = state.sigma * 100;
+  setReadout("val-sigma",
+    (Math.abs(sigPct - Math.round(sigPct)) < 0.05 ? Math.round(sigPct)
+                                                  : sigPct.toFixed(1)) + "%");
+  setReadout("val-rate", (state.rate * 100).toFixed(2).replace(/0$/, "") + "%");
+  $("rail-summary").textContent = (marketData ? marketData.ticker + " · " : "") +
+    maturityWords() + " " + moneynessWords() + " " + state.optionType +
+    " · σ " + $("val-sigma").value + " · r " + $("val-rate").value;
+
+  renderContractLine();
+
+  // Above 12 trading days the payoff is an average; below it, a plain
+  // European option under a different model. Saying "Asian" in both places
+  // would be wrong, and the price is discontinuous across the boundary.
+  $("rail-note").textContent = is0dte()
+    ? "At or below 12 trading days the contract is a standard European "
+      + "option priced by a second network trained on rough volatility, so "
+      + "its price does not line up with the averaged contract above that "
+      + "boundary. Greeks are exact derivatives of the network."
+    : "Above 12 trading days the contract is a discrete arithmetic-average "
+      + "Asian option with 50 monitoring dates. The simulation it is checked "
+      + "against uses antithetic sampling and a geometric-Asian control "
+      + "variate. Greeks are exact derivatives of the network.";
+
+  const m = state.spot / state.strike;
+  $("moneyness-val").textContent = m.toFixed(2) + (is0dte() ? " · short-dated" : "");
   const [lo, hi] = is0dte() ? [0.85, 1.15] : [0.5, 2.0];
   const outside = m < lo || m > hi;
-  $("domain-warning").textContent = "Outside " +
-    (is0dte() ? "0DTE rough-vol" : "trained") + " domain [" + lo + ", " +
-    hi + "] (surrogate is extrapolating)";
+  $("domain-warning").textContent = "Spot over strike is " + m.toFixed(2) +
+    ", outside the range this model was trained on (" + lo + " to " + hi +
+    "). Move spot or strike closer together.";
   $("domain-warning").classList.toggle("show", outside);
+
+  document.querySelectorAll("#maturity-quickpick .pick").forEach((b) =>
+    b.classList.toggle("active", Math.abs(+b.dataset.t - state.maturity) < 1e-6));
+
+  // The short-dated volatility surface only describes contracts of 12
+  // trading days or less, so open it when the reader moves into that regime.
+  const short = is0dte();
+  if (short !== wasShortDated) {
+    const g = $("group-domain");
+    if (short && g) g.open = true;
+    wasShortDated = short;
+  }
 }
+let wasShortDated = null;
 
 function bindSegmented(containerId, onPick) {
   const box = $(containerId);
@@ -137,10 +428,9 @@ function bindSegmented(containerId, onPick) {
 // ───────────────────────────────────────────────────────── price + greeks ──
 let priceSeq = 0;
 let lastNNPrice = null;
-// The price card's subtitle doubles as the 0DTE no-arbitrage readout. Its
-// resting text and tooltip are authored in index.html; capture them once so
-// the card can go back to describing the autograd pass.
-let nnSubRest = null;
+let lastGreeks = null;
+let lastCheck = null;
+let greekBasis = "unit";
 async function updatePrice() {
   document.querySelector(".results").classList.add("updating");
   const seq = ++priceSeq;
@@ -149,61 +439,89 @@ async function updatePrice() {
     if (seq !== priceSeq) return; // a newer request superseded this one
 
     lastNNPrice = d.nn.price;
+    renderReportInputs();
     animateNumber($("nn-price"), d.nn.price, fmtMoney);
     animateNumber($("mc-price"), d.mc.price, fmtMoney);
-    $("nn-latency").textContent = fmtMs(d.nn.latency_ms) +
-      (is0dte() ? " · 0DTE net" : "");
-    $("mc-latency").textContent = fmtMs(d.mc.latency_ms) +
-      " · " + d.mc.n_paths.toLocaleString() + " paths" +
-      (d.mc.engine === "rough_bergomi" ? " · rBergomi" : "");
-    $("mc-ci").textContent = "95% CI  [" + d.mc.ci_low.toFixed(4) +
-      ", " + d.mc.ci_high.toFixed(4) + "]";
+    lastGreeks = d.nn.greeks;
+    renderPosition();
+    $("nn-sub").textContent = is0dte()
+      ? "per contract · short-dated model"
+      : "per contract · average-price contract";
+    lastCheck = { price: d.mc.price, n_paths: d.mc.n_paths,
+                  half: (d.mc.ci_high - d.mc.ci_low) / 2 };
+    $("mc-ci").textContent = "±$" +
+      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + " at 95% · " +
+      d.mc.n_paths.toLocaleString() + " paths, fresh seed each run";
 
-    animateNumber($("speedup"), d.comparison.speedup,
-      (v) => v >= 100 ? Math.round(v).toLocaleString() + "×" : v.toFixed(1) + "×");
-    // bps of strike: the unit every README and docs figure is quoted in.
-    const bps = d.comparison.diff_bps_of_strike ?? d.comparison.diff_bps_of_spot;
-    const ok = bps < 10; // surrogate tolerance: 10 bps of strike
+    // The headline is how closely the network matches the simulation. The
+    // old speedup ratio was two single-shot wall-clocks on a shared host,
+    // so it swung several-fold between identical page loads; the timings
+    // are still reported, just not as the claim.
+    const diff = Math.abs(d.nn.price - d.mc.price);
+    const bpsK = diff / state.strike * 1e4;
+    animateNumber($("speedup"), bpsK, (v) => v.toFixed(1) + " bps");
+    // Three states, not two. At 50,000 paths the simulation's error bar is
+    // tighter than the network's own published error, so a gap can sit
+    // outside the bar and still be exactly what the model promises. Calling
+    // that a failure would misreport the result in the alarming direction.
+    const inCI = d.comparison.within_mc_ci;
+    const tol = modelInfo && modelInfo.eval
+      ? modelInfo.eval.ensemble.price.p95_abs_bps : 2.5;
     const agr = $("agreement");
-    agr.textContent = "Δ " + bps.toFixed(1) +
-      " bps of strike vs MC" + (d.comparison.within_mc_ci ? " · inside 95% CI" : "");
-    agr.className = "card-sub centered " + (ok ? "agreement-ok" : "agreement-warn");
+    if (inCI) {
+      agr.textContent = "$" + diff.toFixed(4) +
+        " from the simulation · inside its 95% error bar";
+      agr.className = "card-sub agreement-ok";
+    } else if (bpsK <= tol) {
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
+        "than the error bar, inside this model's measured error on held-out contracts";
+      agr.className = "card-sub agreement-neutral";
+    } else {
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
+        "than both. Treat this price as indicative, or raise the cross-check " +
+        "precision in the sidebar.";
+      agr.className = "card-sub agreement-warn";
+    }
+    $("hero-error").hidden = true;
+    $("timing-line").textContent = "On this server: network " +
+      fmtMs(d.nn.latency_ms) + " for the price and all five Greeks, " +
+      "simulation " + fmtMs(d.mc.latency_ms) + " for " +
+      d.mc.n_paths.toLocaleString() + " paths" +
+      (d.mc.engine === "rough_bergomi" ? ", rough-volatility engine" : "") + ".";
 
-    // 0DTE regime: the response carries the European no-arbitrage floor
-    // (discounted intrinsic) alongside the price. Where the ensemble prices
-    // under that floor, the card names the gap and points at the constrained
-    // surface panel, which is the arbitrage-free view of the same corner.
+    // Short-dated regime: the response carries the European no-arbitrage
+    // floor (discounted intrinsic) alongside the price. Where the ensemble
+    // prices under that floor the card says by how much and points at the
+    // constrained surface, the arbitrage-free view of the same corner. The
+    // price itself is shown unchanged.
     const sub = $("nn-sub");
-    if (nnSubRest === null) nnSubRest = { text: sub.textContent, title: sub.title };
     if (d.nn.below_intrinsic) {
       sub.textContent = d.nn.below_intrinsic_bps_of_strike.toFixed(1) +
-        " bps of strike under the European floor · arbitrage-free surface below";
-      sub.title = "Discounted intrinsic, max(S − Ke^(−rT), 0), is the " +
-        "no-arbitrage floor of the European contract this maturity trades. " +
-        "The ensemble price is shown unchanged; the constrained IV surface " +
-        "panel prices the same corner with butterfly and calendar conditions " +
-        "imposed.";
+        " bps of strike under the no-arbitrage floor \u00b7 see the " +
+        "arbitrage-free surface below";
+      sub.title = "Discounted intrinsic, max(S \u2212 Ke^(\u2212rT), 0), is the " +
+        "lowest price a European contract at this maturity can have without " +
+        "an arbitrage. The ensemble price is shown unchanged; the short-dated " +
+        "volatility surface prices the same corner with butterfly and calendar " +
+        "conditions imposed.";
       sub.className = "card-sub agreement-warn";
     } else {
-      sub.textContent = nnSubRest.text;
-      sub.title = nnSubRest.title;
+      sub.title = "";
       sub.className = "card-sub";
     }
 
     document.querySelector(".results").classList.remove("errored");
-    const g = d.nn.greeks;
-    animateNumber($("g-delta"), g.delta, (v) => v.toFixed(4));
-    animateNumber($("g-gamma"), g.gamma, (v) => v.toFixed(4));
-    animateNumber($("g-vega"), g.vega, (v) => v.toFixed(4));
-    animateNumber($("g-theta"), g.theta, (v) => v.toFixed(4));
-    animateNumber($("g-rho"), g.rho, (v) => v.toFixed(4));
+    renderGreeks();
   } catch (err) {
     if (seq !== priceSeq) return;
     // Keep the last good numbers on screen but visibly stale: a red message
     // next to crisp prices read as if the prices belonged to the message.
     document.querySelector(".results").classList.add("errored");
-    $("agreement").textContent = err.message;
-    $("agreement").className = "card-sub centered agreement-warn";
+    const slot = $("hero-error");
+    slot.textContent = err.message;
+    slot.hidden = false;
+    $("timing-line").textContent = "";
+    paintQuoteActions();
   } finally {
     if (seq === priceSeq) document.querySelector(".results").classList.remove("updating");
   }
@@ -211,51 +529,58 @@ async function updatePrice() {
 
 // ──────────────────────────────────────────────────────── convergence plot ──
 async function updateConvergence() {
-  const d = await api("/api/convergence", optionBody());
-  clearShimmer("plot-convergence");
+  try {
+    const d = await api("/api/convergence", optionBody());
+    clearShimmer("plot-convergence");
+    clearPanelMessage("plot-convergence");
 
-  const xs = d.mc_points.map((p) => p.n_paths);
-  const traces = [
-    { // CI band (upper then lower with fill)
-      x: [...xs, ...xs.slice().reverse()],
-      y: [...d.mc_points.map((p) => p.ci_high),
-          ...d.mc_points.map((p) => p.ci_low).reverse()],
-      fill: "toself", fillcolor: "rgba(255,92,168,0.12)",
-      line: { width: 0 }, hoverinfo: "skip",
-      name: "MC 95% CI", showlegend: true,
-    },
-    {
-      x: xs, y: d.mc_points.map((p) => p.price),
-      mode: "lines+markers",
-      name: d.engine === "rough_bergomi"
-        ? "Monte Carlo (rough Bergomi)" : "Monte Carlo",
-      line: { color: COLORS.mc, width: 2.5, shape: "spline" },
-      marker: { size: 7, color: COLORS.mc },
-      customdata: d.mc_points.map((p) => fmtMs(p.latency_ms)),
-      hovertemplate: "%{x:,} paths → $%{y:.4f}<br>%{customdata}<extra></extra>",
-    },
-    {
-      x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
-      mode: "lines", name: "Neural net (" + fmtMs(d.nn.latency_ms) + ")",
-      line: { color: COLORS.nn, width: 2.5, dash: "dash" },
-      hovertemplate: "NN: $%{y:.4f}<extra></extra>",
-    },
-    {
-      x: [xs[0], xs[xs.length - 1]],
-      y: [d.reference.price, d.reference.price],
-      mode: "lines",
-      name: `Reference (${Math.round(d.reference.n_paths / 1000)}k paths)`,
-      line: { color: "rgba(255,255,255,0.45)", width: 1.5, dash: "dot" },
-      hovertemplate: "Reference: $%{y:.4f}<extra></extra>",
-    },
-  ];
-  Plotly.react("plot-convergence", traces, {
-    ...PLOT_BASE,
-    xaxis: { type: "log", title: { text: "Monte Carlo paths" },
-             gridcolor: COLORS.grid, zeroline: false },
-    yaxis: { title: { text: "option price" }, gridcolor: COLORS.grid,
-             zeroline: false, tickformat: ".3f" },
-  }, PLOT_CONFIG);
+    const xs = d.mc_points.map((p) => p.n_paths);
+    const traces = [
+      { // CI band (upper then lower with fill)
+        x: [...xs, ...xs.slice().reverse()],
+        y: [...d.mc_points.map((p) => p.ci_high),
+            ...d.mc_points.map((p) => p.ci_low).reverse()],
+        fill: "toself", fillcolor: "rgba(196,131,92,0.15)",
+        line: { width: 0 }, hoverinfo: "skip",
+        name: "95% confidence interval", showlegend: true,
+      },
+      {
+        x: xs, y: d.mc_points.map((p) => p.price),
+        mode: "lines+markers",
+        name: d.engine === "rough_bergomi"
+          ? "Simulation (rough volatility)" : "Simulation",
+        line: { color: COLORS.mc, width: 2.5, shape: "spline" },
+        marker: { size: 7, color: COLORS.mc },
+        customdata: d.mc_points.map((p) => fmtMs(p.latency_ms)),
+        hovertemplate: "%{x:,} paths → $%{y:.4f}<br>%{customdata}<extra></extra>",
+      },
+      {
+        x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
+        mode: "lines", name: "Network price",
+        line: { color: COLORS.nn, width: 2.5, dash: "dash" },
+        hovertemplate: "NN: $%{y:.4f}<extra></extra>",
+      },
+      {
+        x: [xs[0], xs[xs.length - 1]],
+        y: [d.reference.price, d.reference.price],
+        mode: "lines",
+        name: `High-precision reference (${Math.round(d.reference.n_paths / 1000)}k paths)`,
+        line: { color: "rgba(255,255,255,0.45)", width: 1.5, dash: "dot" },
+        hovertemplate: "Reference: $%{y:.4f}<extra></extra>",
+      },
+    ];
+    Plotly.react("plot-convergence", traces, {
+      ...PLOT_BASE,
+      xaxis: { type: "log", title: { text: "simulated paths" },
+               tickvals: [500, 1000, 2000, 5000, 10000, 20000, 50000, 100000],
+               ticktext: ["500", "1k", "2k", "5k", "10k", "20k", "50k", "100k"],
+               gridcolor: COLORS.grid, zeroline: false },
+      yaxis: { title: { text: "option price" }, gridcolor: COLORS.grid,
+               zeroline: false, tickformat: ".3f" },
+    }, PLOT_CONFIG);
+  } catch (err) {
+    panelMessage("plot-convergence", err.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────── IV surface plot ──
@@ -270,21 +595,22 @@ async function updateIVSurface() {
     const d = await api("/api/iv-surface",
       { sigma: state.sigma, rate: state.rate, resolution: 41 });
     clearShimmer("plot-ivsurface");
+    clearPanelMessage("plot-ivsurface");
     const fmtK = (v) => v.toFixed(3);
     const okB = d.g_min > 0, okC = d.calendar_min > 0;
     $("ivsurface-stats").innerHTML =
-      hedgeStatChip("Butterfly: min g", d.g_min.toFixed(3) +
-        " at k " + fmtK(d.g_min_at[1]) + ", " + (d.g_min_at[0] * 252).toFixed(1) + "d",
-        okB ? "good" : "") +
-      hedgeStatChip("Calendar: min ∂w/∂T", d.calendar_min.toExponential(2),
-        okC ? "good" : "") +
-      hedgeStatChip("Grid points checked", d.n_points.toLocaleString() +
-        (okB && okC ? " · no violations" : " · violation"), okB && okC ? "good" : "") +
-      hedgeStatChip("IV RMSE vs ensemble",
+      hedgeStatChip("No-arbitrage check",
+        okB && okC ? "passed at every point" : "violation found",
+        okB && okC ? "good" : "") +
+      hedgeStatChip("Distance from the pricing model",
         (d.fit && d.fit.iv_rmse_volpts_resolved != null
-          ? d.fit.iv_rmse_volpts_resolved.toFixed(2) + " vol pts" : "—"));
+          ? d.fit.iv_rmse_volpts_resolved.toFixed(2) + " vol points" : "—"));
     $("ivsurface-stat").textContent =
-      d.n_points.toLocaleString() + " points in " + fmtMs(d.latency_ms);
+      "Checked at " + d.n_points.toLocaleString() + " points across the grid, " +
+      "in " + fmtMs(d.latency_ms) + ". Butterfly minimum " + d.g_min.toFixed(3) +
+      " at log-moneyness " + fmtK(d.g_min_at[1]) + " and " +
+      (d.g_min_at[0] * 252).toFixed(1) + " days; calendar slope minimum " +
+      d.calendar_min.toExponential(2) + ". Both must stay above zero.";
 
     Plotly.react("plot-ivsurface", [{
       type: "surface",
@@ -311,6 +637,7 @@ async function updateIVSurface() {
   } catch (err) {
     const sub = $("ivsurface-sub");
     if (sub) sub.textContent = err.message;
+    panelMessage("plot-ivsurface", err.message);
   }
 }
 
@@ -351,38 +678,65 @@ async function updateBenchmark() {
 
 // ─────────────────────────────────────────────────────────── surface plot ──
 async function updateSurface() {
-  const d = await api("/api/surface", {
-    sigma: state.sigma, rate: state.rate, strike: state.strike,
-    option_type: state.optionType,
-  });
-  clearShimmer("plot-surface");
+  try {
+    const d = await api("/api/surface", {
+      sigma: state.sigma, rate: state.rate, strike: state.strike,
+      option_type: state.optionType,
+    });
+    clearShimmer("plot-surface");
+    clearPanelMessage("plot-surface");
 
-  $("surface-stat").textContent =
-    d.n_prices.toLocaleString() + " prices in " + fmtMs(d.latency_ms) +
-    " · " + Math.round(d.prices_per_second / 1000).toLocaleString() + "k prices/s";
+    $("surface-stat").textContent = "This grid is " +
+      d.n_prices.toLocaleString() + " separate prices, computed in " +
+      fmtMs(d.latency_ms) + " on this server: about " +
+      Math.round(d.prices_per_second / 1000).toLocaleString() +
+      ",000 prices per second in a batch.";
 
-  const norm = d.prices.map((row) => row.map((v) => v / state.strike));
-  Plotly.react("plot-surface", [{
-    type: "surface", x: d.moneyness, y: d.maturity, z: norm,
-    colorscale: [[0, "#0e1117"], [0.45, "#2a4a6b"], [0.75, "#5a8cc8"], [1, "#8891a3"]],
-    showscale: false,
-    contours: { z: { show: true, usecolormap: true,
-                     highlightcolor: "#fff", project: { z: true } } },
-    hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}<extra></extra>",
-    lighting: { specular: 0.4, roughness: 0.6 },
-  }], {
-    ...PLOT_BASE, showlegend: false,
-    margin: { l: 0, r: 0, t: 0, b: 0 },
-    scene: {
-      xaxis: { title: "moneyness S/K", gridcolor: COLORS.grid,
-               color: COLORS.ink, showbackground: false },
-      yaxis: { title: "maturity (y)", gridcolor: COLORS.grid,
-               color: COLORS.ink, showbackground: false },
-      zaxis: { title: "price / K", gridcolor: COLORS.grid,
-               color: COLORS.ink, showbackground: false },
-      camera: { eye: { x: -1.55, y: -1.6, z: 0.65 } },
-    },
-  }, PLOT_CONFIG);
+    const norm = d.prices.map((row) => row.map((v) => v / state.strike));
+    Plotly.react("plot-surface", [{
+      type: "surface", x: d.moneyness, y: d.maturity, z: norm,
+      colorscale: [[0, "#0e1117"], [0.45, "#2a4a6b"], [0.75, "#5a8cc8"], [1, "#8891a3"]],
+      showscale: false,
+      contours: { z: { show: true, usecolormap: true,
+                       highlightcolor: "#fff", project: { z: true } } },
+      hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}"
+        + "<br><i>click to price this contract</i><extra></extra>",
+      lighting: { specular: 0.4, roughness: 0.6 },
+    }], {
+      ...PLOT_BASE, showlegend: false,
+      margin: { l: 0, r: 0, t: 0, b: 0 },
+      scene: {
+        xaxis: { title: "moneyness S/K", gridcolor: COLORS.grid,
+                 color: COLORS.ink, showbackground: false },
+        yaxis: { title: "maturity (y)", gridcolor: COLORS.grid,
+                 color: COLORS.ink, showbackground: false },
+        zaxis: { title: "price / K", gridcolor: COLORS.grid,
+                 color: COLORS.ink, showbackground: false },
+        camera: { eye: { x: -1.55, y: -1.6, z: 0.65 } },
+      },
+    }, PLOT_CONFIG);
+
+    const surf = $("plot-surface");
+    if (!surf.dataset.clickBound) {
+      surf.dataset.clickBound = "1";
+      surf.on("plotly_click", (ev) => {
+        const pt = ev.points && ev.points[0];
+        if (!pt) return;
+        const spot = +(pt.x * state.strike).toFixed(4);
+        const T = +pt.y.toFixed(4);
+        setSlider("spot", Math.min(Math.max(spot, +$("in-spot").min),
+                                   +$("in-spot").max));
+        $("in-spot").step = "any";
+        $("in-spot").value = spot;
+        state.spot = spot;
+        setSlider("maturity", T);
+        state.maturity = snapMaturity(T);
+        refreshAll();
+      });
+    }
+  } catch (err) {
+    panelMessage("plot-surface", err.message);
+  }
 }
 
 // ────────────────────────────────────────────────── error-distribution plot ──
@@ -403,15 +757,19 @@ function renderErrorDistribution() {
   const single = d.errors[errorMetric].single;
   const ens = d.errors[errorMetric].ensemble;
 
+  const QUANTITY = { price: "price", delta: "delta", vega: "vega" };
   $("error-sub").textContent =
-    "signed " + errorMetric + " error on " + d.n_points.toLocaleString() +
-    " independent test points vs " + (d.ref_paths / 1000).toFixed(0) +
-    "k-path Monte Carlo references" +
-    (d.differential_ml ? " · trained with Differential ML" : "");
+    "How far the network's " + QUANTITY[errorMetric] + " sits from a " +
+    (d.ref_paths / 1000).toFixed(0) + ",000-path simulation, on " +
+    d.n_points.toLocaleString() + " contracts it never saw in training.";
+  const e = d.ensemble[errorMetric];
   $("error-stat").textContent =
-    "RMSE " + d.single[errorMetric].rmse_bps.toFixed(1) + " → " +
-    d.ensemble[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit +
-    " · " + d.n_members + "-model ensemble";
+    "Five averaged networks: mean " + (e.mean_bps >= 0 ? "+" : "") +
+    e.mean_bps.toFixed(1) + " " + meta.unit + " · typical error " +
+    e.rmse_bps.toFixed(1) + " · 95% of errors within " +
+    e.p95_abs_bps.toFixed(1) + " " + meta.unit +
+    (errorMetric === "price" ? " of strike" : "") + " (one network: " +
+    d.single[errorMetric].rmse_bps.toFixed(1) + " typical).";
 
   // Shared bins so the two histograms are directly comparable.
   const all = [...single, ...ens];
@@ -421,7 +779,7 @@ function renderErrorDistribution() {
   const traces = [
     {
       type: "histogram", x: single,
-      name: "single model · RMSE " +
+      name: "one network · typical error " +
         d.single[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit,
       marker: { color: "rgba(143,123,255,0.5)",
                 line: { color: COLORS.violet, width: 1 } },
@@ -429,7 +787,7 @@ function renderErrorDistribution() {
     },
     {
       type: "histogram", x: ens,
-      name: "ensemble · RMSE " +
+      name: "five averaged · typical error " +
         d.ensemble[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit,
       marker: { color: "rgba(90,140,200,0.45)",
                  line: { color: COLORS.nn, width: 1 } },
@@ -440,7 +798,7 @@ function renderErrorDistribution() {
     ...PLOT_BASE, barmode: "overlay",
     xaxis: { title: { text: meta.label },
              gridcolor: COLORS.grid, zeroline: false },
-    yaxis: { title: { text: "test points" }, gridcolor: COLORS.grid,
+    yaxis: { title: { text: "contracts" }, gridcolor: COLORS.grid,
              zeroline: false },
     shapes: [{ type: "line", x0: 0, x1: 0, y0: 0, y1: 1, yref: "paper",
                line: { color: "rgba(255,255,255,0.35)", width: 1.5,
@@ -455,48 +813,114 @@ async function loadErrorDistribution() {
     renderErrorDistribution();
   } catch (err) {
     $("error-sub").textContent = err.message;
+    clearShimmer("plot-errors");
   }
 }
 
 // ──────────────────────────────────────────────────────────── model badge ──
+let modelInfo = null;
 async function loadModelInfo() {
   const dot = $("status-dot"), txt = $("model-badge-text");
+  const body = $("model-card-body");
+  const rows = (pairs) => pairs.map(([k, v]) =>
+    "<dt>" + k + "</dt><dd>" + v + "</dd>").join("");
   try {
     const health = await api("/api/health");
     if (!health.model_loaded) {
       dot.className = "status-dot bad";
-      txt.textContent = "model not trained: run python -m backend.quant.train";
+      txt.textContent = "Model unavailable";
+      body.innerHTML = rows([["Status", "The pricing model is not loaded on this server."]]);
       return;
     }
     const m = await api("/api/model-info");
+    modelInfo = m;
     dot.className = "status-dot ok";
-    const members = m.n_members > 1 ? m.n_members + "× " : "";
-    const acc = m.eval
-      ? "RMSE " + m.eval.ensemble.price.rmse_bps.toFixed(1) + " bps vs " +
-        (m.eval.ref_paths / 1000).toFixed(0) + "k-path MC"
-      : "val RMSE " + m.val_rmse_bps_of_strike.toFixed(1) + " bps";
-    // The 0DTE checkpoint carries its own provenance: whether its
+    txt.textContent = "Model ready";
+    const p = m.param_ranges || {};
+    const pairs = [
+      ["Architecture", (m.n_members > 1 ? m.n_members + " networks, " : "One network, ") +
+        m.n_parameters.toLocaleString() + " parameters each"],
+      ["Training data", m.n_samples.toLocaleString() +
+        " contracts labelled by Monte Carlo" +
+        (m.mc_paths_per_label ? " at " + m.mc_paths_per_label.toLocaleString() + " paths each" : "")],
+    ];
+    if (m.eval) {
+      pairs.push(["Accuracy", "typical pricing error " +
+        m.eval.ensemble.price.rmse_bps.toFixed(1) + " basis points of strike, on " +
+        m.eval.n_points.toLocaleString() + " held-out contracts against " +
+        (m.eval.ref_paths / 1000).toFixed(0) + ",000-path references"]);
+    }
+    if (p.moneyness && p.maturity && p.sigma) {
+      pairs.push(["Trained range", "spot over strike " + p.moneyness[0] + " to " +
+        p.moneyness[1] + ", expiry " + p.maturity[0] + " to " + p.maturity[1] +
+        " years, volatility " + Math.round(p.sigma[0] * 100) + "% to " +
+        Math.round(p.sigma[1] * 100) + "%"]);
+    }
+    // The short-dated checkpoint carries its own provenance: whether its
     // rough-Bergomi parameters came from an accepted market calibration, and
-    // which one. The badge states the flag; the tooltip names the fit.
-    // Nothing here is hardcoded — every field comes from the checkpoint.
+    // which one. Every field comes from the checkpoint; nothing is typed here.
     const z = m.zero_dte;
-    const hurst = (z && typeof z.H === "number")
-      ? " (H " + z.H.toFixed(3) + ")" : "";
-    const zdte = z && z.available
-      ? " · 0DTE: " + (z.calibrated
-          ? "market-calibrated rough Bergomi" + hurst
-          : "rough Bergomi, default parameters" + hurst)
-      : "";
-    txt.textContent = members + m.n_parameters.toLocaleString() +
-      " params" + (m.differential_ml ? " · Differential ML" : "") +
-      " · " + acc + " · " +
-      m.n_samples.toLocaleString() + " MC-labelled samples" + zdte;
-    if (z && z.calibration_note) txt.title = z.calibration_note;
+    if (z && z.available) {
+      const hurst = typeof z.H === "number" ? ", Hurst index " + z.H.toFixed(3) : "";
+      pairs.push(["Short-dated model", (z.calibrated
+        ? "rough Bergomi calibrated to market option prices"
+        : "rough Bergomi with default parameters, not market-calibrated") + hurst +
+        (z.calibration_note ? ". " + z.calibration_note : "")]);
+    }
+    body.innerHTML = rows(pairs);
+    const acc = $("accuracy-stats");
+    if (acc) {
+      acc.innerHTML =
+        hedgeStatChip("Ensemble", m.n_members + " networks") +
+        hedgeStatChip("Parameters", m.n_parameters.toLocaleString() + " each") +
+        hedgeStatChip("Training set",
+          m.n_samples.toLocaleString() + " Monte Carlo-labelled contracts") +
+        (m.eval ? hedgeStatChip("Typical error",
+          m.eval.ensemble.price.rmse_bps.toFixed(1) + " bps of strike") : "");
+    }
+    const lede = $("report-lede");
+    if (lede) {
+      lede.textContent = m.report_writer === "model"
+        ? "A short risk summary drafted by a language model from the current "
+          + "price, its attribution and the hedging run. It is given the "
+          + "numbers and nothing else."
+        : "A short risk summary assembled from the current price, its "
+          + "attribution and the hedging run, written by a rule-based "
+          + "narrator on this server.";
+    }
+    const teaser = $("accuracy-teaser");
+    if (teaser && m.eval) {
+      teaser.textContent = "Typical error " +
+        m.eval.ensemble.price.rmse_bps.toFixed(1) +
+        " basis points of strike on " + m.eval.n_points.toLocaleString() +
+        " contracts the models never saw. Fixed: it does not move with your inputs.";
+    }
   } catch {
     dot.className = "status-dot bad";
-    txt.textContent = "backend unreachable";
+    txt.textContent = "Server unreachable";
+    body.innerHTML = rows([["Status", "The server did not respond."]]);
   }
 }
+
+// The model card opens on click and closes on the next click outside it or
+// on Escape, so it never sits over the page uninvited.
+(() => {
+  const btn = $("model-badge"), card = $("model-card");
+  const setOpen = (open) => {
+    card.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setOpen(card.hidden);
+  });
+  document.addEventListener("click", (e) => {
+    if (!card.hidden && !card.contains(e.target)) setOpen(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") setOpen(false);
+  });
+})();
 
 // ─────────────────────────────────────────────────────────────── wire up ──
 const refreshFast = debounce(updatePrice, 220);
@@ -532,12 +956,173 @@ bindSegmented("error-metric", (v) => { errorMetric = v; renderErrorDistribution(
 
 $("btn-benchmark").addEventListener("click", updateBenchmark);
 
+// Run the pricer backwards: which volatility reproduces this premium?
+async function solveImpliedVol() {
+  const box = $("in-target-price"), note = $("iv-solve-note");
+  const btn = $("btn-solve-iv");
+  const target = parseFloat(box.value.replace(/[$,\s]/g, ""));
+  if (!isFinite(target) || target < 0) {
+    box.classList.add("invalid");
+    note.textContent = "Type the premium you want to match.";
+    return;
+  }
+  box.classList.remove("invalid");
+  btn.disabled = true;
+  btn.textContent = "Solving";
+  note.textContent = "";
+  try {
+    const d = await api("/api/implied-vol", {
+      spot: state.spot, strike: state.strike, maturity: state.maturity,
+      rate: state.rate, option_type: state.optionType, price: target,
+    });
+    if (!d.bracketed) {
+      // Say what the model can and cannot reach rather than clamping quietly.
+      note.textContent = "No volatility between " +
+        (d.search_range[0] * 100).toFixed(0) + "% and " +
+        (d.search_range[1] * 100).toFixed(0) + "% prices this contract at $" +
+        d.target_price.toFixed(4) + ". Across that range it spans $" +
+        d.price_range[0].toFixed(4) + " to $" + d.price_range[1].toFixed(4) +
+        "; the closest is $" + d.price_at_sigma.toFixed(4) + " at " +
+        (d.sigma * 100).toFixed(1) + "%. Volatility left unchanged.";
+      return;
+    }
+    const pct = d.sigma * 100;
+    $("in-sigma").step = "any";
+    $("in-sigma").value = pct;
+    state.sigma = d.sigma;
+    setSlider("sigma", pct);
+    $("in-sigma").value = pct;
+    refreshAll();
+    note.textContent = "A premium of $" + d.target_price.toFixed(4) +
+      " implies " + pct.toFixed(2) + "% volatility under this model.";
+  } catch (err) {
+    note.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Solve";
+  }
+}
+$("btn-solve-iv").addEventListener("click", solveImpliedVol);
+$("in-target-price").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); solveImpliedVol(); }
+});
+
+// Size controls. A whole number of contracts; a negative count is a short.
+function bindSizeField(id, key, { min, max, integer }) {
+  const el = $(id);
+  const commit = () => {
+    const v = parseFloat(el.value.replace(/[,\s]/g, ""));
+    if (!isFinite(v) || v < min || v > max || (integer && v !== Math.round(v))) {
+      el.classList.add("invalid");
+      return;
+    }
+    el.classList.remove("invalid");
+    state[key] = v;
+    renderPosition();
+    renderContractLine();
+    syncURL();
+  };
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); el.blur(); }
+    if (e.key === "Escape") { el.value = state[key]; el.classList.remove("invalid"); el.blur(); }
+  });
+  el.addEventListener("blur", () => { commit(); el.value = state[key]; });
+}
+bindSizeField("in-qty", "qty", { min: -100000, max: 100000, integer: true });
+bindSizeField("in-mult", "mult", { min: 1, max: 10000, integer: true });
+
+bindSegmented("greek-basis", (v) => { greekBasis = v; renderGreeks(); });
+
+// A quote that can leave the page: the contract, every input, the price, the
+// Greeks, the independent check and when it was produced.
+function quoteRows() {
+  const g = lastGreeks || {};
+  const n = positionSize();
+  const stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const rows = [
+    ["Produced", stamp + " local"],
+    ["Instrument", contractShort()],
+    ["Underlying", marketData ? marketData.ticker : "hypothetical"],
+    ["Spot", state.spot],
+    ["Strike", state.strike],
+    ["Time to expiry (years)", +state.maturity.toFixed(6)],
+    ["Volatility", (state.sigma * 100).toFixed(4) + "%"],
+    ["Rate", (state.rate * 100).toFixed(4) + "%"],
+    ["Type", state.optionType],
+    ["Contracts", state.qty],
+    ["Shares per contract", state.mult],
+    ["Price per contract", lastNNPrice == null ? "" : lastNNPrice.toFixed(6)],
+    ["Position value", lastNNPrice == null ? "" : (lastNNPrice * n).toFixed(2)],
+    ["Delta per contract", g.delta == null ? "" : g.delta.toFixed(6)],
+    ["Gamma per contract", g.gamma == null ? "" : g.gamma.toFixed(6)],
+    ["Vega per contract", g.vega == null ? "" : g.vega.toFixed(6)],
+    ["Theta per contract", g.theta == null ? "" : g.theta.toFixed(6)],
+    ["Rho per contract", g.rho == null ? "" : g.rho.toFixed(6)],
+    ["Delta, whole position", g.delta == null ? "" : (g.delta * n).toFixed(2)],
+    ["Gamma, whole position", g.gamma == null ? "" : (g.gamma * n).toFixed(2)],
+    ["Vega, whole position", g.vega == null ? "" : (g.vega * n).toFixed(2)],
+    ["Theta, whole position", g.theta == null ? "" : (g.theta * n).toFixed(2)],
+    ["Rho, whole position", g.rho == null ? "" : (g.rho * n).toFixed(2)],
+  ];
+  if (lastCheck) {
+    rows.push(["Cross-check price", lastCheck.price.toFixed(6)]);
+    rows.push(["Cross-check paths", lastCheck.n_paths]);
+    rows.push(["Cross-check 95% half-width", lastCheck.half.toFixed(6)]);
+  }
+  if (modelInfo) {
+    rows.push(["Model", modelInfo.n_members + " networks x " +
+      modelInfo.n_parameters + " parameters"]);
+    if (modelInfo.eval) {
+      rows.push(["Model typical error",
+        modelInfo.eval.ensemble.price.rmse_bps.toFixed(2) + " bps of strike"]);
+    }
+  }
+  return rows;
+}
+
+function flashQuoteNote(text) {
+  const note = $("quote-note");
+  note.textContent = text;
+  setTimeout(() => { note.textContent = ""; }, 2400);
+}
+
+$("btn-copy-quote").addEventListener("click", async () => {
+  const text = quoteRows().map(([k, v]) => k + ": " + v).join(NL_CHAR);
+  try {
+    await navigator.clipboard.writeText(text);
+    flashQuoteNote("Quote copied");
+  } catch {
+    flashQuoteNote("Clipboard unavailable; use Download CSV");
+  }
+});
+
+$("btn-download-quote").addEventListener("click", () => {
+  const csv = "field,value" + NL_CHAR + quoteRows()
+    .map(([k, v]) => '"' + String(k).replace(/"/g, '""') + '","' +
+                     String(v).replace(/"/g, '""') + '"').join(NL_CHAR);
+  const blob = new Blob([csv], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "quote-" + state.optionType + "-" + state.strike + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  flashQuoteNote("CSV downloaded");
+});
+
 // ──────────────────────────────────────────── URL state, presets, sharing ──
 // Every slider, the contract type, the tab and the hedging cost are mirrored
 // into the query string so a specific finding can be sent as a link, e.g.
 //   /?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put
 const TAB_IDS = { pricing: "tab-pricing", stream: "tab-stream",
                   hedging: "tab-hedging", ai: "tab-ai" };
+// The tabs now read Quote / Hedge / Live / Desk note. Links already in the
+// wild use the old keys, and serializeState keeps writing them, so the new
+// vocabulary is accepted as a read-only alias.
+const TAB_ALIAS = { quote: "pricing", price: "pricing", hedge: "hedging",
+                    live: "stream", monitor: "stream", note: "ai",
+                    desk: "ai", report: "ai" };
 let currentTab = "pricing";
 
 function serializeState() {
@@ -552,6 +1137,8 @@ function serializeState() {
   if (state.mcPaths !== 50000) q.set("paths", String(state.mcPaths));
   if (Math.round(state.hedgeCost * 1e4) !== 50)
     q.set("cost", String(Math.round(state.hedgeCost * 1e4)));
+  if (state.qty !== 1) q.set("qty", String(state.qty));
+  if (state.mult !== 100) q.set("mult", String(state.mult));
   if (state.hedgeDynamics !== "rough") q.set("dyn", state.hedgeDynamics);
   if (marketData) q.set("ticker", marketData.ticker);
   return q;
@@ -610,6 +1197,14 @@ function applyState(p) {
     state.hedgeCost = bps / 1e4;
     $("in-cost").value = bps; $("val-cost").textContent = bps + " bps";
   }
+  const qty = num("qty");
+  if (qty !== undefined && Number.isInteger(qty)) {
+    state.qty = qty; $("in-qty").value = qty;
+  }
+  const mult = num("mult");
+  if (mult !== undefined && mult >= 1) {
+    state.mult = mult; $("in-mult").value = mult;
+  }
   if (p.dyn === "rough" || p.dyn === "gbm") {
     state.hedgeDynamics = p.dyn; setSegmented("hedge-dynamics", p.dyn);
   }
@@ -618,6 +1213,10 @@ function applyState(p) {
 function showTab(key) {
   const id = TAB_IDS[key] || TAB_IDS.pricing;
   currentTab = TAB_IDS[key] ? key : "pricing";
+  $("rail-note").hidden = currentTab === "hedging";
+  if (currentTab === "ai") renderReportInputs();
+  renderContractLine();
+  paintRailScope();
   document.querySelectorAll(".tab-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === id));
   document.querySelectorAll(".tab-pane").forEach((p) =>
@@ -630,6 +1229,19 @@ function showTab(key) {
       .forEach((p) => Plotly.Plots.resize(p));
   });
   syncURL();
+}
+
+// The Write summary button used to be a black box: it silently ran the
+// hedging simulation and the attribution before writing anything.
+function renderReportInputs() {
+  const el = $("report-inputs");
+  if (!el) return;
+  const ready = (ok) => ok ? "ready" : "will be computed";
+  el.innerHTML =
+    hedgeStatChip("Price", ready(lastNNPrice != null), lastNNPrice != null ? "good" : "") +
+    hedgeStatChip("Attribution", ready(!!lastAttributions), lastAttributions ? "good" : "") +
+    hedgeStatChip("Hedging run", ready(!!lastHedge), lastHedge ? "good" : "");
+  el.className = "hedge-stats";
 }
 
 function applyPreset(p) {
@@ -682,17 +1294,62 @@ $("btn-share").addEventListener("click", async () => {
   });
 })();
 
-// Explainer strip: dismissable, remembered per browser.
+// "How to read this page": a disclosure beside the lede, so the explanation
+// is always one click away instead of a paragraph that blocks the result
+// once and then is dismissed forever.
 (() => {
-  const box = $("explainer");
-  let hidden = false;
-  try { hidden = localStorage.getItem("nol.explainer") === "hidden"; } catch { /* private mode */ }
-  if (hidden) box.classList.add("hidden");
-  $("explainer-close").addEventListener("click", () => {
-    box.classList.add("hidden");
-    try { localStorage.setItem("nol.explainer", "hidden"); } catch { /* ignore */ }
+  const btn = $("btn-howto"), box = $("howto");
+  btn.addEventListener("click", () => {
+    const open = box.hidden;
+    box.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? "Hide this" : "What this tool does";
   });
 })();
+
+// One tap-to-reveal help primitive for every [data-help] control. Native
+// title tooltips never appear on touch, so on a phone the page had no
+// explanations at all.
+(() => {
+  const bubble = $("help-bubble");
+  let anchor = null;
+  const close = () => { bubble.hidden = true; anchor = null; };
+  const open = (el) => {
+    bubble.textContent = el.dataset.help;
+    bubble.hidden = false;
+    const r = el.getBoundingClientRect();
+    const w = Math.min(300, window.innerWidth - 24);
+    bubble.style.width = w + "px";
+    let left = r.left + r.width / 2 - w / 2;
+    left = Math.max(12, Math.min(left, window.innerWidth - w - 12));
+    bubble.style.left = left + "px";
+    const below = r.bottom + 10;
+    const fitsBelow = below + bubble.offsetHeight < window.innerHeight - 12;
+    bubble.style.top = (fitsBelow ? below
+      : Math.max(12, r.top - bubble.offsetHeight - 10)) + window.scrollY + "px";
+    anchor = el;
+  };
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-help]");
+    if (!el) { if (!bubble.contains(e.target)) close(); return; }
+    e.preventDefault(); e.stopPropagation();
+    if (anchor === el) close(); else open(el);
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  window.addEventListener("scroll", () => { if (anchor) close(); }, { passive: true });
+  window.addEventListener("resize", close);
+})();
+
+// Expiry quick-picks: the short-dated regime is 2% of the slider's track,
+// so landing on it by dragging is luck.
+document.querySelectorAll("#maturity-quickpick .pick").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const v = parseFloat(btn.dataset.t);
+    setSlider("maturity", v);
+    state.maturity = snapMaturity(v);
+    refreshAll();
+  });
+});
 
 // ───────────────────────────────────────────────────────────── Ticker API ──
 // The pricer works in moneyness, so any spot level is exact - we rescale the
@@ -716,30 +1373,43 @@ async function fetchTicker() {
   if (!t) return;
   const btn = $("btn-fetch-ticker");
   const chip = $("market-chip");
-  btn.textContent = "..."; btn.disabled = true;
+  btn.textContent = "…"; btn.disabled = true;
   try {
     const d = await api("/api/market/" + encodeURIComponent(t));
     marketData = d;
     rescaleSpotSliders(d.spot);
-    $("in-sigma").value = d.sigma * 100;
-    $("in-rate").value = d.rate * 100;
+    // A range input snaps its value to the step, so a 1% volatility step
+    // turned a fetched 12.9% into 13% while the chip still advertised 12.9.
+    // Fine steps keep the readout, the chip and the priced inputs identical.
+    $("in-sigma").step = "0.1";
+    $("in-rate").step = "0.01";
+    $("in-sigma").value = (d.sigma * 100).toFixed(1);
+    $("in-rate").value = (d.rate * 100).toFixed(2);
     for (const id of ["in-spot", "in-strike", "in-sigma", "in-rate"])
       $(id).dispatchEvent(new Event("input"));
 
     chip.innerHTML =
       "<b>" + d.ticker + "</b> $" + d.spot.toLocaleString(undefined,
         { maximumFractionDigits: 2 }) +
-      " · σ̂<sub>1y</sub> " + (d.sigma_raw * 100).toFixed(1) + "%" +
-      " · r " + (d.rate_raw * 100).toFixed(2) + "% (" + d.rate_source + ")" +
-      "<br>as of " + d.as_of +
-      (d.clamped ? " · <span class='warn'>clamped to trained domain</span>" : "");
+      " · one-year realised volatility " + (d.sigma_raw * 100).toFixed(1) +
+      "% · 13-week Treasury bill " + (d.rate_raw * 100).toFixed(2) + "%" +
+      "<br>as of " + d.as_of.slice(0, 16).replace("T", " ") +
+      (Math.abs(state.spot - d.spot) > 0.005
+        ? "<br>priced at $" + state.spot.toLocaleString() +
+          ", the nearest step on the spot slider"
+        : "") +
+      (d.clamped
+        ? "<br><span class='warn'>volatility and rate adjusted to the range the model was trained on</span>"
+        : "");
     chip.classList.add("show");
   } catch (err) {
     marketData = null;
-    chip.innerHTML = "<span class='warn'>" + err.message + "</span>";
+    chip.innerHTML = "<span class='warn'>No market data for \"" + t +
+      "\". Check the symbol, or leave it blank to keep the example contract.</span>";
     chip.classList.add("show");
+    refreshReadouts();
   } finally {
-    btn.textContent = "Fetch"; btn.disabled = false;
+    btn.textContent = "Load"; btn.disabled = false;
   }
 }
 $("btn-fetch-ticker").addEventListener("click", fetchTicker);
@@ -761,25 +1431,34 @@ async function updateXAI() {
   try {
     const d = await api("/api/explain", optionBody());
     clearShimmer("plot-xai");
+    clearPanelMessage("plot-xai");
     lastAttributions = d.attributions;
+    renderReportInputs();
 
     const bT = d.baseline.maturity;
-    $("xai-sub").textContent = "Integrated Gradients vs an ATM " +
-      "minimal-option baseline (T=" + (bT < 13 / 252
-        ? Math.round(bT * 252) + "d" : bT + "y") + ", σ=5%, r=0)" +
-      (d.regime === "0dte_rough_bergomi" ? " · 0DTE rough-vol regime" : "");
 
     const rows = [
-      { name: "Spot (moneyness)", v: d.attributions.spot },
-      { name: "Maturity", v: d.attributions.maturity },
+      { name: "Spot level", v: d.attributions.spot },
+      { name: "Time to expiry", v: d.attributions.maturity },
       { name: "Volatility", v: d.attributions.sigma },
-      { name: "Rate", v: d.attributions.rate },
+      { name: "Interest rate", v: d.attributions.rate },
     ].sort((a, b) => Math.abs(a.v) - Math.abs(b.v));
 
-    $("xai-stat").textContent =
-      "baseline $" + d.baseline_price.toFixed(2) +
-      " + Σ attributions → $" + d.target_price.toFixed(2) +
-      " · completeness err " + Math.abs(d.completeness_error).toFixed(4);
+    const top = rows[rows.length - 1];
+    $("xai-sub").textContent = "Starting from a minimal at-the-money option " +
+      "worth $" + d.baseline_price.toFixed(2) + ", the inputs add up to this " +
+      "contract's $" + d.target_price.toFixed(2) + ". " +
+      top.name.replace(" (moneyness)", "") + " contributes the most.";
+    if (Math.abs(d.attributions.spot) < 0.005) {
+      $("xai-sub").textContent += " The spot bar is near zero because this " +
+        "contract is at the money, the same as the baseline option.";
+    }
+    $("xai-stat").textContent = "Integrated Gradients against a baseline option " +
+      "at " + (bT < 13 / 252 ? Math.round(bT * 252) + " days" : bT + " years") +
+      " to expiry, 5% volatility and a zero rate" +
+      (d.regime === "0dte_rough_bergomi" ? ", in the short-dated regime" : "") +
+      ". The four contributions sum to the price to within $" +
+      Math.abs(d.completeness_error).toFixed(4) + ".";
 
     Plotly.react("plot-xai", [{
       type: "bar", orientation: "h",
@@ -788,7 +1467,7 @@ async function updateXAI() {
       marker: { color: rows.map((r) => r.v >= 0
         ? "rgba(90,140,200,0.7)" : "rgba(196,92,92,0.7)") },
       text: rows.map((r) => (r.v >= 0 ? "+" : "−") + "$" +
-        Math.abs(r.v).toFixed(3)),
+        Math.abs(r.v).toFixed(2)),
       textposition: "outside",
       textfont: { family: "JetBrains Mono", size: 12 },
       cliponaxis: false,
@@ -803,6 +1482,7 @@ async function updateXAI() {
     }, PLOT_CONFIG);
   } catch (err) {
     $("xai-sub").textContent = err.message;
+    panelMessage("plot-xai", err.message);
   }
 }
 
@@ -811,7 +1491,9 @@ async function updateXAI() {
 let lastHedge = null;
 state.hedgeCost = 0.005;
 state.hedgeDynamics = "rough";
-bindSegmented("hedge-dynamics", (v) => { state.hedgeDynamics = v; syncURL(); });
+bindSegmented("hedge-dynamics", (v) => {
+  state.hedgeDynamics = v; paintRailScope(); syncURL();
+});
 
 $("in-cost").addEventListener("input", () => {
   state.hedgeCost = parseFloat($("in-cost").value) / 10000;
@@ -820,16 +1502,12 @@ $("in-cost").addEventListener("input", () => {
 });
 
 const CHIP_HELP = {
-  "CVaR₉₅ deep hedge": "Expected P&L in the worst 5% of paths when the learned policy hedges the short call (less negative is better)",
-  "CVaR₉₅ delta hedge": "Expected P&L in the worst 5% of paths when a Black-Scholes delta hedge with the same costs does the hedging",
-  "CVaR₉₅ Whalley-Wilmott": "Expected P&L in the worst 5% of paths for a delta hedge that only trades outside a cost-aware no-trade band (Whalley & Wilmott, 1997), the strongest classical baseline",
-  "Tail-risk reduction": "How much smaller the deep hedge's worst-5% loss is than the delta hedge's",
-  "Tail-risk increase": "How much larger the deep hedge's worst-5% loss is than the delta hedge's",
-  "Avg costs deep vs delta": "Average transaction costs paid per path by each policy",
-  "Butterfly: min g": "Minimum of the Durrleman function g(k) over the grid; g >= 0 everywhere means every butterfly spread has a non-negative price (no negative risk-neutral density)",
-  "Calendar: min ∂w/∂T": "Minimum slope of total implied variance in maturity; non-negative means no calendar-spread arbitrage",
-  "Grid points checked": "Grid points at which both conditions were evaluated by automatic differentiation for the current sigma and rate",
-  "IV RMSE vs ensemble": "Implied-vol error of the constrained surface against the 0DTE pricing ensemble it was fitted to, on held-out points where the implied vol is resolved",
+  "Learned policy": "Average loss over the worst 5% of paths (the 95% conditional value at risk) when the neural policy hedges the short call. Closer to zero is better.",
+  "Delta hedge": "The same measure for a Black-Scholes delta hedge that pays the same transaction costs on every trade.",
+  "Whalley-Wilmott band": "The same measure for a delta hedge that only trades when it drifts outside a cost-aware no-trade band (Whalley and Wilmott, 1997). This is the strongest classical baseline.",
+  "Trading cost per path": "Average transaction costs paid over one path by the learned policy and by the delta hedge.",
+  "No-arbitrage check": "Whether a butterfly spread could ever have a negative price, and whether total variance ever falls as expiry lengthens. Either would be an arbitrage. Both are checked by automatic differentiation at every grid point.",
+  "Distance from the pricing model": "How far this arbitrage-free surface sits from the pricing ensemble it was fitted to, in volatility points.",
 };
 function hedgeStatChip(k, v, cls) {
   const help = CHIP_HELP[k] ? " title='" + CHIP_HELP[k] + "'" : "";
@@ -839,12 +1517,16 @@ function hedgeStatChip(k, v, cls) {
 
 async function runHedge() {
   const btn = $("btn-hedge");
-  btn.textContent = "Simulating...";
+  btn.textContent = "Simulating…";
   btn.disabled = true;
   // The simulation takes seconds (tens of seconds on a small host); without
   // this the panel is a blank void with only the button label as feedback.
+  $("hedge-verdict").textContent = "";
   $("hedge-sub").textContent =
-    "Simulating thousands of 30-day paths across both hedging policies…";
+    "Simulating paths and hedging the same short call three ways. " +
+    "A few seconds on this server.";
+  $("hedge-empty")?.remove();
+  $("holdings-empty")?.remove();
   try {
     const d = await api("/api/hedge",
       { sigma: state.sigma, rate: state.rate, cost: state.hedgeCost,
@@ -852,6 +1534,7 @@ async function runHedge() {
     clearShimmer("plot-hedge");
     clearShimmer("plot-holdings");
     lastHedge = d;
+    renderReportInputs();
     const K = state.strike;
     const $$ = (v) => (v < 0 ? "−$" : "$") + Math.abs(v * K).toFixed(2);
 
@@ -860,56 +1543,97 @@ async function runHedge() {
     // result under GBM often favors delta), so the green "good" highlight
     // and the reduction/increase label both follow the measurement instead
     // of assuming the deep policy won.
-    const deepWins = d.deep.cvar95 < d.delta.cvar95;
-    const improvement = (1 - d.deep.cvar95 / Math.max(d.delta.cvar95, 1e-9)) * 100;
     const ww = d.whalley_wilmott;
-    const wwLabel = "CVaR₉₅ Whalley-Wilmott";
+    const improvement = (1 - d.deep.cvar95 / Math.max(d.delta.cvar95, 1e-9)) * 100;
     const best = Math.min(d.deep.cvar95, d.delta.cvar95,
                           ww ? ww.cvar95 : Infinity);
+    // cvar95 is a positive loss magnitude, so the SMALLEST one is the best
+    // hedge. Only that one is highlighted: two green chips pointing at
+    // different winners is how a reader ends up unable to tell who won.
+    const pm = (se) => se ? " ± " + (se * K).toFixed(2) : "";
     $("hedge-stats").innerHTML =
-      hedgeStatChip("CVaR₉₅ deep hedge", $$(-d.deep.cvar95),
+      hedgeStatChip("Worst-5% loss · learned policy",
+        $$(-d.deep.cvar95) + pm(d.deep.cvar95_se),
         d.deep.cvar95 === best ? "good" : "") +
-      hedgeStatChip("CVaR₉₅ delta hedge", $$(-d.delta.cvar95),
+      hedgeStatChip("Worst-5% loss · delta hedge",
+        $$(-d.delta.cvar95) + pm(d.delta.cvar95_se),
         d.delta.cvar95 === best ? "good" : "") +
-      (ww ? hedgeStatChip(wwLabel, $$(-ww.cvar95),
-        ww.cvar95 === best ? "good" : "") : "") +
-      hedgeStatChip(improvement >= 0 ? "Tail-risk reduction"
-                                     : "Tail-risk increase",
-        Math.abs(improvement).toFixed(0) + "%", improvement > 0 ? "good" : "") +
-      hedgeStatChip("Avg costs deep vs delta",
-        $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs));
-    $("hedge-sub").textContent =
-      d.n_paths.toLocaleString() + " simulated 30-day paths under " +
-      (d.dynamics_label || "the selected dynamics") +
-      " · short ATM call (premium " + $$(d.premium) + ") · σ " +
-      (d.sigma * 100).toFixed(1) + "%" +
-      (d.sigma_source === "SPY calibration" ? " (SPY-calibrated)" : "") +
-      " · r " + (d.rate * 100).toFixed(1) +
-      "% · cost " + (d.cost * 10000).toFixed(0) + " bps" +
-      (d.clamped ? " · params clamped to hedger's trained box" : "");
+      (ww ? hedgeStatChip("Worst-5% loss · Whalley-Wilmott band",
+        $$(-ww.cvar95) + pm(ww.cvar95_se), ww.cvar95 === best ? "good" : "") : "") +
+      hedgeStatChip("Trading cost per path",
+        $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs) + " for delta");
 
-    const allPnl = [...d.deep.pnl, ...d.delta.pnl].map((v) => v * K);
+    // Say who won, in a sentence, covering every ordering the run can produce.
+    const names = [["the learned policy", d.deep.cvar95],
+                   ["the delta hedge", d.delta.cvar95]];
+    if (ww) names.push(["the Whalley-Wilmott band", ww.cvar95]);
+    names.sort((a, b) => a[1] - b[1]);
+    const costBps = (d.cost * 10000).toFixed(0);
+    const market = d.dynamics === "gbm"
+      ? "Black-Scholes paths" : "rough-volatility paths with jumps";
+    let verdict = "Over " + d.n_paths.toLocaleString() + " " + market +
+      " at " + costBps + " basis points a trade, " + names[0][0] +
+      " has the smallest worst-5% loss, " + $$(-names[0][1]) + ", against " +
+      $$(-names[1][1]) + " for " + names[1][0] +
+      (names[2] ? " and " + $$(-names[2][1]) + " for " + names[2][0] : "") + ". ";
+    verdict += improvement >= 0
+      ? "The learned policy beats a plain delta hedge by " +
+        Math.abs(improvement).toFixed(0) + "% on tail loss while paying " +
+        $$(d.deep.mean_costs) + " a path in costs against " +
+        $$(d.delta.mean_costs) + "."
+      : "A plain delta hedge keeps the smaller tail loss here; the learned " +
+        "policy trades less (" + $$(d.deep.mean_costs) + " a path against " +
+        $$(d.delta.mean_costs) + ") but that saving does not cover the wider tail.";
+    $("hedge-verdict").textContent = verdict;
+    $("hedge-convention").textContent =
+      "Worst-5% loss is the average profit or loss across the worst 5% of " +
+      "simulated paths, in dollars per option at a $" + K + " strike. Closer " +
+      "to zero is better; ± is a bootstrap standard error.";
+    $("hedge-method").textContent = d.measure_note || "";
+
+    $("hedge-sub").textContent =
+      "Short one 30-day at-the-money call, hedged daily on " +
+      d.n_paths.toLocaleString() + " simulated paths of " +
+      (d.dynamics_label || "the selected market") + ". Premium " +
+      $$(d.premium) + ", " + costBps + " basis points a trade. " +
+      (d.sigma_source === "SPY calibration"
+        ? "Volatility (" + (d.sigma * 100).toFixed(1) + "%) and rate (" +
+          (d.rate * 100).toFixed(1) + "%) come from the SPY calibration this " +
+          "market was fitted to, not from the sidebar."
+        : "Volatility " + (d.sigma * 100).toFixed(1) + "% and rate " +
+          (d.rate * 100).toFixed(1) + "%, from the sidebar.") +
+      (d.clamped ? " Inputs were clamped to the policy's trained range." : "");
+
+    const allPnl = [...d.deep.pnl, ...d.delta.pnl,
+                    ...(ww && ww.pnl ? ww.pnl : [])].map((v) => v * K);
     const span = Math.max(Math.abs(Math.min(...allPnl)), Math.abs(Math.max(...allPnl)));
     const binSize = (2 * span) / 60;
 
     Plotly.react("plot-hedge", [
       {
         type: "histogram", x: d.delta.pnl.map((v) => v * K),
-        name: "delta hedge · CVaR₉₅ " + $$(-d.delta.cvar95),
-        marker: { color: "rgba(255,92,168,0.45)",
+        name: "delta hedge · worst-5% loss " + $$(-d.delta.cvar95),
+        marker: { color: "rgba(196,131,92,0.45)",
                   line: { color: COLORS.mc, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
       },
       {
         type: "histogram", x: d.deep.pnl.map((v) => v * K),
-        name: "deep hedge · CVaR₉₅ " + $$(-d.deep.cvar95),
+        name: "learned policy · worst-5% loss " + $$(-d.deep.cvar95),
         marker: { color: "rgba(90,140,200,0.45)",
                   line: { color: COLORS.nn, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
       },
+      ...(ww && ww.pnl ? [{
+        type: "histogram", x: ww.pnl.map((v) => v * K),
+        name: "Whalley-Wilmott band · worst-5% loss " + $$(-ww.cvar95),
+        marker: { color: "rgba(136,145,163,0.35)",
+                  line: { color: COLORS.violet, width: 1 } },
+        xbins: { start: -span, end: span, size: binSize },
+      }] : []),
     ], {
       ...PLOT_BASE, barmode: "overlay",
-      xaxis: { title: { text: "terminal hedging P&L ($, K = " + K + ")" },
+      xaxis: { title: { text: "profit or loss at expiry ($, strike " + K + ")" },
                gridcolor: COLORS.grid, zeroline: false },
       yaxis: { title: { text: "paths" }, gridcolor: COLORS.grid, zeroline: false },
       shapes: [
@@ -932,12 +1656,12 @@ async function runHedge() {
       },
       {
         x: days, y: d.example_path.delta_holdings,
-        mode: "lines+markers", name: "delta-hedge holding",
+        mode: "lines+markers", name: "delta hedge",
         line: { color: COLORS.mc, width: 2 }, marker: { size: 4 },
       },
       {
         x: days, y: d.example_path.deep_holdings,
-        mode: "lines+markers", name: "deep-hedge holding",
+        mode: "lines+markers", name: "learned policy",
         line: { color: COLORS.nn, width: 2.5 }, marker: { size: 4 },
       },
     ], {
@@ -945,15 +1669,17 @@ async function runHedge() {
       margin: { l: 52, r: 52, t: 12, b: 42 },
       xaxis: { title: { text: "trading day" }, gridcolor: COLORS.grid,
                zeroline: false },
-      yaxis: { title: { text: "holding (shares per option)" },
+      yaxis: { title: { text: "shares held per option" },
                gridcolor: COLORS.grid, zeroline: false, range: [0, 1.1] },
-      yaxis2: { overlaying: "y", side: "right", showgrid: false,
+      yaxis2: { title: { text: "spot ($)" },
+                overlaying: "y", side: "right", showgrid: false,
                 tickfont: { color: "rgba(255,255,255,0.4)" } },
     }, PLOT_CONFIG);
   } catch (e) {
+    $("hedge-verdict").textContent = "";
     $("hedge-sub").textContent = e.message;
   } finally {
-    btn.textContent = "Run Simulation";
+    btn.textContent = "Run simulation";
     btn.disabled = false;
   }
 }
@@ -962,25 +1688,40 @@ $("btn-hedge").addEventListener("click", runHedge);
 // ───────────────────────────────────────────────────────────── LLM ──
 $("btn-risk").addEventListener("click", async () => {
   const btn = $("btn-risk");
-  btn.textContent = "Generating...";
+  btn.textContent = "Writing…";
+  let step = 0;
   btn.disabled = true;
   const out = $("ai-report");
   try {
     // Auto-gather any missing inputs instead of bouncing the user around.
-    if (!lastAttributions) { out.textContent = "Computing attributions..."; await updateXAI(); }
-    if (!lastHedge) { out.textContent = "Running hedging simulation..."; await runHedge(); }
+    if (!lastAttributions) {
+      out.textContent = "Working out what drives the price… (1 of 3)";
+      await updateXAI();
+    }
+    if (!lastHedge) {
+      out.textContent = "Running the hedging simulation… (2 of 3)";
+      await runHedge();
+    }
+    out.textContent = "Writing the summary… (3 of 3)";
     if (lastNNPrice == null || !lastAttributions || !lastHedge)
       throw new Error("pricing/hedging inputs unavailable; is the backend up?");
 
-    out.textContent = "Contacting the risk analyst…";
     out.classList.add("streaming");
+    const K = state.strike;
     const req = {
       // Only a successfully fetched ticker names the underlying; a failed
       // lookup used to put strings like "ZZZZQQ" into the report.
-      ticker: marketData ? marketData.ticker : "a generic underlying",
+      ticker: marketData ? marketData.ticker : "",
+      contract: contractShort(),
       nn_price: lastNNPrice,
-      bs_cvar: -lastHedge.delta.cvar95 * state.strike,
-      deep_cvar: -lastHedge.deep.cvar95 * state.strike,
+      bs_cvar: -lastHedge.delta.cvar95 * K,
+      deep_cvar: -lastHedge.deep.cvar95 * K,
+      ww_cvar: lastHedge.whalley_wilmott
+        ? -lastHedge.whalley_wilmott.cvar95 * K : null,
+      deep_cost: lastHedge.deep.mean_costs * K,
+      delta_cost: lastHedge.delta.mean_costs * K,
+      dynamics_label: lastHedge.dynamics_label || "",
+      cost_bps: Math.round(lastHedge.cost * 1e4),
       attributions: lastAttributions,
     };
 
@@ -1001,10 +1742,10 @@ $("btn-risk").addEventListener("click", async () => {
       out.textContent += decoder.decode(value, { stream: true });
     }
   } catch (e) {
-    out.textContent = "Error: " + e.message;
+    out.textContent = "The summary could not be written: " + e.message;
   } finally {
     out.classList.remove("streaming");
-    btn.textContent = "Generate Report";
+    btn.textContent = "Write summary";
     btn.disabled = false;
   }
 });
@@ -1032,8 +1773,9 @@ function wsConnect() {
   ws.onopen = () => {
     btn.textContent = "Disconnect";
     btn.classList.add("btn-stream-active");
-    $("stream-sub").textContent =
-      "Connected. Negotiating stream rate…";
+    $("stream-empty")?.remove();
+    $("stream-stats").classList.remove("idle");
+    $("stream-sub").textContent = "Connected. Starting the feed…";
 
     ws.send(JSON.stringify({
       spot: state.spot, strike: state.strike, sigma: state.sigma,
@@ -1071,8 +1813,8 @@ function wsConnect() {
       // The server caps the requested rate (MAX_STREAM_HZ); show the rate it
       // actually granted. This frame has no tick fields - falling through
       // used to throw a TypeError on every connect.
-      $("stream-sub").textContent = "Connected. Streaming GBM ticks at " +
-        d.hz + " Hz with neural pricing.";
+      $("stream-sub").textContent = "Live: " + d.hz +
+        " simulated ticks a second, each priced by the network.";
       return;
     }
 
@@ -1081,7 +1823,9 @@ function wsConnect() {
     $("ws-price").textContent = "$" + d.price.toFixed(4);
     $("ws-price").className = "v mono live";
     $("ws-delta").textContent = d.delta.toFixed(4);
-    $("ws-gamma").textContent = d.gamma.toFixed(6);
+    $("ws-gamma").textContent = d.gamma.toFixed(4);
+    if (d.rho !== undefined) $("ws-rho").textContent = d.rho.toFixed(4);
+    else $("ws-rho").closest(".stream-stat").hidden = true;
     $("ws-vega").textContent = d.vega.toFixed(4);
     $("ws-theta").textContent = d.theta.toFixed(4);
     $("ws-latency").textContent = fmtMs(d.latency_us / 1000);
@@ -1108,13 +1852,13 @@ function wsConnect() {
   ws.onclose = () => {
     btn.textContent = "Connect";
     btn.classList.remove("btn-stream-active");
-    $("stream-sub").textContent =
-      "Disconnected. Click Connect to resume streaming.";
+    $("stream-sub").textContent = "Disconnected. Press Connect to resume.";
+    $("stream-stats").classList.add("idle");
     ws = null;
   };
 
   ws.onerror = () => {
-    $("stream-sub").textContent = "WebSocket error. Is the server running?";
+    $("stream-sub").textContent = "The feed could not be reached. Press Connect to retry.";
     ws = null;
     btn.textContent = "Connect";
     btn.classList.remove("btn-stream-active");
@@ -1131,7 +1875,11 @@ $("btn-stream").addEventListener("click", wsConnect);
 // demand via its Re-run button instead of on every page view.
 const urlParams = Object.fromEntries(new URLSearchParams(location.search));
 applyState(urlParams);
-if (urlParams.tab && TAB_IDS[urlParams.tab]) showTab(urlParams.tab);
+if (urlParams.tab) {
+  const t = String(urlParams.tab).toLowerCase();
+  const key = TAB_IDS[t] ? t : TAB_ALIAS[t];
+  if (key) showTab(key);
+}
 refreshReadouts();
 loadModelInfo();
 loadErrorDistribution();
@@ -1156,7 +1904,7 @@ const latencyShimmer = $("plot-latency").querySelector(".shimmer");
 if (latencyShimmer) {
   latencyShimmer.replaceWith(Object.assign(document.createElement("p"), {
     className: "card-sub centered latency-hint",
-    textContent: "Click Re-run to measure latency on this instance.",
+    textContent: "Press Time it to measure the network and the simulation on this server.",
   }));
 }
 

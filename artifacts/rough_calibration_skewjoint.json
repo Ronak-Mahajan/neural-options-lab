@@ -1,0 +1,169 @@
+{
+  "ticker": "SPY",
+  "as_of": "2026-08-21T11:00:13.538217-04:00",
+  "run_at": "2026-09-11T00:08:26-05:00",
+  "session_date": null,
+  "snapshot_spread_min": null,
+  "spot": 765.8499755859375,
+  "rate": 0.03713000059127808,
+  "rate_source": "^IRX",
+  "eta": 3.9997,
+  "rho": -0.504,
+  "H": 0.3095,
+  "xi": 0.015705,
+  "sqrt_xi": 0.1253,
+  "xi_curve": null,
+  "n_quotes": 585,
+  "n_scored": 585,
+  "n_unpriceable": 61,
+  "expiries": [
+    "2026-08-24",
+    "2026-08-25",
+    "2026-08-26",
+    "2026-08-27",
+    "2026-08-28",
+    "2026-08-31",
+    "2026-09-04"
+  ],
+  "forwards": {
+    "2026-08-24": {
+      "F": 764.6899,
+      "source": "capture",
+      "fwd_pv": 764.44037910613,
+      "tau": 0.008789525043854642
+    },
+    "2026-08-25": {
+      "F": 764.7599,
+      "source": "capture",
+      "fwd_pv": 764.4325880436292,
+      "tau": 0.011529251071251903
+    },
+    "2026-08-26": {
+      "F": 764.8049,
+      "source": "capture",
+      "fwd_pv": 764.3998048941017,
+      "tau": 0.014268977098649162
+    },
+    "2026-08-27": {
+      "F": 764.965,
+      "source": "capture",
+      "fwd_pv": 764.4820296567428,
+      "tau": 0.017008703126046423
+    },
+    "2026-08-28": {
+      "F": 765.1144,
+      "source": "capture",
+      "fwd_pv": 764.5535293403301,
+      "tau": 0.019748429153443686
+    },
+    "2026-08-31": {
+      "F": 765.1902,
+      "source": "capture",
+      "fwd_pv": 764.3960078128964,
+      "tau": 0.027967607235635464
+    },
+    "2026-09-04": {
+      "F": 765.7217,
+      "source": "capture",
+      "fwd_pv": 764.6157796072143,
+      "tau": 0.038926511345224506
+    }
+  },
+  "skipped_exdiv": [],
+  "ex_dividend_check": "ok",
+  "iv_rmse_volpts": 1.794,
+  "iv_rmse_volpts_priceable_only": 1.931,
+  "objective": "map IV Huber (MapCalibrator.loss) + lambda * skew chi2 per expiry",
+  "objective_value": 2.1853827509798047,
+  "objective_mc_sd": 0.0,
+  "objective_noise_reps": 0,
+  "search_paths": null,
+  "polish_paths": null,
+  "final_paths": null,
+  "day_count": "ACT/365 calendar (surrogate trains on k/252 trading days \u2014 see the module docstring)",
+  "min_tau_hours": 34.8,
+  "quote_source": "live_mid",
+  "median_half_spread_iv_volpts": 4.8022,
+  "rmse_over_half_spread": 0.374,
+  "kernel": "riemann_liouville_volterra_joint_v1",
+  "accepted": null,
+  "reject_reasons": [],
+  "iv_rmse_volpts_mc": 2.124,
+  "pricing_engine": "pricing_map.pt (deterministic surrogate); MC validation in docs/joint_skew_refit.json",
+  "note": "ANALYSIS ARTIFACT from scripts/joint_skew_refit.py, not the served calibration: parameters minimise smile loss + lambda * ATM-skew chi2 (docs/joint_skew_refit.md). accepted is null because calibrate.quality_gate was not run on it and it is not wired into the pricing service or the 0DTE surrogate.",
+  "skew_term_structure": {
+    "lambda": 0.1,
+    "exponent_ladder_mc": -0.2636833153502884,
+    "exponent_ladder_mc_se": 0.007330094101200334,
+    "exponent_ladder_window_days": 45.0,
+    "exponent_expiries_map": -0.2509957950147556,
+    "exponent_expiries_mc": -0.233273072521739,
+    "market_exponent": -0.24919935313485866,
+    "market_exponent_se": 0.033206358849518454,
+    "served_exponent_ladder_mc": -0.3295828104372091,
+    "chi2": 7.857685545982432,
+    "chi2_mc": 8.859610647825592,
+    "chi2_pure_smile": 960.2633716868231,
+    "eta_interior": false,
+    "eta_bounds": [
+      0.5,
+      4.0
+    ],
+    "pin_frac": 0.02,
+    "rmse_cost_vs_pure_smile_volpts": 0.446377715939799,
+    "pure_smile_theta": [
+      3.999987541415675,
+      -0.5394096051179753,
+      0.2122233143341655,
+      0.014086765122844343
+    ],
+    "bootstrap": {
+      "n": 24,
+      "eta": {
+        "mean": 3.991332782294131,
+        "sd": 0.02068921754641419,
+        "p2.5": 3.9324320238196635,
+        "p97.5": 4.0
+      },
+      "rho": {
+        "mean": -0.5032248392682886,
+        "sd": 0.018962137722505927,
+        "p2.5": -0.5402270282524103,
+        "p97.5": -0.4748808281582636
+      },
+      "H": {
+        "mean": 0.3080052754161516,
+        "sd": 0.011390364316941664,
+        "p2.5": 0.2892082969483762,
+        "p97.5": 0.33145071408733545
+      },
+      "xi": {
+        "mean": 0.015721030782398716,
+        "sd": 0.000198415624175028,
+        "p2.5": 0.015399857789782007,
+        "p97.5": 0.016129464463880187
+      },
+      "frac_eta_interior": 0.041666666666666664
+    },
+    "interior_eta_alternative": {
+      "capture": "spy_20260821T150017Z.json.gz",
+      "lambda": 0.3,
+      "theta": [
+        3.388412829934001,
+        -0.5505836591255109,
+        0.2954647898114534,
+        0.016013940546745542
+      ],
+      "rmse_volpts": 1.9308455121730672,
+      "b_expiries": -0.24645824725210072,
+      "chi2": 6.94896970559103,
+      "smile_loss": 1.5852174647868824,
+      "eta_interior": true
+    },
+    "interior_eta_alternative_mc": {
+      "exponent_ladder_mc": -0.26349112468207636,
+      "exponent_ladder_mc_se": 0.004254977550565259,
+      "rmse_mc_volpts": 2.2629585270208743
+    }
+  }
+}
