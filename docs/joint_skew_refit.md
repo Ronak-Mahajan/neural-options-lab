@@ -1,6 +1,7 @@
 # Joint (H, η) refit of rough Bergomi against the smiles and the ATM skew term structure
 
-**Summary.** The served SPY calibration (η 3.94 at its bound, ρ −0.54, H 0.26) fits single-day
+**Summary.** The latest SPY smile calibration, `artifacts/rough_calibration.json` (η 3.94 at its
+bound, ρ −0.54, H 0.26; marked not accepted by its own quality gate), fits single-day
 smiles well but its at-the-money skew steepens into expiry with exponent −0.33 (Monte Carlo,
 1–45 trading days), 2.5 market standard errors away from the market's −0.249 ± 0.033. Adding the
 skew term structure to the calibration objective moves the optimum to **H 0.31, ρ −0.50,
@@ -9,7 +10,9 @@ within half a market standard error, for a cost of **0.45 vol points** of smile 
 (1.31 → 1.76, pricing-map RMSE, mean of three captures). An interior-η solution (η 3.39,
 H 0.30) reaches the same exponent (−0.263 ± 0.004) for about 0.15 vol points more. The
 recommended parameters are written to `artifacts/rough_calibration_skewjoint.json` as an
-analysis artifact; the served calibration and the 0DTE surrogate trained on it are unchanged.
+analysis artifact; the calibration files and the served 0DTE surrogate are unchanged. The served
+surrogate was trained on an earlier fit that the quality gate accepted (20 August 2026: η 3.66,
+ρ −0.63, H 0.255), not on the calibration file compared against below.
 
 Everything below was produced by `scripts/joint_skew_refit.py` (four staged runs, 680 s of
 wall-clock on 16 CPU threads, no GPU; every stage checkpoints to JSON and resumes). Numbers are
@@ -24,8 +27,8 @@ in `docs/joint_skew_refit.json`; the figure is `docs/joint_skew_refit.png`; test
 
 `docs/atm_skew_term_structure.md` established two things: the SPY market's ATM skew
 `ψ(T) = dσ_imp/dk` at `k = 0` steepens toward expiry with exponent `b = −0.249 ± 0.033`,
-consistent with the rough-volatility prediction `H − ½ = −0.239` at the calibrated `H = 0.261`;
-and the calibrated model itself does not reproduce that law, because its vol-of-vol sits at the
+consistent with the rough-volatility prediction `H − ½ = −0.239` at the calibration file's `H = 0.261`;
+and the model at those parameters does not reproduce that law, because its vol-of-vol sits at the
 `η = 4` bound where `η T^H` is order one even at one day, giving `b = −0.321 ± 0.007`. The smile
 calibration never sees the term structure explicitly: it minimises a vega-weighted Huber loss over
 quotes, and the cheapest way to buy short-dated curvature is more `η`. This document asks whether a
@@ -56,7 +59,7 @@ market's skew term structure, and what it costs.
   `MapCalibrator`) for `λ ∈ {0, 0.01, 0.03, 0.1, 0.3, 1, 3, 10}`, per capture and averaged; the
   Pareto front of smile RMSE against `|b_model − b_mkt|` picks the knee.
 - **Uncertainty**: 24 bootstrap refits (quotes resampled by expiry) at the recommended `λ`.
-- **Monte Carlo validation**: the served, pure-smile, joint and interior-η parameters on the
+- **Monte Carlo validation**: the calibration-file, pure-smile, joint and interior-η parameters on the
   standard maturity ladder (1–126 trading days, 4 × 200k paths, common random numbers across the
   strike stencil) for the exponent over `T ≤ 45` days, and a 400,000-path repricing of one capture's
   585 quotes for the smile RMSE with the true engine.
@@ -81,14 +84,14 @@ term structure: the model's exponent on the capture expiries is `−0.41` there.
 | 0.3 | 1.82 | −0.26 | 3.9 | interior on one capture | | | |
 | 1 – 10 | 2.1 – 2.5 | −0.25 | 3.3 – 3.8 | | | | |
 
-Served calibration on the same captures: smile RMSE 1.745 ± 0.113, exponent −0.324 ± 0.005,
+The calibration file on the same captures: smile RMSE 1.745 ± 0.113, exponent −0.324 ± 0.005,
 χ² 266 ± 157 per expiry. The knee at `λ = 0.1` sits one market standard error from the market
-exponent at less than half the served calibration's skew χ², and costs 0.44 vol points against the
+exponent at less than half the calibration file's skew χ², and costs 0.44 vol points against the
 pure-smile optimum.
 
 ### 3.3 Recommended parameters (λ = 0.1, capture `spy_20260821T150017Z`)
 
-| parameter | joint refit | bootstrap (24 resamples) | served | pure smile |
+| parameter | joint refit | bootstrap (24 resamples) | calibration file | pure smile |
 |---|---|---|---|---|
 | η | 4.000 (bound) | 3.99 ± 0.02, interior in 4 % of resamples | 3.935 | 4.000 |
 | ρ | −0.504 | −0.503 ± 0.019 | −0.536 | −0.539 |
@@ -101,8 +104,8 @@ pure-smile optimum.
 | **exponent, ladder 1–45 d, MC** | **−0.264 ± 0.007** | | −0.330 ± 0.005 | −0.369 ± 0.009 |
 
 Market: exponent −0.249 ± 0.033 (56 rows, 2–10 trading days); on this capture's own expiries
-−0.278 ± 0.024. The joint parameters are 0.5 SE from the pooled market exponent; the served
-calibration is 2.5 SE away and the pure-smile optimum 3.6 SE.
+−0.278 ± 0.024. The joint parameters are 0.5 SE from the pooled market exponent; the calibration
+file is 2.5 SE away and the pure-smile optimum 3.6 SE.
 
 Interior-η alternative (`λ = 0.3`, `η 3.39, ρ −0.551, H 0.295, √ξ 0.1266`): ladder exponent
 −0.263 ± 0.004, χ² 8.2 per expiry, map smile RMSE 1.91 ± 0.05 (MC 2.26). It reproduces the term
@@ -111,7 +114,7 @@ structure equally well with `η` off its bound, for a further 0.15 vol points of
 ### 3.4 The pricing map versus the true engine
 
 Repricing the 585 quotes of one capture with 400,000 paths, the map's smile RMSE is below the Monte
-Carlo one by 0.25–0.35 vol points for every parameter set (served 1.65 vs 1.91, joint 1.79 vs 2.12,
+Carlo one by 0.25–0.35 vol points for every parameter set (calibration file 1.65 vs 1.91, joint 1.79 vs 2.12,
 pure 1.35 vs 1.53, interior 1.93 vs 2.26); about 0.65 vol points of the Monte Carlo figure is its own
 noise floor at this path count, so the map is neither systematically optimistic nor pessimistic
 about the *ranking*, which the Monte Carlo reproduces. The map's skews agree with Monte Carlo to
@@ -126,8 +129,8 @@ than the Monte Carlo ones, a bias that is the same for every set and does not ch
   (`backend/quant/dataset_0dte.py`) and retraining (`backend/quant/train_0dte.py`), a GPU job;
   this document recommends it and does not do it.
 - The skew term structure is a stronger identifier of the dynamics than a single day's smile,
-  and it disagrees with the served `H` by four bootstrap standard deviations (0.26 vs
-  0.308 ± 0.011). A calibration protocol that includes the term-structure term at `λ ≈ 0.1` costs
+  and it disagrees with the calibration file's `H` by four bootstrap standard deviations (0.26 vs
+  0.308 ± 0.011), and with the served checkpoint's H 0.255 by about five. A calibration protocol that includes the term-structure term at `λ ≈ 0.1` costs
   half a vol point of smile fit and removes the dependence on the `η` bound's placement for the
   exponent, though not for `η` itself.
 - The three captures come from two consecutive trading days; the term-structure target is
@@ -154,6 +157,6 @@ than the Monte Carlo ones, a bias that is the same for every set and does not ch
 - Captures from other days whose market exponent is far from −0.25 would move the target; the
   joint parameters are tied to this regime.
 - A Monte Carlo repricing at 400,000 paths showing the joint parameters' smile RMSE below the
-  served calibration's would contradict the stated cost.
+  calibration file's would contradict the stated cost.
 - A regenerated pricing map with `η` allowed above 4 whose smile optimum lands at an interior `η`
   with the market exponent would remove the bound from the story entirely.
