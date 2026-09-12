@@ -101,6 +101,22 @@ function clearShimmer(plotId) {
   if (shim) shim.remove();
 }
 
+function panelMessage(plotId, text) {
+  const el = $(plotId);
+  if (!el) return;
+  clearShimmer(plotId);
+  try { Plotly.purge(el); } catch { /* never had a plot */ }
+  el.querySelector(".panel-message")?.remove();
+  const box = document.createElement("div");
+  box.className = "empty-state panel-message";
+  box.innerHTML = "<p>" + text + "</p>";
+  el.appendChild(box);
+}
+
+function clearPanelMessage(plotId) {
+  $(plotId)?.querySelector(".panel-message")?.remove();
+}
+
 function optionBody() {
   return {
     spot: state.spot, strike: state.strike, maturity: state.maturity,
@@ -117,6 +133,61 @@ function bindSlider(id, onChange) {
   };
   el.addEventListener("input", () => { paint(); onChange(parseFloat(el.value)); });
   paint();
+
+  // The matching readout is a typed field: a slider cannot express a strike
+  // of 137.42, and a pricer that cannot take one is a demonstration.
+  const box = $("val-" + id);
+  if (!box) return;
+  const commit = () => {
+    const raw = box.value.trim().replace(/[%$,\s]/g, "");
+    // "1.5y" and "30d" both mean something for maturity.
+    const m = /^([0-9]*\.?[0-9]+)\s*([a-z]*)$/i.exec(raw);
+    if (!m) { box.classList.add("invalid"); return; }
+    let v = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    if (id === "maturity") {
+      if (unit === "d") v = v / 252;
+      else if (unit === "m") v = v / 12;
+      else if (unit === "w") v = v / 52;
+      // a bare number large enough to be days rather than years
+      else if (!unit && v > 3) v = v / 252;
+    }
+    const lo = parseFloat(el.min), hi = parseFloat(el.max);
+    // Volatility and rate are shown and typed in percent, and their sliders
+    // are in percent too; only the state is a fraction.
+    const sliderValue = v;
+    if (!isFinite(sliderValue) || sliderValue < lo || sliderValue > hi) {
+      box.classList.add("invalid");
+      return;
+    }
+    box.classList.remove("invalid");
+    // Typed values are exact: widen the step so the browser does not round
+    // 137.42 to 137 on its way into the slider.
+    el.step = "any";
+    el.value = sliderValue;
+    paint();
+    onChange(parseFloat(el.value));
+  };
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); box.blur(); }
+    if (e.key === "Escape") { box.classList.remove("invalid"); refreshReadouts(); box.blur(); }
+  });
+  // While a field has focus, refreshReadouts must not overwrite what is
+  // being typed.
+  box.addEventListener("focus", () => { box.dataset.editing = "1"; });
+  box.addEventListener("blur", () => {
+    box.classList.remove("invalid");
+    commit();
+    delete box.dataset.editing;
+    refreshReadouts();
+  });
+}
+
+// refreshReadouts writes into these fields, so it must skip the one the user
+// is typing in.
+function setReadout(id, text) {
+  const el = $(id);
+  if (el && !el.dataset.editing) el.value = text;
 }
 
 // Maturities at or below 12 trading days route to the 0DTE rough-vol
@@ -136,11 +207,8 @@ function moneynessWords() {
 
 function maturityWords() {
   const T = state.maturity;
-  if (is0dte()) {
-    const d = Math.max(1, Math.round(T * 252));
-    return d === 1 ? "one-day" : d + "-day";
-  }
-  if (T < 0.17) return Math.round(T * 12 * 10) / 10 + "-month";
+  const days = Math.max(1, Math.round(T * 252));
+  if (days <= 45) return days === 1 ? "one-day" : days + "-day";
   if (T < 0.95) return Math.round(T * 12) + "-month";
   if (Math.abs(T - 1) < 0.03) return "one-year";
   if (Math.abs(T - 2) < 0.03) return "two-year";
@@ -163,7 +231,7 @@ function contractSentence() {
   const kind = is0dte() ? "European " + state.optionType
                         : "Asian " + state.optionType;
   const head = maturityWords() + " " + moneynessWords() + " " + kind;
-  const vol = $("val-sigma").textContent, rate = $("val-rate").textContent;
+  const vol = $("val-sigma").value, rate = $("val-rate").value;
   if (marketData) {
     return "Pricing a " + head + " on " + marketData.ticker + " at $" +
       state.spot.toLocaleString() + ", volatility " + vol + ", rate " + rate +
@@ -203,19 +271,19 @@ function paintRailScope() {
 }
 
 function refreshReadouts() {
-  $("val-spot").textContent = state.spot;
-  $("val-strike").textContent = state.strike;
-  $("val-maturity").textContent = is0dte()
+  setReadout("val-spot", String(+state.spot.toFixed(4)));
+  setReadout("val-strike", String(+state.strike.toFixed(4)));
+  setReadout("val-maturity", is0dte()
     ? Math.max(1, Math.round(state.maturity * 252)) + "d"
-    : state.maturity.toFixed(2) + "y";
+    : state.maturity.toFixed(2) + "y");
   const sigPct = state.sigma * 100;
-  $("val-sigma").textContent =
+  setReadout("val-sigma",
     (Math.abs(sigPct - Math.round(sigPct)) < 0.05 ? Math.round(sigPct)
-                                                  : sigPct.toFixed(1)) + "%";
-  $("val-rate").textContent = (state.rate * 100).toFixed(2).replace(/0$/, "") + "%";
+                                                  : sigPct.toFixed(1)) + "%");
+  setReadout("val-rate", (state.rate * 100).toFixed(2).replace(/0$/, "") + "%");
   $("rail-summary").textContent = (marketData ? marketData.ticker + " · " : "") +
     maturityWords() + " " + moneynessWords() + " " + state.optionType +
-    " · σ " + $("val-sigma").textContent + " · r " + $("val-rate").textContent;
+    " · σ " + $("val-sigma").value + " · r " + $("val-rate").value;
 
   renderContractLine();
 
@@ -341,53 +409,58 @@ async function updatePrice() {
 
 // ──────────────────────────────────────────────────────── convergence plot ──
 async function updateConvergence() {
-  const d = await api("/api/convergence", optionBody());
-  clearShimmer("plot-convergence");
+  try {
+    const d = await api("/api/convergence", optionBody());
+    clearShimmer("plot-convergence");
+    clearPanelMessage("plot-convergence");
 
-  const xs = d.mc_points.map((p) => p.n_paths);
-  const traces = [
-    { // CI band (upper then lower with fill)
-      x: [...xs, ...xs.slice().reverse()],
-      y: [...d.mc_points.map((p) => p.ci_high),
-          ...d.mc_points.map((p) => p.ci_low).reverse()],
-      fill: "toself", fillcolor: "rgba(196,131,92,0.15)",
-      line: { width: 0 }, hoverinfo: "skip",
-      name: "95% confidence interval", showlegend: true,
-    },
-    {
-      x: xs, y: d.mc_points.map((p) => p.price),
-      mode: "lines+markers",
-      name: d.engine === "rough_bergomi"
-        ? "Simulation (rough volatility)" : "Simulation",
-      line: { color: COLORS.mc, width: 2.5, shape: "spline" },
-      marker: { size: 7, color: COLORS.mc },
-      customdata: d.mc_points.map((p) => fmtMs(p.latency_ms)),
-      hovertemplate: "%{x:,} paths → $%{y:.4f}<br>%{customdata}<extra></extra>",
-    },
-    {
-      x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
-      mode: "lines", name: "Network price",
-      line: { color: COLORS.nn, width: 2.5, dash: "dash" },
-      hovertemplate: "NN: $%{y:.4f}<extra></extra>",
-    },
-    {
-      x: [xs[0], xs[xs.length - 1]],
-      y: [d.reference.price, d.reference.price],
-      mode: "lines",
-      name: `High-precision reference (${Math.round(d.reference.n_paths / 1000)}k paths)`,
-      line: { color: "rgba(255,255,255,0.45)", width: 1.5, dash: "dot" },
-      hovertemplate: "Reference: $%{y:.4f}<extra></extra>",
-    },
-  ];
-  Plotly.react("plot-convergence", traces, {
-    ...PLOT_BASE,
-    xaxis: { type: "log", title: { text: "simulated paths" },
-             tickvals: [500, 1000, 2000, 5000, 10000, 20000, 50000, 100000],
-             ticktext: ["500", "1k", "2k", "5k", "10k", "20k", "50k", "100k"],
-             gridcolor: COLORS.grid, zeroline: false },
-    yaxis: { title: { text: "option price" }, gridcolor: COLORS.grid,
-             zeroline: false, tickformat: ".3f" },
-  }, PLOT_CONFIG);
+    const xs = d.mc_points.map((p) => p.n_paths);
+    const traces = [
+      { // CI band (upper then lower with fill)
+        x: [...xs, ...xs.slice().reverse()],
+        y: [...d.mc_points.map((p) => p.ci_high),
+            ...d.mc_points.map((p) => p.ci_low).reverse()],
+        fill: "toself", fillcolor: "rgba(196,131,92,0.15)",
+        line: { width: 0 }, hoverinfo: "skip",
+        name: "95% confidence interval", showlegend: true,
+      },
+      {
+        x: xs, y: d.mc_points.map((p) => p.price),
+        mode: "lines+markers",
+        name: d.engine === "rough_bergomi"
+          ? "Simulation (rough volatility)" : "Simulation",
+        line: { color: COLORS.mc, width: 2.5, shape: "spline" },
+        marker: { size: 7, color: COLORS.mc },
+        customdata: d.mc_points.map((p) => fmtMs(p.latency_ms)),
+        hovertemplate: "%{x:,} paths → $%{y:.4f}<br>%{customdata}<extra></extra>",
+      },
+      {
+        x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
+        mode: "lines", name: "Network price",
+        line: { color: COLORS.nn, width: 2.5, dash: "dash" },
+        hovertemplate: "NN: $%{y:.4f}<extra></extra>",
+      },
+      {
+        x: [xs[0], xs[xs.length - 1]],
+        y: [d.reference.price, d.reference.price],
+        mode: "lines",
+        name: `High-precision reference (${Math.round(d.reference.n_paths / 1000)}k paths)`,
+        line: { color: "rgba(255,255,255,0.45)", width: 1.5, dash: "dot" },
+        hovertemplate: "Reference: $%{y:.4f}<extra></extra>",
+      },
+    ];
+    Plotly.react("plot-convergence", traces, {
+      ...PLOT_BASE,
+      xaxis: { type: "log", title: { text: "simulated paths" },
+               tickvals: [500, 1000, 2000, 5000, 10000, 20000, 50000, 100000],
+               ticktext: ["500", "1k", "2k", "5k", "10k", "20k", "50k", "100k"],
+               gridcolor: COLORS.grid, zeroline: false },
+      yaxis: { title: { text: "option price" }, gridcolor: COLORS.grid,
+               zeroline: false, tickformat: ".3f" },
+    }, PLOT_CONFIG);
+  } catch (err) {
+    panelMessage("plot-convergence", err.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────── IV surface plot ──
@@ -402,6 +475,7 @@ async function updateIVSurface() {
     const d = await api("/api/iv-surface",
       { sigma: state.sigma, rate: state.rate, resolution: 41 });
     clearShimmer("plot-ivsurface");
+    clearPanelMessage("plot-ivsurface");
     const fmtK = (v) => v.toFixed(3);
     const okB = d.g_min > 0, okC = d.calendar_min > 0;
     $("ivsurface-stats").innerHTML =
@@ -443,6 +517,7 @@ async function updateIVSurface() {
   } catch (err) {
     const sub = $("ivsurface-sub");
     if (sub) sub.textContent = err.message;
+    panelMessage("plot-ivsurface", err.message);
   }
 }
 
@@ -483,40 +558,45 @@ async function updateBenchmark() {
 
 // ─────────────────────────────────────────────────────────── surface plot ──
 async function updateSurface() {
-  const d = await api("/api/surface", {
-    sigma: state.sigma, rate: state.rate, strike: state.strike,
-    option_type: state.optionType,
-  });
-  clearShimmer("plot-surface");
+  try {
+    const d = await api("/api/surface", {
+      sigma: state.sigma, rate: state.rate, strike: state.strike,
+      option_type: state.optionType,
+    });
+    clearShimmer("plot-surface");
+    clearPanelMessage("plot-surface");
 
-  $("surface-stat").textContent = "This grid is " +
-    d.n_prices.toLocaleString() + " separate prices, computed in " +
-    fmtMs(d.latency_ms) + " on this server: about " +
-    Math.round(d.prices_per_second / 1000).toLocaleString() +
-    ",000 prices per second in a batch.";
+    $("surface-stat").textContent = "This grid is " +
+      d.n_prices.toLocaleString() + " separate prices, computed in " +
+      fmtMs(d.latency_ms) + " on this server: about " +
+      Math.round(d.prices_per_second / 1000).toLocaleString() +
+      ",000 prices per second in a batch.";
 
-  const norm = d.prices.map((row) => row.map((v) => v / state.strike));
-  Plotly.react("plot-surface", [{
-    type: "surface", x: d.moneyness, y: d.maturity, z: norm,
-    colorscale: [[0, "#0e1117"], [0.45, "#2a4a6b"], [0.75, "#5a8cc8"], [1, "#8891a3"]],
-    showscale: false,
-    contours: { z: { show: true, usecolormap: true,
-                     highlightcolor: "#fff", project: { z: true } } },
-    hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}<extra></extra>",
-    lighting: { specular: 0.4, roughness: 0.6 },
-  }], {
-    ...PLOT_BASE, showlegend: false,
-    margin: { l: 0, r: 0, t: 0, b: 0 },
-    scene: {
-      xaxis: { title: "moneyness S/K", gridcolor: COLORS.grid,
-               color: COLORS.ink, showbackground: false },
-      yaxis: { title: "maturity (y)", gridcolor: COLORS.grid,
-               color: COLORS.ink, showbackground: false },
-      zaxis: { title: "price / K", gridcolor: COLORS.grid,
-               color: COLORS.ink, showbackground: false },
-      camera: { eye: { x: -1.55, y: -1.6, z: 0.65 } },
-    },
-  }, PLOT_CONFIG);
+    const norm = d.prices.map((row) => row.map((v) => v / state.strike));
+    Plotly.react("plot-surface", [{
+      type: "surface", x: d.moneyness, y: d.maturity, z: norm,
+      colorscale: [[0, "#0e1117"], [0.45, "#2a4a6b"], [0.75, "#5a8cc8"], [1, "#8891a3"]],
+      showscale: false,
+      contours: { z: { show: true, usecolormap: true,
+                       highlightcolor: "#fff", project: { z: true } } },
+      hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}<extra></extra>",
+      lighting: { specular: 0.4, roughness: 0.6 },
+    }], {
+      ...PLOT_BASE, showlegend: false,
+      margin: { l: 0, r: 0, t: 0, b: 0 },
+      scene: {
+        xaxis: { title: "moneyness S/K", gridcolor: COLORS.grid,
+                 color: COLORS.ink, showbackground: false },
+        yaxis: { title: "maturity (y)", gridcolor: COLORS.grid,
+                 color: COLORS.ink, showbackground: false },
+        zaxis: { title: "price / K", gridcolor: COLORS.grid,
+                 color: COLORS.ink, showbackground: false },
+        camera: { eye: { x: -1.55, y: -1.6, z: 0.65 } },
+      },
+    }, PLOT_CONFIG);
+  } catch (err) {
+    panelMessage("plot-surface", err.message);
+  }
 }
 
 // ────────────────────────────────────────────────── error-distribution plot ──
@@ -1029,6 +1109,7 @@ async function updateXAI() {
   try {
     const d = await api("/api/explain", optionBody());
     clearShimmer("plot-xai");
+    clearPanelMessage("plot-xai");
     lastAttributions = d.attributions;
     renderReportInputs();
 
@@ -1079,6 +1160,7 @@ async function updateXAI() {
     }, PLOT_CONFIG);
   } catch (err) {
     $("xai-sub").textContent = err.message;
+    panelMessage("plot-xai", err.message);
   }
 }
 
