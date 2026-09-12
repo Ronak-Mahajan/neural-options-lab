@@ -156,7 +156,12 @@ function bindSlider(id, onChange) {
       // a bare number large enough to be days rather than years
       else if (!unit && v > 3) v = v / 252;
     }
-    const lo = parseFloat(el.min), hi = parseFloat(el.max);
+    let lo = parseFloat(el.min);
+    const hi = parseFloat(el.max);
+    // One trading day is 1/252 = 0.003968 years, a hair under the slider's
+    // 0.004 floor, so a typed "1d" was refused although the quick-pick offers
+    // it. Snap values that are within rounding of the floor onto it.
+    if (id === "maturity" && v < lo && v >= lo - 1e-4) v = lo;
     // Volatility and rate are shown and typed in percent, and their sliders
     // are in percent too; only the state is a fraction.
     const sliderValue = v;
