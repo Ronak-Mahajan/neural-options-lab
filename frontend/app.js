@@ -203,6 +203,15 @@ const is0dte = () => state.maturity <= ZERO_DTE_CUTOFF + 1e-9;
 // flips the sign of the premium and of every Greek.
 const positionSize = () => state.qty * state.mult;
 
+// A quote with no price in it would still carry a real timestamp and the
+// model's identity, so the export stays closed until there is one.
+function paintQuoteActions() {
+  const ok = lastNNPrice != null;
+  const copy = $("btn-copy-quote"), dl = $("btn-download-quote");
+  if (copy) copy.disabled = !ok;
+  if (dl) dl.disabled = !ok;
+}
+
 function fmtSigned(v, digits) {
   const sign = v < 0 ? "\u2212" : "";
   return sign + "$" + Math.abs(v).toLocaleString(undefined, {
@@ -212,24 +221,28 @@ function fmtSigned(v, digits) {
 // Whole-share and whole-dollar figures for a book; per-contract figures keep
 // the four decimals the model's own accuracy supports.
 function renderPosition() {
-  const line = $("position-line");
+  const value = $("pos-value"), sub = $("pos-sub");
   const hint = $("position-hint");
-  if (!line) return;
+  if (!value) return;
   const n = positionSize();
   if (lastNNPrice == null || !isFinite(n) || n === 0) {
-    line.textContent = "";
+    value.textContent = "-";
+    sub.textContent = "";
   } else {
-    const total = lastNNPrice * n;
-    line.textContent = (state.qty < 0 ? "Short " : "") +
-      Math.abs(state.qty).toLocaleString() + " \u00d7 " +
-      state.mult.toLocaleString() + " shares = " + fmtSigned(total, 2) +
-      (state.qty < 0 ? " received" : " to pay");
+    value.textContent = fmtSigned(lastNNPrice * n, 2);
+    sub.textContent = n === 1
+      ? "single option, unit size"
+      : (state.qty < 0 ? "short " : "") + Math.abs(state.qty).toLocaleString() +
+        (Math.abs(state.qty) === 1 ? " contract × " : " contracts × ") +
+        state.mult.toLocaleString() + " shares × $" +
+        lastNNPrice.toFixed(4) + (state.qty < 0 ? " — premium received" : "");
   }
   if (hint) {
     hint.textContent = state.qty < 0
       ? "A short position: the premium is received and every Greek changes sign."
       : "Sets the scale of the premium and the Greeks below.";
   }
+  paintQuoteActions();
   renderGreeks();
 }
 
@@ -299,15 +312,14 @@ function contractSentence() {
       ", from market data loaded " + marketData.as_of.slice(0, 10) + ".";
   }
   return "Pricing a " + head + " on a $" + state.spot + " stock, volatility " +
-    vol + ", rate " + rate +
-    ". No market data needed: every number below is computed live for it.";
+    vol + ", rate " + rate + ".";
 }
 
 // What each tab does with the contract named above it. The Hedging tab in
 // particular runs its own instrument, which nothing on screen used to say.
 const CONTRACT_SCOPE = {
-  hedging: "The hedging simulation runs its own 30-day at-the-money call, not the contract above.",
-  ai: "The summary is written from whatever the Pricing and Hedging tabs last computed.",
+  hedging: "The hedge bench trades its own 30-day at-the-money call, the contract its policies were trained on, not the one above.",
+  ai: "The note is written from the price, the attribution and the hedge run listed below.",
   stream: "The feed prices this contract, tick by tick.",
 };
 
@@ -415,13 +427,13 @@ async function updatePrice() {
     lastGreeks = d.nn.greeks;
     renderPosition();
     $("nn-sub").textContent = is0dte()
-      ? "with all five Greeks, from one pass of the short-dated model"
-      : "with all five Greeks, from one pass";
+      ? "per contract · short-dated model"
+      : "per contract · average-price contract";
     lastCheck = { price: d.mc.price, n_paths: d.mc.n_paths,
                   half: (d.mc.ci_high - d.mc.ci_low) / 2 };
     $("mc-ci").textContent = "±$" +
-      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) +
-      " at 95% confidence · fresh run, new seed each time";
+      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + " at 95% · " +
+      d.mc.n_paths.toLocaleString() + " paths, fresh seed each run";
 
     // The headline is how closely the network matches the simulation. The
     // old speedup ratio was two single-shot wall-clocks on a shared host,
@@ -439,16 +451,20 @@ async function updatePrice() {
       ? modelInfo.eval.ensemble.price.p95_abs_bps : 2.5;
     const agr = $("agreement");
     if (inCI) {
-      agr.textContent = "$" + diff.toFixed(4) + " apart · inside the simulation's error bar";
-      agr.className = "card-sub centered agreement-ok";
+      agr.textContent = "$" + diff.toFixed(4) +
+        " from the simulation · inside its 95% error bar";
+      agr.className = "card-sub agreement-ok";
     } else if (bpsK <= tol) {
-      agr.textContent = "$" + diff.toFixed(4) + " apart · outside the simulation's " +
-        "error bar, inside the model's own held-out range";
-      agr.className = "card-sub centered agreement-neutral";
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
+        "than the error bar, inside this model's measured error on held-out contracts";
+      agr.className = "card-sub agreement-neutral";
     } else {
-      agr.textContent = "$" + diff.toFixed(4) + " apart · outside the simulation's error bar";
-      agr.className = "card-sub centered agreement-warn";
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
+        "than both. Treat this price as indicative, or raise the cross-check " +
+        "precision in the sidebar.";
+      agr.className = "card-sub agreement-warn";
     }
+    $("hero-error").hidden = true;
     $("timing-line").textContent = "On this server: network " +
       fmtMs(d.nn.latency_ms) + " for the price and all five Greeks, " +
       "simulation " + fmtMs(d.mc.latency_ms) + " for " +
@@ -462,9 +478,11 @@ async function updatePrice() {
     // Keep the last good numbers on screen but visibly stale: a red message
     // next to crisp prices read as if the prices belonged to the message.
     document.querySelector(".results").classList.add("errored");
-    $("agreement").textContent = err.message;
-    $("agreement").className = "card-sub centered agreement-warn";
+    const slot = $("hero-error");
+    slot.textContent = err.message;
+    slot.hidden = false;
     $("timing-line").textContent = "";
+    paintQuoteActions();
   } finally {
     if (seq === priceSeq) document.querySelector(".results").classList.remove("updating");
   }
@@ -825,7 +843,7 @@ async function loadModelInfo() {
       teaser.textContent = "Typical error " +
         m.eval.ensemble.price.rmse_bps.toFixed(1) +
         " basis points of strike on " + m.eval.n_points.toLocaleString() +
-        " held-out contracts. Measured once, so it does not change with the inputs.";
+        " contracts the models never saw. Fixed: it does not move with your inputs.";
     }
   } catch {
     dot.className = "status-dot bad";
@@ -998,6 +1016,12 @@ $("btn-download-quote").addEventListener("click", () => {
 //   /?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put
 const TAB_IDS = { pricing: "tab-pricing", stream: "tab-stream",
                   hedging: "tab-hedging", ai: "tab-ai" };
+// The tabs now read Quote / Hedge / Live / Desk note. Links already in the
+// wild use the old keys, and serializeState keeps writing them, so the new
+// vocabulary is accepted as a read-only alias.
+const TAB_ALIAS = { quote: "pricing", price: "pricing", hedge: "hedging",
+                    live: "stream", monitor: "stream", note: "ai",
+                    desk: "ai", report: "ai" };
 let currentTab = "pricing";
 
 function serializeState() {
@@ -1178,7 +1202,7 @@ $("btn-share").addEventListener("click", async () => {
     const open = box.hidden;
     box.hidden = !open;
     btn.setAttribute("aria-expanded", String(open));
-    btn.textContent = open ? "Hide this" : "How to read this page";
+    btn.textContent = open ? "Hide this" : "What this tool does";
   });
 })();
 
@@ -1398,7 +1422,7 @@ async function runHedge() {
   // this the panel is a blank void with only the button label as feedback.
   $("hedge-verdict").textContent = "";
   $("hedge-sub").textContent =
-    "Simulating 15,000 paths and hedging the same short call three ways. " +
+    "Simulating paths and hedging the same short call three ways. " +
     "A few seconds on this server.";
   $("hedge-empty")?.remove();
   $("holdings-empty")?.remove();
@@ -1750,7 +1774,11 @@ $("btn-stream").addEventListener("click", wsConnect);
 // demand via its Re-run button instead of on every page view.
 const urlParams = Object.fromEntries(new URLSearchParams(location.search));
 applyState(urlParams);
-if (urlParams.tab && TAB_IDS[urlParams.tab]) showTab(urlParams.tab);
+if (urlParams.tab) {
+  const t = String(urlParams.tab).toLowerCase();
+  const key = TAB_IDS[t] ? t : TAB_ALIAS[t];
+  if (key) showTab(key);
+}
 refreshReadouts();
 loadModelInfo();
 loadErrorDistribution();
@@ -1775,7 +1803,7 @@ const latencyShimmer = $("plot-latency").querySelector(".shimmer");
 if (latencyShimmer) {
   latencyShimmer.replaceWith(Object.assign(document.createElement("p"), {
     className: "card-sub centered latency-hint",
-    textContent: "Press Measure to time the network and the simulation on this server.",
+    textContent: "Press Time it to measure the network and the simulation on this server.",
   }));
 }
 

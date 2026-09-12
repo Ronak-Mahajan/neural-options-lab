@@ -3,17 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Neural Options Lab: Deep Learning for Options Pricing</title>
-<meta name="description" content="A neural network that prices arithmetic Asian options in milliseconds with exact autograd Greeks, checked live against Monte Carlo, plus a rough-volatility model for same-week expiries and a learned hedging policy.">
+<title>Neural Options Lab — price options, size the risk, hedge it</title>
+<meta name="description" content="Price Asian and short-dated options in milliseconds, with all five Greeks, a position size, and an independent Monte Carlo check on every number. Then hedge the position under transaction costs.">
 <meta name="theme-color" content="#1c1c1e">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Neural Options Lab">
-<meta property="og:description" content="Neural option pricing checked live against Monte Carlo, rough volatility for short-dated contracts, and a deep hedging policy benchmarked against delta hedging.">
+<meta property="og:description" content="Price an option, size the position, see what it risks. Every number is computed live and checked against an independent simulation.">
 <meta property="og:url" content="https://neural-options-lab.onrender.com/">
 <meta property="og:image" content="https://neural-options-lab.onrender.com/hero.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Neural Options Lab">
-<meta name="twitter:description" content="Neural option pricing checked live against Monte Carlo, rough volatility for short-dated contracts, and a deep hedging policy benchmarked against delta hedging.">
+<meta name="twitter:description" content="Price an option, size the position, see what it risks. Every number is computed live and checked against an independent simulation.">
 <meta name="twitter:image" content="https://neural-options-lab.onrender.com/hero.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c2c2e'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='JetBrains Mono,Consolas,monospace' font-size='38' font-weight='600' fill='%23f5f5f7'%3E%E2%88%82%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -35,10 +35,10 @@
   </div>
 
   <nav class="tab-nav" aria-label="Sections">
-    <button class="tab-btn active" data-tab="tab-pricing">Pricing</button>
-    <button class="tab-btn" data-tab="tab-hedging">Hedging</button>
-    <button class="tab-btn" data-tab="tab-stream">Stream</button>
-    <button class="tab-btn" data-tab="tab-ai">Report</button>
+    <button class="tab-btn active" data-tab="tab-pricing">Quote</button>
+    <button class="tab-btn" data-tab="tab-hedging">Hedge</button>
+    <button class="tab-btn" data-tab="tab-stream">Live</button>
+    <button class="tab-btn" data-tab="tab-ai">Desk note</button>
   </nav>
 
   <div class="bar-right">
@@ -164,8 +164,8 @@
     </section>
 
     <section class="rail-section">
-      <h2 class="kicker">Monte Carlo check</h2>
-      <p class="rail-hint">Paths in the simulation the price is checked against. More paths, tighter error bar, slower.</p>
+      <h2 class="kicker">Cross-check precision</h2>
+      <p class="rail-hint">How many simulated paths the cross-check runs. More paths, tighter error bar, slower quote.</p>
       <div class="segmented dense" id="mc-paths">
         <!-- 100k is also the server-side cap (PriceRequest.mc_paths); the old
              250k option would now be rejected with a 422. -->
@@ -178,12 +178,12 @@
     <!-- Optional, and last: the page prices a hypothetical contract out of
          the box. Putting an empty ticker box first made it look required. -->
     <section class="rail-section">
-      <h2 class="kicker">Use a real underlying <span class="kicker-note">optional</span></h2>
+      <h2 class="kicker">Underlying <span class="kicker-note">optional</span></h2>
       <div class="ticker-row">
         <input type="text" id="in-ticker" class="ticker-input mono" placeholder="SPY" maxlength="10" aria-label="Ticker symbol">
         <button class="btn" id="btn-fetch-ticker">Load</button>
       </div>
-      <p class="rail-hint">Sets spot to the last traded price, the strike at the money, volatility to one-year realised volatility and the rate to the 13-week Treasury bill yield.</p>
+      <p class="rail-hint">Leave it blank to price a hypothetical $100 stock. Type a symbol to set spot to the last traded price, the strike at the money, volatility to one-year realised volatility and the rate to a short Treasury yield; the chip below names which instrument supplied it.</p>
       <div class="market-chip mono" id="market-chip"></div>
     </section>
 
@@ -210,24 +210,24 @@
     <section id="tab-pricing" class="tab-pane results active">
 
       <header class="lede">
-        <h1>A neural network prices an exotic option in milliseconds, with exact Greeks.</h1>
+        <h1>Price an option, size the position, see what it risks.</h1>
       </header>
 
       <div class="lede-body">
         <p>
-          Every number on this page is computed live for the contract in the
-          sidebar. The network's price is checked against a fresh Monte Carlo
-          simulation of the same contract on every change.
-          <button type="button" class="lede-more" id="btn-howto" aria-expanded="false" aria-controls="howto">How to read this page</button>
+          Set the contract on the left, or type a ticker to use a real one.
+          Everything reprices as you change it, and an independent simulation
+          checks the price on every change.
+          <button type="button" class="lede-more" id="btn-howto" aria-expanded="false" aria-controls="howto">What this tool does</button>
         </p>
         <div class="howto" id="howto" hidden>
           <p>
-            The <strong>Network price</strong> card is one forward pass through a
-            five-model ensemble, which also returns the five Greeks as exact
-            derivatives. The <strong>Monte Carlo price</strong> card is a fresh
-            simulation of the same contract, with a 95% confidence interval. The
-            <strong>Agreement</strong> card in the middle is the test that matters:
-            the two should differ by less than the simulation's own error bar.
+            The <strong>Network price</strong> is what the pricer returns: one pass
+            through a five-model ensemble, which also gives the five Greeks as exact
+            derivatives. The <strong>Monte Carlo price</strong> beside it is an
+            independent simulation of the same contract, run fresh, with a 95%
+            interval. <strong>Agreement</strong> in the middle is how far apart they
+            are, so you can see how much to trust the number before you use it.
           </p>
           <p>
             The contract is an
@@ -239,55 +239,61 @@
           </p>
           <p>
             Nothing here is market data unless you load a ticker in the sidebar.
-            The <strong>Hedging</strong> tab runs a separate experiment: a learned
-            hedging policy against delta hedging, under transaction costs.
+            The <strong>Hedging</strong> tab takes a short position in a 30-day call
+            and hedges it under transaction costs, so you can see what a learned
+            policy and the textbook rules each cost you in the tail.
           </p>
         </div>
         <div class="preset-row" aria-label="Example contracts">
-          <span class="preset-label">Examples</span>
-          <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call"}'>
-            <b>Five days to expiry</b><span>the rough-volatility model takes over</span></button>
-          <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put"}'>
-            <b>Deep out-of-the-money put</b><span>price near zero, still matches</span></button>
-          <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call"}'>
-            <b>Two years at 80% volatility</b><span>the hardest corner of the trained range</span></button>
+          <span class="preset-label">Start from</span>
+          <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call","qty":10}'>
+            <b>Same-week call</b><span>five days out, short-dated model</span></button>
+          <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put","qty":10}'>
+            <b>Far out-of-the-money put</b><span>cheap tail protection, one year</span></button>
+          <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call","qty":10}'>
+            <b>Two years at 80% volatility</b><span>the hardest corner of the range</span></button>
           <button class="chip-btn" data-preset='{"tab":"hedging","cost":100,"dyn":"rough","run":true}'>
-            <b>Hedging at 100 bps costs</b><span>learned policy against delta</span></button>
+            <b>Hedge at 100 bps costs</b><span>learned policy against the textbook rules</span></button>
         </div>
       </div>
 
-      <!-- Hero: the network's price, whether it is right, the benchmark -->
+      <p class="hero-error" id="hero-error" hidden></p>
+
+      <!-- The quote: what it costs, what the position costs, how far to trust it -->
       <div class="hero">
         <article class="panel hero-card hero-nn" id="card-nn">
           <header class="panel-tag">
-            <span class="tag tag-nn">Network price</span>
+            <span class="tag tag-nn">Fair value<button type="button" class="help" data-help="One forward pass through the five-network ensemble returns this price and all five Greeks as exact derivatives, not finite differences.">?</button></span>
           </header>
           <div class="price mono" id="nn-price">-</div>
-          <p class="card-sub" id="nn-sub">with all five Greeks, from one pass</p>
-          <p class="position-line mono" id="position-line"></p>
+          <p class="card-sub" id="nn-sub">per contract</p>
+        </article>
+
+        <article class="panel hero-card" id="card-position">
+          <header class="panel-tag">
+            <span class="dial-label">Position</span>
+          </header>
+          <div class="price mono" id="pos-value">-</div>
+          <p class="card-sub mono" id="pos-sub"></p>
+          <div class="quote-actions">
+            <button class="btn" id="btn-copy-quote" disabled>Copy quote</button>
+            <button class="btn" id="btn-download-quote" disabled>Download CSV</button>
+            <span class="quote-actions-note" id="quote-note"></span>
+          </div>
         </article>
 
         <article class="panel hero-card hero-vs" id="card-agreement">
-          <div class="dial-core">
-            <span class="dial-label">Agreement<button type="button" class="help" data-help="How far the network's price sits from the simulation's, in basis points of the strike (one basis point is a hundredth of a percent). The test that matters is whether the gap falls inside the simulation's own 95% error bar.">?</button></span>
-            <span class="speedup mono" id="speedup">-</span>
-          </div>
-          <p class="card-sub centered" id="agreement">-</p>
-        </article>
-
-        <article class="panel hero-card hero-mc" id="card-mc">
           <header class="panel-tag">
-            <span class="tag tag-mc">Monte Carlo price</span>
+            <span class="tag tag-mc">Monte Carlo</span>
           </header>
           <div class="price mono" id="mc-price">-</div>
           <p class="card-sub mono" id="mc-ci">-</p>
+          <div class="dial-core">
+            <span class="dial-label">Cross-check<button type="button" class="help" data-help="The same contract priced again by Monte Carlo, on every change. The big number is how far the two prices sit apart, in basis points of the strike - one basis point is a hundredth of a percent. Below it, whether that gap falls inside the simulation's own 95% error bar.">?</button></span>
+            <span class="speedup mono" id="speedup">-</span>
+          </div>
+          <p class="card-sub" id="agreement">-</p>
         </article>
-      </div>
-
-      <div class="quote-actions">
-        <button class="btn" id="btn-copy-quote">Copy quote</button>
-        <button class="btn" id="btn-download-quote">Download CSV</button>
-        <span class="quote-actions-note" id="quote-note"></span>
       </div>
 
       <p class="timing-line" id="timing-line"></p>
@@ -316,25 +322,29 @@
       <!-- ── Section 1: this contract ───────────────────────────────── -->
       <section class="group">
         <header class="group-head">
-          <h2>This contract</h2>
-          <p>Both panels recompute whenever you change an input.</p>
+          <h2>Check this quote</h2>
+          <p>Both panels recompute as you change the contract.</p>
         </header>
 
         <div class="grid-75">
           <article class="panel chart-panel">
             <header class="chart-head">
               <div>
-                <h3>Does the simulation converge to the network's price?</h3>
-                <p>Monte Carlo estimate and its 95% confidence interval as the path count grows. The network's answer is the dashed line. These runs are seeded, so the curve is reproducible; the high-precision reference uses an independent seed.</p>
+                <h3>Price against simulated paths</h3>
+                <p>The simulation's estimate and its 95% band as the path count grows, with your price as the dashed line. Use it to decide how many paths this quote needs; the count is set in the sidebar.</p>
               </div>
             </header>
             <div class="plot" id="plot-convergence"><div class="shimmer"></div></div>
+            <details class="panel-details">
+              <summary>Method</summary>
+              <p>These runs are seeded, so the curve is reproducible; the high-precision reference uses an independent seed.</p>
+            </details>
           </article>
 
           <article class="panel chart-panel">
             <header class="chart-head">
               <div>
-                <h3>What drives this price?</h3>
+                <h3>What you're paying for</h3>
                 <p id="xai-sub">How much each input adds to the price, starting from a minimal at-the-money option.</p>
               </div>
             </header>
@@ -351,15 +361,15 @@
       <section class="group">
         <details class="group-details" id="group-accuracy">
           <summary>
-            <span class="group-summary-title">How accurate is the model?</span>
+            <span class="group-summary-title">How far to trust this number</span>
             <span class="group-summary-sub" id="accuracy-teaser">Measured once on held-out contracts; does not change with the inputs.</span>
           </summary>
           <div class="grid-75">
             <article class="panel chart-panel">
               <header class="chart-head">
                 <div>
-                  <h3>Pricing error on held-out contracts</h3>
-                  <p id="error-sub">Signed error against high-precision Monte Carlo references.</p>
+                  <h3>How wrong this pricer has been</h3>
+                  <p id="error-sub">Measured against high-precision simulation on contracts the model never saw.</p>
                 </div>
                 <div class="chart-tools">
                   <div class="segmented dense" id="error-metric">
@@ -377,10 +387,10 @@
             <article class="panel chart-panel">
               <header class="chart-head">
                 <div>
-                  <h3>Speed on this server</h3>
-                  <p>Wall-clock for each pricing task, measured on demand. This is a small shared instance, so treat it as a floor.</p>
+                  <h3>Response time on this server</h3>
+                  <p>Wall-clock for each pricing task on this shared instance, measured when you ask. Treat it as a floor.</p>
                 </div>
-                <button class="btn" id="btn-benchmark">Measure</button>
+                <button class="btn" id="btn-benchmark">Time it</button>
               </header>
               <div class="plot" id="plot-latency"><div class="shimmer"></div></div>
             </article>
@@ -392,14 +402,14 @@
       <section class="group">
         <details class="group-details" id="group-domain">
           <summary>
-            <span class="group-summary-title">Every contract the models cover</span>
-            <span class="group-summary-sub">Priced across the full trained range at the current volatility and rate.</span>
+            <span class="group-summary-title">Browse every contract the pricer covers</span>
+            <span class="group-summary-sub">Every strike and expiry at the current volatility and rate. Click a point to price it.</span>
           </summary>
 
           <article class="panel chart-panel">
             <header class="chart-head">
               <div>
-                <h3>Price surface</h3>
+                <h3>Strike and expiry grid</h3>
                 <p>Price divided by strike, over moneyness and time to expiry, at the current volatility and rate.</p>
               </div>
             </header>
@@ -431,12 +441,13 @@
     <!-- Tab: Hedging -->
     <section id="tab-hedging" class="tab-pane" style="display:none">
       <header class="lede">
-        <h1>Can a learned policy hedge better than the textbook rule?</h1>
+        <h1>Hedge a short call and see what it costs you.</h1>
         <p>
-          Sell one 30-day at-the-money call, then hedge it daily while paying
-          transaction costs on every trade. A neural policy trained to minimise
-          tail loss runs against a Black-Scholes delta hedge and against a
-          cost-aware Whalley-Wilmott band, on the same simulated paths.
+          Sell one 30-day at-the-money call and hedge it daily, paying a
+          transaction cost on every trade. A learned policy, a Black-Scholes delta
+          hedge and a cost-aware Whalley-Wilmott band run on the same paths, so you
+          can see which one actually survives the tail and what each pays to get
+          there.
         </p>
       </header>
 
@@ -444,7 +455,7 @@
         <header class="chart-head">
           <div>
             <h3>Hedging simulator</h3>
-            <p id="hedge-sub">15,000 simulated paths. Choose the market the hedgers face and how much each trade costs.</p>
+            <p id="hedge-sub">Choose the market the hedgers face and what each trade costs, then run it.</p>
           </div>
           <div class="chart-tools">
             <div class="segmented dense" id="hedge-dynamics" title="The simulated market the hedgers are run on">
@@ -466,8 +477,8 @@
         <div class="plot tall" id="plot-hedge">
           <div class="empty-state" id="hedge-empty">
             <p><strong>Nothing has been simulated yet.</strong></p>
-            <p>Press Run simulation to generate 15,000 paths and hedge the
-               same short call three ways. It takes a few seconds on this server.</p>
+            <p>Press Run simulation to generate paths and hedge the same short
+               call three ways. It takes a few seconds on this server.</p>
           </div>
         </div>
       </article>
@@ -490,7 +501,7 @@
     <!-- Tab: Stream -->
     <section id="tab-stream" class="tab-pane" style="display:none">
       <header class="lede">
-        <h1>Pricing at market speed.</h1>
+        <h1>Watch it reprice, tick by tick.</h1>
         <p>
           A simulated tick feed drives the network in real time over a
           WebSocket: every tick is a fresh price and a fresh set of Greeks.
@@ -534,7 +545,7 @@
     <!-- Tab: Report -->
     <section id="tab-ai" class="tab-pane" style="display:none">
       <header class="lede">
-        <h1>The numbers on this page, written out.</h1>
+        <h1>Take the numbers away as a note.</h1>
         <p id="report-lede">A short risk summary assembled from the current price, its
            attribution and the hedging run.</p>
       </header>
@@ -558,9 +569,8 @@
         <a href="/methodology">Methodology</a> ·
         <a href="https://github.com/Ronak-Mahajan/neural-options-lab" target="_blank" rel="noopener">Source on GitHub</a>
       </span>
-      Research tool. Prices come from neural networks trained on simulated
-      data and are not investment advice. Built with PyTorch, FastAPI and
-      Plotly.
+      Prices come from neural networks trained on simulated data and are not
+      investment advice. Built with PyTorch, FastAPI and Plotly.
     </footer>
   </main>
 </div>
