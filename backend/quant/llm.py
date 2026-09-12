@@ -1,17 +1,16 @@
-"""Agentic Risk Analyst via Groq API.
+"""Risk summary: a short desk note written from the numbers on the page.
 
-Uses Groq's OpenAI-compatible API with an open-source Llama-3-family 8B
-model to generate a natural-language risk report from the neural pricer,
-Deep Hedging CVaR, and XAI outputs. Streams the response token-by-token.
+Two writers produce it. With GROQ_API_KEY set, an open-weights Llama model
+on Groq's OpenAI-compatible API drafts it and the response is streamed token
+by token. Without a key, a deterministic rule-based narrator writes the same
+facts. Either way the figures come from the page, never from the writer, and
+the page says which one wrote it.
 
 Configuration (environment):
-    GROQ_API_KEY   required for live LLM output (free tier at console.groq.com)
+    GROQ_API_KEY   required for the model-written version
     GROQ_MODEL     optional override; defaults to "llama-3.1-8b-instant"
                    (Groq retired the original "llama3-8b-8192" id - the
                    3.1-8B-instant model is its direct successor)
-
-If GROQ_API_KEY is not set, a deterministic offline template built from the
-same numbers is streamed instead, clearly labeled as such.
 """
 
 import os
@@ -24,119 +23,142 @@ from fastapi.responses import StreamingResponse
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 
 
+def llm_available() -> bool:
+    """Whether a model will write the summary, or the rule-based narrator."""
+    return bool(os.environ.get("GROQ_API_KEY"))
+
+
+def _money(value: float) -> str:
+    """Sign before the currency, two decimals: -$5.01, not $-5.0072."""
+    return ("-$" if value < 0 else "$") + f"{abs(value):,.2f}"
+
+
 def get_risk_report_stream(ticker: str, nn_price: float, bs_cvar: float,
-                           deep_cvar: float, attributions: dict):
-    """Streams a risk report from Groq Llama-3, or falls back to a template."""
-    import yfinance as yf
-    
-    # Fetch RAG context: Live News
-    try:
-        tk = yf.Ticker(ticker)
-        news_items = tk.news[:3]
-        news_context = "\n".join([f"- {item['content']['title']}: {item['content']['summary']}" for item in news_items])
-    except Exception:
-        news_context = "No live news available at this time."
+                           deep_cvar: float, attributions: dict,
+                           contract: str = "", ww_cvar: float | None = None,
+                           deep_cost: float | None = None,
+                           delta_cost: float | None = None,
+                           dynamics_label: str = "", cost_bps: int | None = None):
+    """Streams the risk summary from Groq, or from the rule-based narrator."""
+    subject = (f"a {contract}" if contract else "the contract on screen")
+    if ticker:
+        subject = subject + f" on {ticker}"
 
     # Which policy actually has the smaller tail loss. CVaR95 arrives as a
     # P&L quantile (negative = loss), so "better" means less negative. The
     # deep hedger does NOT reliably beat delta hedging out of sample (see
-    # hedging.py), and both this prompt and the offline template must state
-    # whichever direction the numbers actually show - an earlier version
-    # hardcoded "the Deep Hedger reduces this tail risk" and happily printed
-    # it next to numbers proving the opposite.
+    # hedging.py), so both writers state whichever direction the numbers
+    # show rather than assuming the learned policy won.
     deep_wins = deep_cvar > bs_cvar
+    market = dynamics_label or "the simulated market"
+    cost_text = f"{cost_bps} basis points a trade" if cost_bps is not None \
+        else "the configured transaction cost"
+    costs_line = ""
+    if deep_cost is not None and delta_cost is not None:
+        costs_line = (f" It paid {_money(deep_cost)} a path in transaction "
+                      f"costs against {_money(delta_cost)} for the delta hedge.")
+    ww_line = ""
+    if ww_cvar is not None:
+        ww_line = (f" The cost-aware Whalley-Wilmott band, the strongest "
+                   f"classical baseline here, came in at {_money(ww_cvar)}.")
 
-    api_key = os.environ.get("GROQ_API_KEY")
+    data_block = f"""
+- Contract priced: {subject}, at {_money(nn_price)}.
+- What the price is made of (Integrated Gradients, in dollars): volatility
+  {attributions['sigma']:.4f}, time to expiry {attributions['maturity']:.4f},
+  spot level {attributions['spot']:.4f}, interest rate
+  {attributions.get('rate', 0.0):.4f}.
+- Separate hedging experiment: sell one 30-day at-the-money call and hedge it
+  daily on simulated paths of {market}, paying {cost_text}. Average loss over
+  the worst 5% of paths (CVaR at 95%, less negative is better):
+  delta hedge {_money(bs_cvar)}, learned policy {_money(deep_cvar)}""" + (
+        f", Whalley-Wilmott band {_money(ww_cvar)}" if ww_cvar is not None else ""
+    ) + f""". In this run the {"learned policy" if deep_wins else "delta hedge"}
+  has the smaller tail loss.""" + (
+        f" Transaction costs per path: learned policy {_money(deep_cost)}, "
+        f"delta hedge {_money(delta_cost)}." if deep_cost is not None else "")
+
     prompt = f"""
-You are an elite quantitative Risk Analyst. Analyze the following live options
-pricing data for {ticker} and provide a concise, professional 3-paragraph risk
-report for the trading desk.
+You are a quantitative risk analyst writing a three-paragraph note for a
+trading desk. Use only the figures below. Do not invent numbers, do not
+reference market events, news, or anything you were not given, and do not
+speculate about causes.
 
 DATA:
-- Ticker: {ticker}
-- Neural Network Option Price: ${nn_price:.4f}
-- XAI Price Drivers: Spot contributed ${attributions['spot']:.4f}, Volatility
-  contributed ${attributions['sigma']:.4f}, Maturity contributed
-  ${attributions['maturity']:.4f}.
-- Hedging Risk (CVaR95, a P&L quantile where less negative is better):
-  Standard Black-Scholes Delta Hedging: ${bs_cvar:.4f}. Deep Hedging engine
-  (accounts for transaction costs): ${deep_cvar:.4f}. In this simulation the
-  {"Deep Hedging policy" if deep_wins else "standard delta hedge"} has the
-  smaller tail loss - describe the comparison exactly as these numbers show
-  it, and do not assume either policy is better than the measurement says.
-
-LIVE MARKET NEWS (RAG Context):
-{news_context}
+{data_block}
 
 FORMAT:
-Paragraph 1: Discuss the Neural Price and what is driving it (using XAI). Synthesize this with the LIVE MARKET NEWS to explain WHY the market might be pricing these Greeks (e.g. if Vega is high, correlate it to a recent news event).
-Paragraph 2: Discuss hedging risk, comparing Standard vs Deep Hedging.
-Paragraph 3: A final one-sentence note on risk limit management based on both the quantitative data and the fundamental news context.
+Paragraph 1: the price and what drives it, from the attribution figures.
+Paragraph 2: the hedging comparison, stating exactly which policy had the
+smaller tail loss and at what cost. Note that the option priced in paragraph
+one and the call used in the hedging test are different contracts.
+Paragraph 3: one sentence on what to watch, then note this is a research
+dashboard and not investment advice.
 
-Keep it highly technical, confident, and professional. Do not use asterisks or
-markdown bolding. Just plain text paragraphs. This is a research dashboard,
-not investment advice - frame the close as monitoring guidance, not an
-instruction to deploy capital.
+Plain text paragraphs, no markdown, no asterisks. Technical and concise.
+Write amounts with the sign before the currency symbol, e.g. -$5.01.
 """
 
     def template_text() -> str:
-        """Rule-based narrative built from the same numbers. Served when no
-        LLM key is configured, and as the fallback if the provider fails."""
-        driver_names = {"spot": "the underlying spot level",
-                        "sigma": "volatility exposure",
-                        "maturity": "time value",
-                        "rate": "the rate environment"}
-        top = max(attributions, key=lambda k: abs(attributions[k]))
+        """The same facts, written by rule. Served when no key is configured,
+        and as the fallback if the provider fails."""
+        driver_names = {"spot": "the spot level",
+                        "sigma": "volatility",
+                        "maturity": "time to expiry",
+                        "rate": "the interest rate"}
+        ranked = sorted(attributions, key=lambda k: abs(attributions[k]),
+                        reverse=True)
+        top = ranked[0]
         others = ", ".join(
-            f"{driver_names.get(k, k)} ${attributions[k]:.4f}"
-            for k in ("sigma", "maturity", "spot") if k != top)
+            f"{driver_names.get(k, k)} {_money(attributions[k])}"
+            for k in ranked[1:] if abs(attributions[k]) > 5e-5)
+        others_text = f" Then {others}." if others else ""
+
+        para1 = (
+            f"The network prices {subject} at {_money(nn_price)}. Splitting "
+            f"that price across its inputs by Integrated Gradients, "
+            f"{driver_names.get(top, top)} accounts for the largest share at "
+            f"{_money(attributions[top])}.{others_text} The four contributions "
+            f"add back to the quoted price, which is the check that the "
+            f"attribution is complete."
+        )
+
         if deep_wins:
-            hedge_text = (
-                f"In this simulation the Deep Hedging policy carries the "
-                f"smaller tail risk: the frictionless Black-Scholes delta "
-                f"hedge shows a 95% Conditional Value at Risk (CVaR) of "
-                f"${bs_cvar:.4f}, while the Deep Hedger, which "
-                f"internalizes proportional transaction costs, improves "
-                f"that to ${deep_cvar:.4f} by trading less and avoiding "
-                f"over-hedging whipsaw losses."
+            para2 = (
+                f"A separate experiment hedges a short 30-day at-the-money "
+                f"call daily on simulated paths of {market}, paying "
+                f"{cost_text}. The learned policy carries the smaller tail "
+                f"loss: its average loss over the worst 5% of paths is "
+                f"{_money(deep_cvar)} against {_money(bs_cvar)} for a "
+                f"Black-Scholes delta hedge charged the same costs."
+                f"{costs_line}{ww_line}"
             )
-            close_text = (
-                "The Deep Hedging policy's tail advantage in this run "
-                "merits attention alongside its lower trading costs; "
-                "monitor the spot-driven XAI attribution daily."
+            para3 = (
+                "The learned policy's advantage here comes with its lower "
+                "turnover; it is specific to these dynamics and this cost "
+                "level, so re-run it before reading across to another regime."
             )
         else:
-            hedge_text = (
-                f"In this simulation the Deep Hedging policy does NOT "
-                f"beat the standard delta hedge on tail risk: the "
-                f"Black-Scholes delta hedge shows a 95% Conditional "
-                f"Value at Risk (CVaR) of ${bs_cvar:.4f} versus "
-                f"${deep_cvar:.4f} for the Deep Hedger. The learned "
-                f"policy trades less and therefore pays lower "
-                f"transaction costs, but under these parameters that "
-                f"saving does not compensate for the wider loss tail."
+            para2 = (
+                f"A separate experiment hedges a short 30-day at-the-money "
+                f"call daily on simulated paths of {market}, paying "
+                f"{cost_text}. The delta hedge keeps the smaller tail loss "
+                f"here: its average loss over the worst 5% of paths is "
+                f"{_money(bs_cvar)} against {_money(deep_cvar)} for the "
+                f"learned policy.{costs_line}{ww_line}"
             )
-            close_text = (
-                "Under these parameters the delta hedge remains the "
-                "safer baseline for tail-risk limits; monitor the "
-                "spot-driven XAI attribution daily."
+            para3 = (
+                "Under these dynamics and at this cost level the delta hedge "
+                "is the baseline to beat; the learned policy's advantage "
+                "appears under rough volatility with higher costs."
             )
-        fallback_text = (
-            f"Risk summary (rule-based narrative)\n\n"
-            f"The Neural Network prices the option on {ticker} at "
-            f"${nn_price:.4f}. Based on our Integrated Gradients XAI, "
-            f"this premium is primarily driven by "
-            f"{driver_names.get(top, top)} (${attributions[top]:.4f}); "
-            f"the remaining drivers contribute {others}. These "
-            f"attribution metrics confirm the model is pricing the risk "
-            f"factors in line with expected theoretical "
-            f"sensitivities.\n\n"
-            f"{hedge_text}\n\n"
-            f"{close_text} This is a research dashboard, not investment "
-            f"advice."
-        )
-        return fallback_text
 
+        return (
+            f"Risk summary\n\n{para1}\n\n{para2}\n\n{para3} This is a "
+            f"research dashboard, not investment advice."
+        )
+
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         def fallback_stream():
             for chunk in template_text().split(" "):
