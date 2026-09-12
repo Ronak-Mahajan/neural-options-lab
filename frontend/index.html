@@ -86,21 +86,21 @@
       <div class="param">
         <div class="param-head"><label for="in-spot">Spot <i class="sym">S₀</i>
           <button type="button" class="help" data-help="Today's price of the underlying stock. Only the ratio of spot to strike affects the price, so the level itself does not matter.">?</button></label>
-          <output class="param-val mono" id="val-spot" for="in-spot">100</output></div>
+          <input class="param-val mono" id="val-spot" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="spot value, type to set exactly"></div>
         <input type="range" id="in-spot" min="55" max="195" step="1" value="100" aria-label="Spot price">
       </div>
 
       <div class="param">
         <div class="param-head"><label for="in-strike">Strike <i class="sym">K</i>
           <button type="button" class="help" data-help="The price at which the option can be exercised. At-the-money means strike equals spot.">?</button></label>
-          <output class="param-val mono" id="val-strike" for="in-strike">100</output></div>
+          <input class="param-val mono" id="val-strike" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="strike value, type to set exactly"></div>
         <input type="range" id="in-strike" min="55" max="195" step="1" value="100" aria-label="Strike price">
       </div>
 
       <div class="param">
         <div class="param-head"><label for="in-maturity">Time to expiry <i class="sym">T</i>
           <button type="button" class="help" data-help="How long until the option expires, in years. Contracts of 12 trading days or less are priced by a second model trained on rough volatility, so the price is not continuous across that boundary.">?</button></label>
-          <output class="param-val mono" id="val-maturity" for="in-maturity">1.00y</output></div>
+          <input class="param-val mono" id="val-maturity" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="1.00y" aria-label="maturity value, type to set exactly"></div>
         <!-- min is a hair above the 0DTE surrogate's trained floor of 1/252 = 0.003968;
              the old 0.0039 minimum was rejected by the API with a 422 at the slider's
              own leftmost position. -->
@@ -121,14 +121,14 @@
       <div class="param">
         <div class="param-head"><label for="in-sigma">Volatility <i class="sym">σ</i>
           <button type="button" class="help" data-help="How much the underlying moves, annualised. Supported range 5% to 80%.">?</button></label>
-          <output class="param-val mono" id="val-sigma" for="in-sigma">25%</output></div>
+          <input class="param-val mono" id="val-sigma" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="25%" aria-label="sigma value, type to set exactly"></div>
         <input type="range" id="in-sigma" min="5" max="80" step="1" value="25" aria-label="Volatility in percent">
       </div>
 
       <div class="param">
         <div class="param-head"><label for="in-rate">Risk-free rate <i class="sym">r</i>
           <button type="button" class="help" data-help="The interest rate used for discounting, continuously compounded. Supported range 0% to 10%.">?</button></label>
-          <output class="param-val mono" id="val-rate" for="in-rate">4.0%</output></div>
+          <input class="param-val mono" id="val-rate" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="4.0%" aria-label="rate value, type to set exactly"></div>
         <input type="range" id="in-rate" min="0" max="10" step="0.25" value="4" aria-label="Risk-free rate in percent">
       </div>
 

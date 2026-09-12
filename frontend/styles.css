@@ -249,12 +249,20 @@ h3 + p, .kicker + h3 { margin-top: 3px; }
 }
 .param-head .sym { font-family: var(--font-mono); font-style: normal;
   font-size: 11px; color: var(--ink-low); margin-left: 3px; }
+/* The readout is also the way to enter an exact value. */
 .param-val {
-  font-size: 13px; font-weight: 500; color: var(--ink-hi);
-  padding: 2px 9px; border-radius: 5px; background: var(--raised);
-  transition: transform 0.15s ease, color 0.15s ease;
+  width: 78px; text-align: right;
+  font-family: var(--font-mono); font-size: 12.5px; font-weight: 500;
+  color: var(--ink-hi);
+  padding: 4px 8px; border-radius: 5px;
+  background: var(--raised); border: 1px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
-.param:active .param-val { transform: scale(1.1); color: var(--neural); }
+.param-val:hover { border-color: var(--line-hi); }
+.param-val:focus {
+  outline: none; border-color: var(--neural); background: var(--well);
+}
+.param-val.invalid { border-color: var(--rose); }
 
 /* the track fill is painted by app.js via the --fill custom property */
 input[type="range"] {
