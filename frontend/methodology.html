@@ -286,7 +286,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   for H = 0.261, the value in the SPY calibration record the experiment reads (the served 0DTE
   checkpoint's own fit has H = 0.255, whose <code>H &minus; &frac12; = &minus;0.245</code> is also
   within one standard error of the market). The model side is measured the same way, by Monte Carlo with 8 seeds
-  &times; 400,000 paths per maturity: at the calibrated vol-of-vol (&eta; = 3.9) the model's skew is
+  &times; 400,000 paths per maturity: at that fit's vol-of-vol (&eta; = 3.9) the model's skew is
   steeper than the asymptotic law (exponent &minus;0.321 &plusmn; 0.007) because &eta;T<sup>H</sup> is
   already 0.9 at one day, while at &eta; = 0.5 the same engine returns &minus;0.233 &plusmn; 0.011
   with an amplitude within 0.4% of the first-order theory. Bitcoin, for contrast, shows no power
@@ -299,15 +299,15 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <p>
   The term structure also identifies the parameters better than a single day's smile. A smile
   calibration never sees it explicitly, and buys short-dated curvature most cheaply with more
-  vol-of-vol, which is why the calibrated &eta; sits at its bound. Refitting (H, &eta;, &rho;, &xi;)
+  vol-of-vol, which is why that fit's &eta; sits at its bound. Refitting (H, &eta;, &rho;, &xi;)
   jointly against the smiles <em>and</em> the per-expiry ATM skew, on a 12 &times; 12 profile
   over (H, &eta;) with the remaining parameters optimised at every cell, moves the optimum to
   H = 0.31, &rho; = &minus;0.50 and a forward vol of 12.5 % (bootstrap: H 0.308 &plusmn; 0.011) and
   puts the Monte Carlo skew exponent at &minus;0.264 &plusmn; 0.007, within half a market standard
   error of &minus;0.249, for a cost of 0.45 vol points of smile fit (1.31 &rarr; 1.76). A solution
-  with &eta; off its bound reaches the same exponent for 0.15 vol points more. The served 0DTE model
-  was trained on the earlier calibration and is unchanged; the refit is recorded as an analysis
-  artifact.
+  with &eta; off its bound reaches the same exponent for 0.15 vol points more. The served short-dated
+  model was trained on an earlier accepted fit (H = 0.255) and is unchanged; the refit is recorded as
+  an analysis artifact.
 </p>
 <figure class="fig">
   <img src="/assets/joint_skew_refit.png" alt="Heatmaps of smile RMSE and of the model skew exponent over the (H, eta) plane with the market-exponent contour, the Pareto front of smile fit against skew-exponent error, and the skew term structure for the market, the served calibration and the joint refit" loading="lazy">
@@ -519,7 +519,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <thead><tr><th>Series</th><th class="n">Exponent</th><th class="n">Reference H &minus; &frac12;</th></tr></thead>
   <tbody>
     <tr><td>SPY listed expiries, 8 captures &times; 7 expiries</td><td class="n">&minus;0.249 &plusmn; 0.033</td><td class="n">&minus;0.239</td></tr>
-    <tr><td>Rough Bergomi, calibrated &eta; = 3.9</td><td class="n">&minus;0.321 &plusmn; 0.007</td><td class="n">&minus;0.239</td></tr>
+    <tr><td>Rough Bergomi, latest SPY fit (&eta; = 3.9)</td><td class="n">&minus;0.321 &plusmn; 0.007</td><td class="n">&minus;0.239</td></tr>
     <tr><td>Rough Bergomi, &eta; = 0.5 (asymptotic regime)</td><td class="n">&minus;0.233 &plusmn; 0.011</td><td class="n">&minus;0.239</td></tr>
     <tr><td>Rough Bergomi, joint (H, &eta;) refit against smiles + skew (H = 0.31)</td><td class="n">&minus;0.264 &plusmn; 0.007</td><td class="n">&minus;0.190</td></tr>
     <tr><td>Heston, least-squares optimum (&kappa; at the 100/yr bound)</td><td class="n">&minus;0.660 (sd 0.003 across captures)</td><td class="n">n/a</td></tr>
