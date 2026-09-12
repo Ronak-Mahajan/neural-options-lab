@@ -117,6 +117,23 @@
     </section>
 
     <section class="rail-section">
+      <h2 class="kicker">Position</h2>
+      <div class="param-row">
+        <div class="param-inline">
+          <label for="in-qty">Contracts
+            <button type="button" class="help" data-help="How many contracts you hold. A negative number is a short position, which flips the sign of the premium and of every Greek.">?</button></label>
+          <input class="param-val mono" id="in-qty" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" value="1" aria-label="Number of contracts">
+        </div>
+        <div class="param-inline">
+          <label for="in-mult">Shares each
+            <button type="button" class="help" data-help="Shares of the underlying per contract. Listed equity options are usually 100.">?</button></label>
+          <input class="param-val mono" id="in-mult" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" value="100" aria-label="Shares per contract">
+        </div>
+      </div>
+      <p class="rail-hint" id="position-hint"></p>
+    </section>
+
+    <section class="rail-section">
       <h2 class="kicker">Market assumptions</h2>
       <div class="param">
         <div class="param-head"><label for="in-sigma">Volatility <i class="sym">σ</i>
@@ -247,6 +264,7 @@
           </header>
           <div class="price mono" id="nn-price">-</div>
           <p class="card-sub" id="nn-sub">with all five Greeks, from one pass</p>
+          <p class="position-line mono" id="position-line"></p>
         </article>
 
         <article class="panel hero-card hero-vs" id="card-agreement">
@@ -266,10 +284,22 @@
         </article>
       </div>
 
+      <div class="quote-actions">
+        <button class="btn" id="btn-copy-quote">Copy quote</button>
+        <button class="btn" id="btn-download-quote">Download CSV</button>
+        <span class="quote-actions-note" id="quote-note"></span>
+      </div>
+
       <p class="timing-line" id="timing-line"></p>
 
       <!-- Greeks: one dense instrument strip, hairline-divided -->
-      <h2 class="kicker greek-kicker">Greeks · exact derivatives of the network price</h2>
+      <div class="greek-head">
+        <h2 class="kicker greek-kicker">Risk</h2>
+        <div class="segmented dense" id="greek-basis">
+          <button class="seg-btn active" data-value="unit">Per contract</button>
+          <button class="seg-btn" data-value="position">Whole position</button>
+        </div>
+      </div>
       <div class="panel greek-strip" id="greeks-row">
         <div class="greek"><span class="greek-sym">Δ</span>
           <span class="greek-name">Delta<button type="button" class="help" data-help="Change in the option's price for a $1 move in the underlying. A delta of 0.57 means the option gains about 57 cents when the stock gains a dollar.">?</button><span class="greek-unit">per $1 of spot</span></span><span class="greek-val mono" id="g-delta">-</span></div>

@@ -366,8 +366,9 @@ input[type="range"]::-moz-range-thumb {
 #tab-pricing > .lede-body { order: 2; }
 #tab-pricing > .hero { order: 4; }
 #tab-pricing > .timing-line { order: 5; }
-#tab-pricing > .greek-kicker { order: 6; }
+#tab-pricing > .greek-head { order: 6; }
 #tab-pricing > .greek-strip { order: 6; }
+#tab-pricing > .quote-actions { order: 7; }
 #tab-pricing > .group { order: 10; }
 .lede h1 {
   font-family: var(--font-display); font-size: 25px; font-weight: 600;
@@ -480,7 +481,23 @@ input[type="range"]::-moz-range-thumb {
 .panel-note:empty { display: none; }
 #hedge-convention { margin-bottom: 10px; }
 #hedge-method { margin-top: 10px; }
-.greek-kicker { margin-bottom: -6px; }
+.greek-kicker { margin-bottom: 0; }
+.greek-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; }
+
+/* Two inputs on one line, for the size controls. */
+.param-row { display: flex; gap: 10px; }
+.param-inline { flex: 1 1 0; display: flex; flex-direction: column; gap: 5px;
+  min-width: 0; }
+.param-inline label { display: inline-flex; align-items: center;
+  font-size: 11.5px; color: var(--ink-mid); }
+.param-inline .param-val { width: 100%; text-align: left; }
+
+.position-line { margin-top: 8px; font-size: 12.5px; color: var(--ink-hi); }
+.position-line:empty { display: none; }
+
+.quote-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.quote-actions-note { font-size: 11.5px; color: var(--mint); }
 
 /* Empty states say what will happen, instead of pulsing like a loader. */
 .empty-state {
@@ -765,7 +782,7 @@ input[type="range"]::-moz-range-thumb {
   .lede-body > p { font-size: 13px; }
   /* Lead with the answer: headline, what it is, the price. The explanation
      and the examples follow it instead of pushing it off the screen. */
-  #tab-pricing > .lede-body { order: 7; }
+  #tab-pricing > .lede-body { order: 9; }
   .rail-edit { display: block; }
   .preset-row { gap: 7px; }
   .preset-label { flex: 1 0 100%; }
