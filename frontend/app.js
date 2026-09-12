@@ -642,7 +642,8 @@ async function updateSurface() {
       showscale: false,
       contours: { z: { show: true, usecolormap: true,
                        highlightcolor: "#fff", project: { z: true } } },
-      hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}<extra></extra>",
+      hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}"
+        + "<br><i>click to price this contract</i><extra></extra>",
       lighting: { specular: 0.4, roughness: 0.6 },
     }], {
       ...PLOT_BASE, showlegend: false,
@@ -657,6 +658,25 @@ async function updateSurface() {
         camera: { eye: { x: -1.55, y: -1.6, z: 0.65 } },
       },
     }, PLOT_CONFIG);
+
+    const surf = $("plot-surface");
+    if (!surf.dataset.clickBound) {
+      surf.dataset.clickBound = "1";
+      surf.on("plotly_click", (ev) => {
+        const pt = ev.points && ev.points[0];
+        if (!pt) return;
+        const spot = +(pt.x * state.strike).toFixed(4);
+        const T = +pt.y.toFixed(4);
+        setSlider("spot", Math.min(Math.max(spot, +$("in-spot").min),
+                                   +$("in-spot").max));
+        $("in-spot").step = "any";
+        $("in-spot").value = spot;
+        state.spot = spot;
+        setSlider("maturity", T);
+        state.maturity = snapMaturity(T);
+        refreshAll();
+      });
+    }
   } catch (err) {
     panelMessage("plot-surface", err.message);
   }
