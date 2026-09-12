@@ -262,11 +262,29 @@ function renderGreeks() {
           minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : v.toFixed(digits);
   }
-  document.querySelectorAll(".greek-unit").forEach((el) => {
+  // In position terms each Greek is a quantity, not a per-dollar rate, so
+  // the per-contract unit string would read as nonsense appended to itself.
+  const POSITION_UNITS = {
+    "g-delta": "shares of the underlying",
+    "g-gamma": "shares per $1 move",
+    "g-vega": "$ per volatility point",
+    "g-theta": "$ per calendar day",
+    "g-rho": "$ per rate point",
+  };
+  for (const [id, unit] of Object.entries(POSITION_UNITS)) {
+    const cell = $(id);
+    const el = cell && cell.closest(".greek").querySelector(".greek-unit");
+    if (!el) continue;
     if (!el.dataset.unit) el.dataset.unit = el.textContent;
-    el.textContent = greekBasis === "position"
-      ? el.dataset.unit + ", whole position" : el.dataset.unit;
-  });
+    el.textContent = greekBasis === "position" ? unit : el.dataset.unit;
+  }
+  const cash = $("greek-cash");
+  if (cash) {
+    cash.textContent = greekBasis === "position" && lastGreeks
+      ? "Cash delta " + fmtSigned(lastGreeks.delta * positionSize() * state.spot, 2) +
+        ": the value of the underlying this position is equivalent to."
+      : "";
+  }
 }
 
 // How far the contract sits from at-the-money, in words. "At the money"
@@ -905,6 +923,57 @@ bindSegmented("mc-paths", (v) => { state.mcPaths = parseInt(v); refreshFast(); }
 bindSegmented("error-metric", (v) => { errorMetric = v; renderErrorDistribution(); });
 
 $("btn-benchmark").addEventListener("click", updateBenchmark);
+
+// Run the pricer backwards: which volatility reproduces this premium?
+async function solveImpliedVol() {
+  const box = $("in-target-price"), note = $("iv-solve-note");
+  const btn = $("btn-solve-iv");
+  const target = parseFloat(box.value.replace(/[$,\s]/g, ""));
+  if (!isFinite(target) || target < 0) {
+    box.classList.add("invalid");
+    note.textContent = "Type the premium you want to match.";
+    return;
+  }
+  box.classList.remove("invalid");
+  btn.disabled = true;
+  btn.textContent = "Solving";
+  note.textContent = "";
+  try {
+    const d = await api("/api/implied-vol", {
+      spot: state.spot, strike: state.strike, maturity: state.maturity,
+      rate: state.rate, option_type: state.optionType, price: target,
+    });
+    if (!d.bracketed) {
+      // Say what the model can and cannot reach rather than clamping quietly.
+      note.textContent = "No volatility between " +
+        (d.search_range[0] * 100).toFixed(0) + "% and " +
+        (d.search_range[1] * 100).toFixed(0) + "% prices this contract at $" +
+        d.target_price.toFixed(4) + ". Across that range it spans $" +
+        d.price_range[0].toFixed(4) + " to $" + d.price_range[1].toFixed(4) +
+        "; the closest is $" + d.price_at_sigma.toFixed(4) + " at " +
+        (d.sigma * 100).toFixed(1) + "%. Volatility left unchanged.";
+      return;
+    }
+    const pct = d.sigma * 100;
+    $("in-sigma").step = "any";
+    $("in-sigma").value = pct;
+    state.sigma = d.sigma;
+    setSlider("sigma", pct);
+    $("in-sigma").value = pct;
+    refreshAll();
+    note.textContent = "A premium of $" + d.target_price.toFixed(4) +
+      " implies " + pct.toFixed(2) + "% volatility under this model.";
+  } catch (err) {
+    note.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Solve";
+  }
+}
+$("btn-solve-iv").addEventListener("click", solveImpliedVol);
+$("in-target-price").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); solveImpliedVol(); }
+});
 
 // Size controls. A whole number of contracts; a negative count is a short.
 function bindSizeField(id, key, { min, max, integer }) {

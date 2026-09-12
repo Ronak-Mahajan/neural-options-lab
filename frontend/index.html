@@ -149,6 +149,16 @@
         <input type="range" id="in-rate" min="0" max="10" step="0.25" value="4" aria-label="Risk-free rate in percent">
       </div>
 
+      <div class="solve-row">
+        <label for="in-target-price">Premium you see
+          <button type="button" class="help" data-help="Type a premium and the pricer searches for the volatility that reproduces it, within the range the model was trained on. Above 12 trading days this contract is an average-price option, so this is the volatility input that reproduces your premium under this model, not a market-convention implied volatility.">?</button></label>
+        <div class="solve-controls">
+          <input class="param-val mono" id="in-target-price" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="6.73" aria-label="Premium to solve for">
+          <button class="btn" id="btn-solve-iv">Solve</button>
+        </div>
+      </div>
+      <p class="rail-hint" id="iv-solve-note"></p>
+
       <div class="readout-row">
         <span>Moneyness S/K</span>
         <span class="mono" id="moneyness-val">1.00</span>
@@ -318,6 +328,7 @@
         <div class="greek"><span class="greek-sym">ρ</span>
           <span class="greek-name">Rho<button type="button" class="help" data-help="Change in the option's price for a one-point rise in the risk-free rate.">?</button><span class="greek-unit">per rate point</span></span><span class="greek-val mono" id="g-rho">-</span></div>
       </div>
+      <p class="panel-note" id="greek-cash"></p>
 
       <!-- ── Section 1: this contract ───────────────────────────────── -->
       <section class="group">
