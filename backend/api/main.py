@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import numpy as np
+from types import SimpleNamespace
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -262,6 +264,15 @@ class OptionParams(BaseModel):
     option_type: str = Field("call", pattern="^(call|put)$")
 
 
+class ImpliedVolRequest(BaseModel):
+    spot: float = Field(100.0, gt=0)
+    strike: float = Field(100.0, gt=0)
+    maturity: float = Field(1.0, gt=0, le=2.0)
+    rate: float = Field(0.04, ge=0, le=0.1)
+    option_type: str = Field("call", pattern="^(call|put)$")
+    price: float = Field(..., ge=0)
+
+
 class PriceRequest(OptionParams):
     # Capped at 100k: the MC engines now run in fixed-size blocks so memory no
     # longer scales with the request, but wall-clock still does, and on the
@@ -369,6 +380,47 @@ def price(req: PriceRequest) -> dict:
             "within_mc_ci": mc.ci_low <= nn_out["price"] <= mc.ci_high,
             "speedup": mc_ms / max(nn_ms, 1e-6),
         },
+    }
+
+
+@app.post("/api/implied-vol")
+def implied_vol(req: ImpliedVolRequest) -> dict:
+    """The volatility that reproduces a quoted price for this contract.
+
+    Pricing runs volatility to price; this runs it back the other way, which
+    is the question someone holding a quote actually has. The search is a
+    bisection on the served model, bracketed by one batched sweep across its
+    trained volatility range, so it costs a handful of forward passes and
+    needs no simulation.
+    """
+    from ..quant.solve_vol import solve_implied_vol
+
+    eng = engine()
+    # Moneyness and maturity are checked against whichever model serves this
+    # contract. Volatility is the unknown here, so the check is handed a value
+    # inside the trained range and the solver searches the whole of it.
+    validate_moneyness(SimpleNamespace(
+        spot=req.spot, strike=req.strike, maturity=req.maturity,
+        sigma=0.25, rate=req.rate))
+
+    t0 = time.perf_counter()
+    try:
+        sol = solve_implied_vol(
+            eng, req.spot, req.strike, req.maturity, req.rate, req.price,
+            option_type=req.option_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ms = (time.perf_counter() - t0) * 1000.0
+
+    return {
+        "sigma": sol.sigma,
+        "price_at_sigma": sol.price_at_sigma,
+        "target_price": sol.target_price,
+        "bracketed": sol.bracketed,
+        "iterations": sol.iterations,
+        "search_range": [sol.sigma_low, sol.sigma_high],
+        "price_range": [sol.low_price, sol.high_price],
+        "latency_ms": ms,
     }
 
 
