@@ -9,6 +9,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   spot: 100, strike: 100, maturity: 1.0, sigma: 0.25, rate: 0.04,
   optionType: "call", mcPaths: 50000,
+  // A position, so the premium and the Greeks describe something real.
+  qty: 1, mult: 100,
 };
 
 // Desaturated institutional palette: blue = neural/deep,
@@ -30,6 +32,8 @@ const PLOT_BASE = {
 const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false };
 
 // ───────────────────────────────────────────────────────────── utilities ──
+const NL_CHAR = String.fromCharCode(10);
+
 const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
@@ -195,6 +199,63 @@ function setReadout(id, text) {
 const ZERO_DTE_CUTOFF = 12 / 252;
 const is0dte = () => state.maturity <= ZERO_DTE_CUTOFF + 1e-9;
 
+// A position is contracts x shares each; a negative count is a short, which
+// flips the sign of the premium and of every Greek.
+const positionSize = () => state.qty * state.mult;
+
+function fmtSigned(v, digits) {
+  const sign = v < 0 ? "\u2212" : "";
+  return sign + "$" + Math.abs(v).toLocaleString(undefined, {
+    minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+// Whole-share and whole-dollar figures for a book; per-contract figures keep
+// the four decimals the model's own accuracy supports.
+function renderPosition() {
+  const line = $("position-line");
+  const hint = $("position-hint");
+  if (!line) return;
+  const n = positionSize();
+  if (lastNNPrice == null || !isFinite(n) || n === 0) {
+    line.textContent = "";
+  } else {
+    const total = lastNNPrice * n;
+    line.textContent = (state.qty < 0 ? "Short " : "") +
+      Math.abs(state.qty).toLocaleString() + " \u00d7 " +
+      state.mult.toLocaleString() + " shares = " + fmtSigned(total, 2) +
+      (state.qty < 0 ? " received" : " to pay");
+  }
+  if (hint) {
+    hint.textContent = state.qty < 0
+      ? "A short position: the premium is received and every Greek changes sign."
+      : "Sets the scale of the premium and the Greeks below.";
+  }
+  renderGreeks();
+}
+
+// The Greeks strip shows either one contract or the whole position.
+function renderGreeks() {
+  if (!lastGreeks) return;
+  const n = greekBasis === "position" ? positionSize() : 1;
+  const digits = greekBasis === "position" ? 2 : 4;
+  const map = { delta: "g-delta", gamma: "g-gamma", vega: "g-vega",
+                theta: "g-theta", rho: "g-rho" };
+  for (const [k, id] of Object.entries(map)) {
+    const el = $(id);
+    if (!el) continue;
+    const v = lastGreeks[k] * n;
+    el.textContent = greekBasis === "position"
+      ? (v < 0 ? "\u2212" : "") + Math.abs(v).toLocaleString(undefined, {
+          minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : v.toFixed(digits);
+  }
+  document.querySelectorAll(".greek-unit").forEach((el) => {
+    if (!el.dataset.unit) el.dataset.unit = el.textContent;
+    el.textContent = greekBasis === "position"
+      ? el.dataset.unit + ", whole position" : el.dataset.unit;
+  });
+}
+
 // How far the contract sits from at-the-money, in words. "At the money"
 // covers the ±2% band where the distinction stops being meaningful.
 function moneynessWords() {
@@ -337,6 +398,9 @@ function bindSegmented(containerId, onPick) {
 // ───────────────────────────────────────────────────────── price + greeks ──
 let priceSeq = 0;
 let lastNNPrice = null;
+let lastGreeks = null;
+let lastCheck = null;
+let greekBasis = "unit";
 async function updatePrice() {
   document.querySelector(".results").classList.add("updating");
   const seq = ++priceSeq;
@@ -348,9 +412,13 @@ async function updatePrice() {
     renderReportInputs();
     animateNumber($("nn-price"), d.nn.price, fmtMoney);
     animateNumber($("mc-price"), d.mc.price, fmtMoney);
+    lastGreeks = d.nn.greeks;
+    renderPosition();
     $("nn-sub").textContent = is0dte()
       ? "with all five Greeks, from one pass of the short-dated model"
       : "with all five Greeks, from one pass";
+    lastCheck = { price: d.mc.price, n_paths: d.mc.n_paths,
+                  half: (d.mc.ci_high - d.mc.ci_low) / 2 };
     $("mc-ci").textContent = "±$" +
       ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) +
       " at 95% confidence · fresh run, new seed each time";
@@ -388,12 +456,7 @@ async function updatePrice() {
       (d.mc.engine === "rough_bergomi" ? ", rough-volatility engine" : "") + ".";
 
     document.querySelector(".results").classList.remove("errored");
-    const g = d.nn.greeks;
-    animateNumber($("g-delta"), g.delta, (v) => v.toFixed(4));
-    animateNumber($("g-gamma"), g.gamma, (v) => v.toFixed(4));
-    animateNumber($("g-vega"), g.vega, (v) => v.toFixed(4));
-    animateNumber($("g-theta"), g.theta, (v) => v.toFixed(4));
-    animateNumber($("g-rho"), g.rho, (v) => v.toFixed(4));
+    renderGreeks();
   } catch (err) {
     if (seq !== priceSeq) return;
     // Keep the last good numbers on screen but visibly stale: a red message
@@ -805,6 +868,110 @@ bindSegmented("error-metric", (v) => { errorMetric = v; renderErrorDistribution(
 
 $("btn-benchmark").addEventListener("click", updateBenchmark);
 
+// Size controls. A whole number of contracts; a negative count is a short.
+function bindSizeField(id, key, { min, max, integer }) {
+  const el = $(id);
+  const commit = () => {
+    const v = parseFloat(el.value.replace(/[,\s]/g, ""));
+    if (!isFinite(v) || v < min || v > max || (integer && v !== Math.round(v))) {
+      el.classList.add("invalid");
+      return;
+    }
+    el.classList.remove("invalid");
+    state[key] = v;
+    renderPosition();
+    renderContractLine();
+    syncURL();
+  };
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); el.blur(); }
+    if (e.key === "Escape") { el.value = state[key]; el.classList.remove("invalid"); el.blur(); }
+  });
+  el.addEventListener("blur", () => { commit(); el.value = state[key]; });
+}
+bindSizeField("in-qty", "qty", { min: -100000, max: 100000, integer: true });
+bindSizeField("in-mult", "mult", { min: 1, max: 10000, integer: true });
+
+bindSegmented("greek-basis", (v) => { greekBasis = v; renderGreeks(); });
+
+// A quote that can leave the page: the contract, every input, the price, the
+// Greeks, the independent check and when it was produced.
+function quoteRows() {
+  const g = lastGreeks || {};
+  const n = positionSize();
+  const stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const rows = [
+    ["Produced", stamp + " local"],
+    ["Instrument", contractShort()],
+    ["Underlying", marketData ? marketData.ticker : "hypothetical"],
+    ["Spot", state.spot],
+    ["Strike", state.strike],
+    ["Time to expiry (years)", +state.maturity.toFixed(6)],
+    ["Volatility", (state.sigma * 100).toFixed(4) + "%"],
+    ["Rate", (state.rate * 100).toFixed(4) + "%"],
+    ["Type", state.optionType],
+    ["Contracts", state.qty],
+    ["Shares per contract", state.mult],
+    ["Price per contract", lastNNPrice == null ? "" : lastNNPrice.toFixed(6)],
+    ["Position value", lastNNPrice == null ? "" : (lastNNPrice * n).toFixed(2)],
+    ["Delta per contract", g.delta == null ? "" : g.delta.toFixed(6)],
+    ["Gamma per contract", g.gamma == null ? "" : g.gamma.toFixed(6)],
+    ["Vega per contract", g.vega == null ? "" : g.vega.toFixed(6)],
+    ["Theta per contract", g.theta == null ? "" : g.theta.toFixed(6)],
+    ["Rho per contract", g.rho == null ? "" : g.rho.toFixed(6)],
+    ["Delta, whole position", g.delta == null ? "" : (g.delta * n).toFixed(2)],
+    ["Gamma, whole position", g.gamma == null ? "" : (g.gamma * n).toFixed(2)],
+    ["Vega, whole position", g.vega == null ? "" : (g.vega * n).toFixed(2)],
+    ["Theta, whole position", g.theta == null ? "" : (g.theta * n).toFixed(2)],
+    ["Rho, whole position", g.rho == null ? "" : (g.rho * n).toFixed(2)],
+  ];
+  if (lastCheck) {
+    rows.push(["Cross-check price", lastCheck.price.toFixed(6)]);
+    rows.push(["Cross-check paths", lastCheck.n_paths]);
+    rows.push(["Cross-check 95% half-width", lastCheck.half.toFixed(6)]);
+  }
+  if (modelInfo) {
+    rows.push(["Model", modelInfo.n_members + " networks x " +
+      modelInfo.n_parameters + " parameters"]);
+    if (modelInfo.eval) {
+      rows.push(["Model typical error",
+        modelInfo.eval.ensemble.price.rmse_bps.toFixed(2) + " bps of strike"]);
+    }
+  }
+  return rows;
+}
+
+function flashQuoteNote(text) {
+  const note = $("quote-note");
+  note.textContent = text;
+  setTimeout(() => { note.textContent = ""; }, 2400);
+}
+
+$("btn-copy-quote").addEventListener("click", async () => {
+  const text = quoteRows().map(([k, v]) => k + ": " + v).join(NL_CHAR);
+  try {
+    await navigator.clipboard.writeText(text);
+    flashQuoteNote("Quote copied");
+  } catch {
+    flashQuoteNote("Clipboard unavailable; use Download CSV");
+  }
+});
+
+$("btn-download-quote").addEventListener("click", () => {
+  const csv = "field,value" + NL_CHAR + quoteRows()
+    .map(([k, v]) => '"' + String(k).replace(/"/g, '""') + '","' +
+                     String(v).replace(/"/g, '""') + '"').join(NL_CHAR);
+  const blob = new Blob([csv], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "quote-" + state.optionType + "-" + state.strike + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  flashQuoteNote("CSV downloaded");
+});
+
 // ──────────────────────────────────────────── URL state, presets, sharing ──
 // Every slider, the contract type, the tab and the hedging cost are mirrored
 // into the query string so a specific finding can be sent as a link, e.g.
@@ -825,6 +992,8 @@ function serializeState() {
   if (state.mcPaths !== 50000) q.set("paths", String(state.mcPaths));
   if (Math.round(state.hedgeCost * 1e4) !== 50)
     q.set("cost", String(Math.round(state.hedgeCost * 1e4)));
+  if (state.qty !== 1) q.set("qty", String(state.qty));
+  if (state.mult !== 100) q.set("mult", String(state.mult));
   if (state.hedgeDynamics !== "rough") q.set("dyn", state.hedgeDynamics);
   if (marketData) q.set("ticker", marketData.ticker);
   return q;
@@ -882,6 +1051,14 @@ function applyState(p) {
     const bps = Math.min(200, Math.max(0, Math.round(cost / 5) * 5));
     state.hedgeCost = bps / 1e4;
     $("in-cost").value = bps; $("val-cost").textContent = bps + " bps";
+  }
+  const qty = num("qty");
+  if (qty !== undefined && Number.isInteger(qty)) {
+    state.qty = qty; $("in-qty").value = qty;
+  }
+  const mult = num("mult");
+  if (mult !== undefined && mult >= 1) {
+    state.mult = mult; $("in-mult").value = mult;
   }
   if (p.dyn === "rough" || p.dyn === "gbm") {
     state.hedgeDynamics = p.dyn; setSegmented("hedge-dynamics", p.dyn);
