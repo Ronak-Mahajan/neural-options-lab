@@ -106,11 +106,17 @@ def test_batch_matches_map_calibrator_loss(capture):
     theta = jr.served_theta()
     assert capture.batch.smile_loss(theta) == capture.cal.loss(theta)
     assert abs(capture.batch.rmse_volpts(theta) - capture.cal.rmse_volpts(theta)) < 1e-9
-    # a batched population evaluates member-by-member identically
+    # A batched population evaluates member by member to within float32
+    # precision. The pricing map runs in float32, and a batched matmul may pick
+    # a different kernel from a single-row one: identical on the Windows/MKL
+    # build this was written on, 5.8e-9 on a loss of 1.3 on the Linux CI
+    # runner. Both are the same answer, so the bound is relative to the loss
+    # at float32 resolution rather than an absolute 1e-9.
     thetas = np.array([theta, [2.0, -0.7, 0.15, 0.02], [1.0, -0.3, 0.4, 0.01]])
     smile, psi = capture.batch.evaluate(thetas)
     for th, s_ in zip(thetas, smile):
-        assert abs(s_ - capture.cal.loss(th)) < 1e-9
+        ref = capture.cal.loss(th)
+        assert abs(s_ - ref) <= 1e-7 * max(1.0, abs(ref)), (s_, ref)
     assert psi.shape == (3, capture.stencil.n)
 
 
