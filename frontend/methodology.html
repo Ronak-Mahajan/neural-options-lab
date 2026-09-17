@@ -238,6 +238,10 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <p>
   All five Greeks are exact derivatives of the network obtained by automatic differentiation,
   not finite differences, and the tests check them against finite-difference perturbations.
+  They are quoted per share of the underlying: delta per $1 of spot, gamma per $1 squared,
+  vega and rho per point of volatility and of rate (1 % = 1 point), and theta per trading day,
+  252 to a year. Every maturity on the site is in the same trading days, so decay per day
+  times days to expiry is the premium of the contract as quoted.
   A price alone costs about 714 µs at p50. Price plus all five Greeks costs 8.4 ms at p50
   (9.3 ms p95, 9.8 ms p99), because gamma needs a second backward pass through each of the five
   ensemble members. Batch throughput is 487,843 prices/s at a batch of 10,000. Serving stays on

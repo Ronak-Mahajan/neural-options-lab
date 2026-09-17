@@ -324,7 +324,7 @@
         <div class="greek"><span class="greek-sym">ν</span>
           <span class="greek-name">Vega<button type="button" class="help" data-help="Change in the option's price for a one-point rise in volatility (from 25% to 26%, say).">?</button><span class="greek-unit">per volatility point</span></span><span class="greek-val mono" id="g-vega">-</span></div>
         <div class="greek"><span class="greek-sym">Θ</span>
-          <span class="greek-name">Theta<button type="button" class="help" data-help="Change in the option's price per calendar day that passes, with everything else unchanged.">?</button><span class="greek-unit">per calendar day</span></span><span class="greek-val mono" id="g-theta">-</span></div>
+          <span class="greek-name">Theta<button type="button" class="help" data-help="Change in the option&rsquo;s price for one trading day less life, everything else held. Expiries on this page are trading days too, 252 to a year. The pricer values a contract struck today and carries no accrued average, so this is the slope along expiry rather than the day-to-day carry of a seasoned position.">?</button><span class="greek-unit">per trading day</span></span><span class="greek-val mono" id="g-theta">-</span></div>
         <div class="greek"><span class="greek-sym">ρ</span>
           <span class="greek-name">Rho<button type="button" class="help" data-help="Change in the option's price for a one-point rise in the risk-free rate.">?</button><span class="greek-unit">per rate point</span></span><span class="greek-val mono" id="g-rho">-</span></div>
       </div>
@@ -379,7 +379,7 @@
             <article class="panel chart-panel">
               <header class="chart-head">
                 <div>
-                  <h3>How wrong this pricer has been</h3>
+                  <h3>Pricing accuracy, out of sample</h3>
                   <p id="error-sub">Measured against high-precision simulation on contracts the model never saw.</p>
                 </div>
                 <div class="chart-tools">
