@@ -273,7 +273,7 @@ function renderGreeks() {
     "g-delta": "shares of the underlying",
     "g-gamma": "shares per $1 move",
     "g-vega": "$ per volatility point",
-    "g-theta": "$ per calendar day",
+    "g-theta": "$ per trading day",
     "g-rho": "$ per rate point",
   };
   for (const [id, unit] of Object.entries(POSITION_UNITS)) {
@@ -898,7 +898,7 @@ async function loadModelInfo() {
       teaser.textContent = "Typical error " +
         m.eval.ensemble.price.rmse_bps.toFixed(1) +
         " basis points of strike on " + m.eval.n_points.toLocaleString() +
-        " contracts the models never saw. Fixed: it does not move with your inputs.";
+        " contracts the models never saw. A standing benchmark, not a live figure.";
     }
   } catch {
     dot.className = "status-dot bad";
@@ -1061,12 +1061,12 @@ function quoteRows() {
     ["Delta per contract", g.delta == null ? "" : g.delta.toFixed(6)],
     ["Gamma per contract", g.gamma == null ? "" : g.gamma.toFixed(6)],
     ["Vega per contract", g.vega == null ? "" : g.vega.toFixed(6)],
-    ["Theta per contract", g.theta == null ? "" : g.theta.toFixed(6)],
+    ["Theta per contract, per trading day", g.theta == null ? "" : g.theta.toFixed(6)],
     ["Rho per contract", g.rho == null ? "" : g.rho.toFixed(6)],
     ["Delta, whole position", g.delta == null ? "" : (g.delta * n).toFixed(2)],
     ["Gamma, whole position", g.gamma == null ? "" : (g.gamma * n).toFixed(2)],
     ["Vega, whole position", g.vega == null ? "" : (g.vega * n).toFixed(2)],
-    ["Theta, whole position", g.theta == null ? "" : (g.theta * n).toFixed(2)],
+    ["Theta, whole position, per trading day", g.theta == null ? "" : (g.theta * n).toFixed(2)],
     ["Rho, whole position", g.rho == null ? "" : (g.rho * n).toFixed(2)],
   ];
   if (lastCheck) {

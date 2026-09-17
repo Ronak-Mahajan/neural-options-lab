@@ -28,6 +28,16 @@ ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
 # Maturity at or below which the 0DTE (European, rough-Bergomi) surrogate serves.
 ZERO_DTE_CUTOFF = 12.0 / 252.0
 
+# Days in the year this engine quotes maturities in. The contract clock is
+# trading days end to end: the averaging dates of the Asian payoff are trading
+# days, ZERO_DTE_CUTOFF is twelve of them, and every maturity the dashboard
+# shows is T * 252. Theta is scaled to the same day so that decay per day times
+# days to expiry is the life of the contract as quoted, rather than the 1.45x
+# mismatch a 365-day theta leaves against a 252-day maturity. Calendar time
+# enters only in calibrate.py, which reads venue timestamps in ACT/365 and
+# documents the same 365/252 gap at the short end.
+TRADING_DAYS_PER_YEAR = 252.0
+
 
 class PricingEngine:
     def __init__(self, checkpoint: Path | None = None):
@@ -179,7 +189,8 @@ class PricingEngine:
                 "delta": df_dm.item(),
                 "gamma": d2f_dm2.item() / strike,
                 "vega": strike * df_dsig.item() / 100.0,  # per vol point
-                "theta": -strike * df_dmat.item() / 365.0,  # per calendar day
+                # per trading day, the unit every maturity here is quoted in
+                "theta": -strike * df_dmat.item() / TRADING_DAYS_PER_YEAR,
                 "rho": strike * df_dr.item() / 100.0,  # per rate point
             },
         }

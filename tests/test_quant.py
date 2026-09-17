@@ -69,3 +69,17 @@ def test_greeks_finite_difference(engine):
     fd_vega = ((p_up - p_dn) / (2 * dsig)) / 100.0
     
     assert abs(base["greeks"]["vega"] - fd_vega) < 1e-3
+
+    # Theta: -dP/dT scaled to ONE TRADING DAY. Every maturity this engine
+    # quotes is in trading days - the short-dated cutoff is 12/252, the Asian
+    # averages on trading days, the dashboard prints T * 252 - so the day theta
+    # charges for has to be the same day, 1/252. A 1/365 calendar theta would
+    # be 1.45x too small against the maturity beside it on screen.
+    dT = 1e-3
+    p_up = engine.price_with_greeks(S, K, T + dT, sig, r, option_type="call")["price"]
+    p_dn = engine.price_with_greeks(S, K, T - dT, sig, r, option_type="call")["price"]
+    fd_theta = -((p_up - p_dn) / (2 * dT)) / 252.0
+
+    assert abs(base["greeks"]["theta"] - fd_theta) < 1e-3
+    # ... and not the 365-day convention, which differs by 45% at every point.
+    assert abs(base["greeks"]["theta"] - fd_theta * 252.0 / 365.0) > 1e-4
