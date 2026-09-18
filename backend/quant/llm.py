@@ -6,6 +6,13 @@ by token. Without a key, a deterministic rule-based narrator writes the same
 facts. Either way the figures come from the page, never from the writer, and
 the page says which one wrote it.
 
+Both writers work from one ranking, built here in `rank_policies` from the
+same CVaR numbers the Hedging tab renders. Every baseline on the page enters
+that ranking: comparing the learned policy against the delta hedge alone is
+what let the note crown a winner and then print a better number from the
+Whalley-Wilmott band one sentence later, disagreeing with the Hedging tab
+about a run they both narrate.
+
 Configuration (environment):
     GROQ_API_KEY   required for the model-written version
     GROQ_MODEL     optional override; defaults to "llama-3.1-8b-instant"
@@ -13,6 +20,7 @@ Configuration (environment):
                    3.1-8B-instant model is its direct successor)
 """
 
+import math
 import os
 from dotenv import load_dotenv
 
@@ -21,6 +29,26 @@ load_dotenv()
 from fastapi.responses import StreamingResponse
 
 DEFAULT_MODEL = "llama-3.1-8b-instant"
+
+# How the three hedgers are named in prose, once, so the ranking and the
+# paragraphs that read off it cannot drift apart.
+DEEP = "the learned policy"
+DELTA = "the Black-Scholes delta hedge"
+BAND = "the cost-aware Whalley-Wilmott band"
+
+# Without bootstrap standard errors there is nothing to test a gap against,
+# so a gap under this fraction of the leading tail loss is reported as close
+# rather than as a win. CVaR is a 5%-tail statistic and moves by more than
+# this between seeds.
+RELATIVE_TIE = 0.05
+
+_COUNT_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+                6: "six"}
+
+_DRIVER_NAMES = {"spot": "the spot level",
+                 "sigma": "volatility",
+                 "maturity": "time to expiry",
+                 "rate": "the interest rate"}
 
 
 def llm_available() -> bool:
@@ -33,49 +61,198 @@ def _money(value: float) -> str:
     return ("-$" if value < 0 else "$") + f"{abs(value):,.2f}"
 
 
-def get_risk_report_stream(ticker: str, nn_price: float, bs_cvar: float,
-                           deep_cvar: float, attributions: dict,
-                           contract: str = "", ww_cvar: float | None = None,
-                           deep_cost: float | None = None,
-                           delta_cost: float | None = None,
-                           dynamics_label: str = "", cost_bps: int | None = None):
-    """Streams the risk summary from Groq, or from the rule-based narrator."""
+def _cap(text: str) -> str:
+    """Capitalise a policy name used to open a sentence."""
+    return text[:1].upper() + text[1:]
+
+
+def _join(parts: list[str]) -> str:
+    """a, b and c."""
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def rank_policies(bs_cvar: float, deep_cvar: float,
+                  ww_cvar: float | None = None,
+                  bs_cvar_se: float | None = None,
+                  deep_cvar_se: float | None = None,
+                  ww_cvar_se: float | None = None):
+    """Order every hedger on the page by tail loss, smallest loss first.
+
+    CVaR95 reaches this module as a P&L quantile, so a *less negative* number
+    is the smaller loss and the ranking is by descending value.
+
+    Returns ``(ranked, separated, basis)``: `ranked` is a list of
+    ``(name, cvar, se)`` best first; `separated` says whether the top two are
+    far enough apart to call a winner; `basis` is ``"se"`` when bootstrap
+    standard errors decided that and ``"gap"`` when only the raw gap was
+    available.
+    """
+    entries = [(DEEP, float(deep_cvar), deep_cvar_se),
+               (DELTA, float(bs_cvar), bs_cvar_se)]
+    if ww_cvar is not None:
+        entries.append((BAND, float(ww_cvar), ww_cvar_se))
+    ranked = sorted(entries, key=lambda e: -e[1])
+
+    top, second = ranked[0], ranked[1]
+    gap = top[1] - second[1]
+    if top[2] is not None and second[2] is not None:
+        # Two combined standard errors of the DIFFERENCE, which for two
+        # independent bootstrap estimates is hypot(se_a, se_b) - the same test
+        # the Hedging tab applies to the same numbers. Summing the two errors
+        # instead would be a looser bar (about 1.4 SE), and the two tabs
+        # narrate one run, so they must not disagree about what it separates.
+        combined = 2.0 * math.hypot(float(top[2]), float(second[2]))
+        return ranked, gap > combined, "se"
+    scale = abs(top[1]) or 1.0
+    return ranked, gap > RELATIVE_TIE * scale, "gap"
+
+
+def _pair_is_level(a_cvar: float, a_se, b_cvar: float, b_se,
+                   fallback: bool) -> bool:
+    """Whether two hedgers are too close for this run to separate them.
+
+    Same bar as `rank_policies`: two standard errors of the difference. When
+    either bootstrap error is missing there is nothing to test against, so the
+    caller's ranking-derived answer stands.
+    """
+    if a_se is None or b_se is None:
+        return fallback
+    return abs(a_cvar - b_cvar) <= 2.0 * math.hypot(abs(float(a_se)),
+                                                    abs(float(b_se)))
+
+
+def _ranking_prose(ranked, separated, basis):
+    """The ordering sentence and the verdict sentence, from one ranking."""
+    listing = _join([f"{name} at {_money(value)}" for name, value, _ in ranked])
+    order = (f"Ranked by average loss over the worst 5% of paths: {listing}.")
+
+    top_name, second_name = ranked[0][0], ranked[1][0]
+    if separated:
+        verdict = f"{_cap(top_name)} carries the smallest tail loss."
+    elif basis == "se":
+        verdict = (f"{_cap(top_name)} and {second_name} are level at the top: "
+                   f"the gap between them is inside their combined bootstrap "
+                   f"standard errors.")
+    else:
+        verdict = (f"The gap between {top_name} and {second_name} is small, "
+                   f"so this run does not separate them.")
+    return order, verdict
+
+
+def compose_risk_note(ticker: str, nn_price: float, bs_cvar: float,
+                      deep_cvar: float, attributions: dict,
+                      contract: str = "", ww_cvar: float | None = None,
+                      deep_cost: float | None = None,
+                      delta_cost: float | None = None,
+                      dynamics_label: str = "", cost_bps: int | None = None,
+                      bs_cvar_se: float | None = None,
+                      deep_cvar_se: float | None = None,
+                      ww_cvar_se: float | None = None,
+                      baseline_price: float | None = None) -> dict:
+    """Assemble the rule-written note and the model prompt from one ranking.
+
+    Returns ``{"note", "prompt", "ranked", "separated"}``. Both writers are
+    built here so the prompt cannot assert an outcome the template denies.
+    """
     subject = (f"a {contract}" if contract else "the contract on screen")
     if ticker:
         subject = subject + f" on {ticker}"
 
-    # Which policy actually has the smaller tail loss. CVaR95 arrives as a
-    # P&L quantile (negative = loss), so "better" means less negative. The
-    # deep hedger does NOT reliably beat delta hedging out of sample (see
-    # hedging.py), so both writers state whichever direction the numbers
-    # show rather than assuming the learned policy won.
-    deep_wins = deep_cvar > bs_cvar
+    ranked, separated, basis = rank_policies(
+        bs_cvar, deep_cvar, ww_cvar, bs_cvar_se, deep_cvar_se, ww_cvar_se)
+    order_line, verdict_line = _ranking_prose(ranked, separated, basis)
+
     market = dynamics_label or "the simulated market"
     cost_text = f"{cost_bps} basis points a trade" if cost_bps is not None \
         else "the configured transaction cost"
     costs_line = ""
     if deep_cost is not None and delta_cost is not None:
-        costs_line = (f" It paid {_money(deep_cost)} a path in transaction "
-                      f"costs against {_money(delta_cost)} for the delta hedge.")
-    ww_line = ""
-    if ww_cvar is not None:
-        ww_line = (f" The cost-aware Whalley-Wilmott band, the strongest "
-                   f"classical baseline here, came in at {_money(ww_cvar)}.")
+        costs_line = (f" The learned policy paid {_money(deep_cost)} a path "
+                      f"in transaction costs against {_money(delta_cost)} "
+                      f"for the delta hedge.")
 
+    # Integrated Gradients is complete against a baseline: the attributions
+    # sum to F(x) - F(baseline), which is what explain.py's completeness_error
+    # is measured against. Naming the baseline keeps the sentence from
+    # claiming an identity the bars on screen visibly fail.
+    baseline_phrase = "a minimal at-the-money baseline option"
+    if baseline_price is not None:
+        baseline_phrase += f" worth {_money(baseline_price)}"
+
+    drivers = sorted(attributions, key=lambda k: abs(attributions[k]),
+                     reverse=True)
+    # Every driver that is named is counted and every driver counted is
+    # named: an earlier magnitude filter dropped the at-the-money spot term
+    # from the list while the sentence still said "four".
+    count_word = _COUNT_WORDS.get(len(drivers), str(len(drivers)))
+
+    # --- where the learned policy's edge sits, if it has one ---------------
+    deep_beats_delta = float(deep_cvar) > float(bs_cvar)
+    top_two = {ranked[0][0], ranked[1][0]}
+    # A lead the run cannot resolve is not an edge. Test this pair directly
+    # rather than only when it happens to be the top two: with the band in
+    # front, the policy and the delta hedge can still be a coin toss between
+    # themselves, and the note must not call that an edge either.
+    deep_delta_level = _pair_is_level(
+        float(deep_cvar), deep_cvar_se, float(bs_cvar), bs_cvar_se,
+        top_two == {DEEP, DELTA} and not separated)
+    band_clause = ""
+    if ww_cvar is not None:
+        if top_two == {DEEP, BAND} and not separated:
+            band_clause = ("; at this cost level it does not separate from "
+                           "the Whalley-Wilmott band")
+        elif float(ww_cvar) > float(deep_cvar):
+            band_clause = ("; at this cost level the Whalley-Wilmott band "
+                           "keeps the smaller tail loss of the two")
+        else:
+            band_clause = ("; at this cost level it stays ahead of the "
+                           "Whalley-Wilmott band as well")
+
+    if deep_beats_delta and deep_delta_level:
+        para3 = ("The learned policy does not separate from the delta hedge "
+                 "on this run. The comparison is specific to these dynamics "
+                 "and this cost level, so re-run it before reading across to "
+                 "another regime.")
+    elif deep_beats_delta:
+        if (deep_cost is not None and delta_cost is not None
+                and float(deep_cost) < float(delta_cost)):
+            edge = ("The learned policy's edge over the delta hedge comes "
+                    "from its lower turnover")
+        elif deep_cost is not None and delta_cost is not None:
+            edge = ("The learned policy's edge over the delta hedge does not "
+                    "come from trading less; it pays at least as much as the "
+                    "delta hedge in costs")
+        else:
+            edge = ("The learned policy's edge over the delta hedge holds at "
+                    "this cost level")
+        para3 = (f"{edge}{band_clause}. It is specific to these dynamics and "
+                 f"this cost level, so re-run it before reading across to "
+                 f"another regime.")
+    else:
+        para3 = (f"The learned policy does not clear the delta hedge under "
+                 f"these dynamics at this cost level; {ranked[0][0]} sets the "
+                 f"mark on this run. The comparison is specific to these "
+                 f"dynamics and this cost level, so re-run it before reading "
+                 f"across to another regime.")
+
+    # --- the data the model is allowed to use ------------------------------
+    attribution_line = ", ".join(
+        f"{_DRIVER_NAMES.get(k, k)} {attributions[k]:.4f}" for k in drivers)
     data_block = f"""
 - Contract priced: {subject}, at {_money(nn_price)}.
-- What the price is made of (Integrated Gradients, in dollars): volatility
-  {attributions['sigma']:.4f}, time to expiry {attributions['maturity']:.4f},
-  spot level {attributions['spot']:.4f}, interest rate
-  {attributions.get('rate', 0.0):.4f}.
+- What the price is made of (Integrated Gradients, in dollars): the
+  attributions split the quoted price MINUS {baseline_phrase}, not the quoted
+  price itself - {attribution_line}. The contributions plus that baseline add
+  back to the quoted price.
 - Separate hedging experiment: sell one 30-day at-the-money call and hedge it
-  daily on simulated paths of {market}, paying {cost_text}. Average loss over
-  the worst 5% of paths (CVaR at 95%, less negative is better):
-  delta hedge {_money(bs_cvar)}, learned policy {_money(deep_cvar)}""" + (
-        f", Whalley-Wilmott band {_money(ww_cvar)}" if ww_cvar is not None else ""
-    ) + f""". In this run the {"learned policy" if deep_wins else "delta hedge"}
-  has the smaller tail loss.""" + (
-        f" Transaction costs per path: learned policy {_money(deep_cost)}, "
+  daily on simulated paths of {market}, paying {cost_text}. {order_line}
+  {verdict_line}
+- What the learned policy's edge rests on: {para3}""" + (
+        f"\n- Transaction costs per path: learned policy {_money(deep_cost)}, "
         f"delta hedge {_money(delta_cost)}." if deep_cost is not None else "")
 
     prompt = f"""
@@ -88,10 +265,15 @@ DATA:
 {data_block}
 
 FORMAT:
-Paragraph 1: the price and what drives it, from the attribution figures.
-Paragraph 2: the hedging comparison, stating exactly which policy had the
-smaller tail loss and at what cost. Note that the option priced in paragraph
-one and the call used in the hedging test are different contracts.
+Paragraph 1: the price and what drives it, from the attribution figures. The
+contributions are measured from the baseline option named in the data, so say
+that they add back to the quoted price less that baseline - never that they
+add up to the quoted price on their own.
+Paragraph 2: the hedging comparison. Rank the hedgers in exactly the order
+the data ranks them and repeat the verdict in the data as it is written; do
+not name a different winner, and do not call a winner where the data says the
+top two are level or close. Note that the option priced in paragraph one and
+the call used in the hedging test are different contracts.
 Paragraph 3: one sentence on what to watch, then note this is a research
 dashboard and not investment advice.
 
@@ -99,69 +281,75 @@ Plain text paragraphs, no markdown, no asterisks. Technical and concise.
 Write amounts with the sign before the currency symbol, e.g. -$5.01.
 """
 
-    def template_text() -> str:
-        """The same facts, written by rule. Served when no key is configured,
-        and as the fallback if the provider fails."""
-        driver_names = {"spot": "the spot level",
-                        "sigma": "volatility",
-                        "maturity": "time to expiry",
-                        "rate": "the interest rate"}
-        ranked = sorted(attributions, key=lambda k: abs(attributions[k]),
-                        reverse=True)
-        top = ranked[0]
-        others = ", ".join(
-            f"{driver_names.get(k, k)} {_money(attributions[k])}"
-            for k in ranked[1:] if abs(attributions[k]) > 5e-5)
+    # --- the same facts, written by rule ----------------------------------
+    if drivers:
+        top = drivers[0]
+        others = ", ".join(f"{_DRIVER_NAMES.get(k, k)} {_money(attributions[k])}"
+                           for k in drivers[1:])
         others_text = f" Then {others}." if others else ""
-
-        para1 = (
-            f"The network prices {subject} at {_money(nn_price)}. Splitting "
-            f"that price across its inputs by Integrated Gradients, "
-            f"{driver_names.get(top, top)} accounts for the largest share at "
-            f"{_money(attributions[top])}.{others_text} The four contributions "
-            f"add back to the quoted price, which is the check that the "
-            f"attribution is complete."
-        )
-
-        if deep_wins:
-            para2 = (
-                f"A separate experiment hedges a short 30-day at-the-money "
-                f"call daily on simulated paths of {market}, paying "
-                f"{cost_text}. The learned policy carries the smaller tail "
-                f"loss: its average loss over the worst 5% of paths is "
-                f"{_money(deep_cvar)} against {_money(bs_cvar)} for a "
-                f"Black-Scholes delta hedge charged the same costs."
-                f"{costs_line}{ww_line}"
-            )
-            para3 = (
-                "The learned policy's advantage here comes with its lower "
-                "turnover; it is specific to these dynamics and this cost "
-                "level, so re-run it before reading across to another regime."
-            )
+        if len(drivers) == 1:
+            adds_back = ("That contribution plus the baseline adds back to "
+                         "the quoted price")
         else:
-            para2 = (
-                f"A separate experiment hedges a short 30-day at-the-money "
-                f"call daily on simulated paths of {market}, paying "
-                f"{cost_text}. The delta hedge keeps the smaller tail loss "
-                f"here: its average loss over the worst 5% of paths is "
-                f"{_money(bs_cvar)} against {_money(deep_cvar)} for the "
-                f"learned policy.{costs_line}{ww_line}"
-            )
-            para3 = (
-                "Under these dynamics and at this cost level the delta hedge "
-                "is the baseline to beat; the learned policy's advantage "
-                "appears under rough volatility with higher costs."
-            )
-
-        return (
-            f"Risk summary\n\n{para1}\n\n{para2}\n\n{para3} This is a "
-            f"research dashboard, not investment advice."
+            adds_back = (f"Those {count_word} contributions plus the baseline "
+                         f"add back to the quoted price")
+        para1 = (
+            f"The network prices {subject} at {_money(nn_price)}. Integrated "
+            f"Gradients splits the difference from {baseline_phrase}: "
+            f"{_DRIVER_NAMES.get(top, top)} accounts for the largest share at "
+            f"{_money(attributions[top])}.{others_text} {adds_back}, which is "
+            f"the check that the attribution is complete."
         )
+    else:
+        para1 = f"The network prices {subject} at {_money(nn_price)}."
+
+    para2 = (
+        f"A separate experiment hedges a short 30-day at-the-money call daily "
+        f"on simulated paths of {market}, paying {cost_text}. {order_line} "
+        f"{verdict_line}{costs_line}"
+    )
+
+    note = (f"Risk summary\n\n{para1}\n\n{para2}\n\n{para3} This is a "
+            f"research dashboard, not investment advice.")
+
+    return {"note": note, "prompt": prompt, "ranked": ranked,
+            "separated": separated}
+
+
+def render_risk_note(*args, **kwargs) -> str:
+    """The rule-written desk note, as served when no model key is configured."""
+    return compose_risk_note(*args, **kwargs)["note"]
+
+
+def build_risk_prompt(*args, **kwargs) -> str:
+    """The prompt handed to the model, carrying the same ranking."""
+    return compose_risk_note(*args, **kwargs)["prompt"]
+
+
+def get_risk_report_stream(ticker: str, nn_price: float, bs_cvar: float,
+                           deep_cvar: float, attributions: dict,
+                           contract: str = "", ww_cvar: float | None = None,
+                           deep_cost: float | None = None,
+                           delta_cost: float | None = None,
+                           dynamics_label: str = "",
+                           cost_bps: int | None = None,
+                           bs_cvar_se: float | None = None,
+                           deep_cvar_se: float | None = None,
+                           ww_cvar_se: float | None = None,
+                           baseline_price: float | None = None):
+    """Streams the risk summary from Groq, or from the rule-based narrator."""
+    parts = compose_risk_note(
+        ticker, nn_price, bs_cvar, deep_cvar, attributions,
+        contract=contract, ww_cvar=ww_cvar, deep_cost=deep_cost,
+        delta_cost=delta_cost, dynamics_label=dynamics_label,
+        cost_bps=cost_bps, bs_cvar_se=bs_cvar_se, deep_cvar_se=deep_cvar_se,
+        ww_cvar_se=ww_cvar_se, baseline_price=baseline_price,
+    )
 
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         def fallback_stream():
-            for chunk in template_text().split(" "):
+            for chunk in parts["note"].split(" "):
                 yield chunk + " "
         return StreamingResponse(fallback_stream(), media_type="text/plain")
 
@@ -173,7 +361,7 @@ Write amounts with the sign before the currency symbol, e.g. -$5.01.
     def groq_stream():
         try:
             stream = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": parts["prompt"]}],
                 model=model,
                 temperature=0.4,
                 stream=True,
@@ -186,6 +374,6 @@ Write amounts with the sign before the currency symbol, e.g. -$5.01.
             # Never surface a raw provider error on the page: log it and serve
             # the rule-based narrative instead.
             print(f"[risk-report] LLM provider error (model={model}): {e}")
-            yield "\n\n" + template_text()
+            yield "\n\n" + parts["note"]
 
     return StreamingResponse(groq_stream(), media_type="text/plain")

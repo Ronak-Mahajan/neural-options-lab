@@ -1,13 +1,13 @@
-"""Certify the map's maturity extension: live 60-day SPY, MC as referee.
+"""Validate the map's maturity extension: live 60-day SPY, MC as referee.
 
-Every certification so far ran on surfaces the recorder could see: 17 days or
+Every validation so far ran on surfaces the recorder could see: 17 days or
 less, the old box. v5 trained on 120k new parameter sets spanning 15-120 days
 precisely so calibration could reach weeklies and monthlies after the GPU is
 gone. This is the test that earns that claim, run while the GPU still exists
 to referee: fit a live max-dte-60 SPY surface on the map (CPU), reprice the
 map's parameters under 100-step Monte Carlo (the discretization the long-tau
 labels used), and bucket the error by maturity so the new region is judged
-separately from the already-certified one.
+separately from the already-validated one.
 
 Also answers this morning's finding: the 10:00 scheduled recalibration railed
 eta at the SPY box ceiling (3.935 on [0.5, 4.0]) and was rightly rejected.
@@ -62,7 +62,7 @@ def mc_reprice(quotes, rate, eta, rho, H, xi):
 
 def report(tag, quotes, errs):
     print(f"\n  {tag}")
-    buckets = [("<= 17d (already certified)", 0.0, 17.5 / 365),
+    buckets = [("<= 17d (already validated)", 0.0, 17.5 / 365),
                ("17-45d (NEW)", 17.5 / 365, 45.0 / 365),
                ("45-60d (NEW)", 45.0 / 365, 61.0 / 365)]
     for name, lo, hi in buckets:

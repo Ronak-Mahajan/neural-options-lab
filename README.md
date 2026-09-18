@@ -8,7 +8,7 @@
 
 **Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)**. It runs on an always-on paid instance, so there is no wake-up delay on first load. Every number on the dashboard is computed live by the models described below.
 
-A neural network that prices arithmetic Asian options ~500x faster than Monte Carlo and 33x more accurately than the Levy (1992) closed-form approximation (Curran's 1994 conditioning approximation is more accurate still on price alone; see [docs/approximation_benchmark.md](docs/approximation_benchmark.md)), wrapped in an interactive dashboard you can run locally in two commands.
+A neural network that prices arithmetic Asian options ~500x faster than the 200,000-path Monte Carlo it is measured against and 33x more accurately than the Levy (1992) closed-form approximation over the full trained box (Curran's 1994 conditioning approximation is more accurate still on price alone; see [docs/approximation_benchmark.md](docs/approximation_benchmark.md)), wrapped in an interactive dashboard you can run locally in two commands.
 
 The project covers the full stack of a modern quant pricing system: the numerical methods that generate ground truth, the deep learning that learns to imitate them, a rough volatility model for same-day-expiry options, a reinforcement-style hedging agent, live market calibration, and a browser front end that ties it together. Trained model weights are included, so it runs the moment you clone it.
 
@@ -18,14 +18,15 @@ Built with PyTorch, FastAPI, and plain JavaScript with Plotly. No frontend build
 
 Every figure here is measured; the sections below say how.
 
-- **Pricing.** The neural surrogate prices an arithmetic Asian option in ~714 µs (p50), 500x faster than 200,000-path Monte Carlo, with a price RMSE of 1.4 basis points of strike on 600 held-out points. Against Levy (1992) moment matching it is 33x more accurate at 13x the cost.
+- **Pricing.** The neural surrogate prices an arithmetic Asian option in ~714 µs (p50), 500x faster than the 200,000-path Monte Carlo it is measured against, with a price RMSE of 1.3 basis points of strike on 600 held-out points. Against Levy (1992) moment matching it is 33x more accurate at 13x the cost.
 - **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications.
-- **0DTE.** The rough Bergomi ensemble serving maturities of 12 trading days or less is calibrated to the live SPY smile: the served checkpoint carries the accepted 2026-08-20 fit (η 3.657, ρ −0.628, H 0.255; 1.568 vol points over 618 quotes, adopted in commit `82c54bb`), and `train_0dte.py` stamps a `calibrated` flag and the provenance note into the checkpoint metadata. Its recorded ensemble validation RMSE is 3.3 bps of strike against its 20,000-path training labels; the arbitrage audit, which re-prices the served checkpoint against 4 × 400,000-path rough Bergomi references, measures 1.9-3.8 bps of price RMSE at its hardest smiles (1-5 days, 10% vol) and 0.8-2.3 bps on the rest, with a largest single-strike error of 14.4 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md)). A held-out evaluation against high-precision references, comparable to `artifacts/eval.json` for the main pricer, is still to be re-measured for this checkpoint; see [the 0DTE section](#the-0dte-model-driver-fix-regeneration-and-live-calibration).
+- **0DTE.** The rough Bergomi ensemble serving maturities of 12 trading days or less is calibrated to the live SPY smile: the served checkpoint carries the accepted 2026-08-20 fit (η 3.657, ρ −0.628, H 0.255; 1.568 vol points over 618 quotes, adopted in commit `82c54bb`), recorded in `artifacts/rough_calibration_20260820.json` and named by the provenance note `train_0dte.py` stamps into the checkpoint metadata alongside a `calibrated` flag. `dataset_0dte.py` reads that same file, so re-running the documented recipe regenerates the dynamics the served model was trained on. That artifact is a record read out of the checkpoint's own metadata, not a re-fit: the optimiser inputs behind it were not preserved, so the fields it cannot attest to are null. Its recorded ensemble validation RMSE is 3.3 bps of strike against its 20,000-path training labels; the arbitrage audit, which re-prices the served checkpoint against 4 × 400,000-path rough Bergomi references, measures 1.9-3.8 bps of price RMSE at its hardest smiles (1-5 days, 10% vol) and 0.8-2.3 bps on the rest, with a largest single-strike error of 14.4 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md)). A held-out evaluation against high-precision references, comparable to `artifacts/eval.json` for the main pricer, is still to be re-measured for this checkpoint; see [the 0DTE section](#the-0dte-model-driver-fix-regeneration-and-live-calibration).
 - **Deep hedging.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
-- **Deep hedging under rough volatility.** On a rough Bergomi + jumps measure with transaction costs, a policy trained under those dynamics beats a vol-matched delta hedge from 50 bp of cost (CVaR₉₅ 404 ± 7 vs 493 ± 11 bp of strike) and a Whalley-Wilmott band from 100 bp, at a third of the delta hedge's turnover; evaluated on Black-Scholes paths the same policy loses. Caveat: the measure's parameters come from `artifacts/rough_calibration.json`, the 2026-08-21 SPY fit whose own quality gate marks it `accepted: false` (η at the 4.0 bound); the served 0DTE checkpoint carries a different, accepted fit (H 0.255). The rejection is a caveat on the dynamics, not on the paired comparison. Full grid with standard errors in [docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md).
+- **Deep hedging under rough volatility.** On a rough Bergomi + jumps measure with transaction costs, a policy trained under those dynamics reaches a lower CVaR₉₅ than a vol-matched delta hedge from 50 bp of cost (404 ± 7 vs 493 ± 11 bp of strike) and than a Whalley-Wilmott band from 100 bp, at a third of the delta hedge's turnover — which is where most of the gap comes from: 78.5 of those 88.5 bp is a smaller commission bill and 10.0 bp is tail shape, and on demeaned tail alone the Whalley-Wilmott band is ahead below 200 bp. Evaluated on Black-Scholes paths the same policy loses. Caveat: the measure's parameters come from `artifacts/rough_calibration.json`, the 2026-08-21 SPY fit whose own quality gate marks it `accepted: false` (η at the 4.0 bound); the served 0DTE checkpoint carries a different, accepted fit (H 0.255). The rejection is a caveat on the dynamics, not on the paired comparison. Full grid with standard errors in [docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md).
 - **Deep hedging on real paths.** Replaying the same three hedgers over 384 SPY and 567 BTC-USD rolling 30-day windows of real daily closes with ex-ante vol, the simulated tail advantage does not transfer (at 10 bp of cost plain delta has the better CVaR₉₅ on both assets: SPY 0.027 vs 0.041), while the cost efficiency does (at 50 bp the deep policy has the better mean P&L on SPY, −0.65% vs −1.35%, on 69% of windows, trading half as much, with still wider tails). Measured 2026-08-20 (commit `0785c91`) and replayed 2026-09-11 with the output committed. [docs/hedging_real_paths.md](docs/hedging_real_paths.md).
 - **Rough-volatility skew.** The at-the-money skew of listed SPY expiries steepens toward expiry with exponent −0.249 ± 0.033, against the rough-volatility prediction H − ½ = −0.239 at H = 0.261; the rough Bergomi engine reproduces the law in its asymptotic regime and steepens beyond it at the calibrated vol-of-vol. Same caveat as above: H = 0.261 and η = 3.9 are the gate-rejected `rough_calibration.json` parameters, while the served checkpoint's accepted fit has H = 0.255 (H − ½ = −0.245, also within one standard error of the market exponent). Measurement and figure in [docs/atm_skew_term_structure.md](docs/atm_skew_term_structure.md).
 - **Joint (H, η) refit.** Adding the per-expiry ATM skew to the calibration objective moves rough Bergomi's optimum to H = 0.31, ρ = −0.50, forward vol 12.5 % (bootstrap H 0.308 ± 0.011) and puts the Monte Carlo skew exponent at −0.264 ± 0.007, half a market SE from −0.249, for 0.45 vol points of smile RMSE; at the gate-rejected `rough_calibration.json` parameters above the exponent is −0.330, 2.5 SE away. Profile, Pareto front and validation in [docs/joint_skew_refit.md](docs/joint_skew_refit.md).
+- **Static-arbitrage audit of the Asian pricer.** Audited by autograd on 120,800 points in price space over its own trained box, the served Asian ensemble prices negative gamma on 18.6% of the box, negative vega on 28.1%, a delta above the forward bound on 14.1%, and sits below the Asian floor e^{−rT}(E[A] − K)⁺ on 9.9% (worst 5.98 bps of strike). Inside the vega-resolved region (42.6% of the box, where a reference vega of 0.02 makes an implied reading meaningful) only 0.060% of convexity and 0.016% of butterflies violate, and every other condition is clean. The violations sit where the true surface is affine and the network's smooth residual supplies the curvature. [docs/asian_arbitrage_audit.md](docs/asian_arbitrage_audit.md).
 - **Arbitrage-free implied-vol surface.** Audited by autograd on 134,100 points, the 0DTE pricing ensemble violates the Durrleman butterfly condition on 4.9% of its box and the calendar condition on 10.5% (edges: deep ITM, low vol, 1-2 days); a constrained total-variance network trained against it with butterfly, calendar and Lee-slope penalties has zero violations on the same grid at 0.22 vol points IV RMSE, and the dashboard evaluates both conditions live. [docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md).
 - **Heston as the classical reference.** A COS-method Heston pricer verified against the published reference to 8e-9, put-call parity to 1e-11 and Monte Carlo within 1 SE; calibrated to the same SPY captures it fits the 2-10 day smiles at 0.85 vol points (rough Bergomi map: 1.10) only with mean reversion at its 100/yr bound, and its skew term structure then has exponent −0.66 against the market's −0.25. [docs/heston_reference.md](docs/heston_reference.md).
 
@@ -39,11 +40,11 @@ Three links into the live dashboard, each opening on a case discussed below. The
 
 ## Why this is not trivial
 
-Arithmetic Asian options have no closed-form price. The payoff depends on the average price over the option's life, so the standard way to value one is Monte Carlo simulation, which is accurate but slow. At a 100,000-path budget a single price takes roughly 100 milliseconds, and a trading desk needs thousands of prices and their risk sensitivities (the Greeks) refreshed continuously.
+Arithmetic Asian options have no exact closed-form price. The payoff depends on the average price over the option's life, so the standard way to value one is Monte Carlo simulation, which is accurate but slow: the 200,000-path reference this project scores against takes 357 milliseconds for a single price, and a trading desk needs thousands of prices and their risk sensitivities (the Greeks) refreshed continuously.
 
 A neural network trained on Monte Carlo prices learns the pricing function itself. Once trained it prices the same contract in ~714 microseconds (p50) and returns all five Greeks as exact derivatives of the network through automatic differentiation, not finite differences. Price plus all Greeks together costs 8.4 ms at p50, because gamma needs a second backward pass through five ensemble members. That turns a batch job into something interactive.
 
-The interesting part is doing this with enough numerical care that the surrogate is actually trustworthy: sub-2-basis-point pricing error, Greeks accurate enough to hedge with, and a separate model for the short-dated regime where the usual assumptions break down.
+The interesting part is doing this with enough numerical care that the surrogate's error is known rather than assumed: sub-2-basis-point pricing error, delta and vega measured against pathwise Monte Carlo references and theta and rho against their own analytic checks, and a separate model for the short-dated regime where the usual assumptions break down. Gamma carries no independent error bar, and no experiment in this project has yet hedged a path with the surrogate's own Greeks.
 
 This README states measured numbers and retracts the ones that did not survive measurement. Where an earlier version overclaimed, the correction is left in place rather than quietly edited out.
 
@@ -91,31 +92,38 @@ To host it somewhere public so it opens from a link instead of a local clone, se
 | Differential Machine Learning | Huge and Savine (2020). The pathwise delta and vega are computed on the same Monte Carlo paths that produce the price, for almost no extra cost, and the network is trained to match both the prices and their derivatives in a variance-normalized combined loss. This teaches the model the shape of the pricing function rather than only its level. |
 | Deep ensemble | Five independently initialized networks. Averaging them lowers error, and the Greeks average cleanly through the mean. |
 | Same-day-expiry (0DTE) model | Very short-dated option smiles show a power-law skew that classical models cannot reproduce. A rough Bergomi Monte Carlo engine generates training data for a separate ensemble serving maturities of 12 trading days or less. The driver is the Riemann-Liouville Volterra process (Bayer-Friz-Gatheral 2016) simulated exactly via the joint law of the driving Brownian motion and the Volterra integral. The served checkpoint is trained on the dynamics of the accepted 2026-08-20 live SPY calibration (η 3.657, ρ −0.628, H 0.255) and records that provenance in its own metadata (`calibrated: true` plus a note naming the fit). |
-| Live calibration | `calibrate.py` fits the rough volatility parameters (η, ρ, H and the forward variance ξ, jointly) to the SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish, then applies a quality gate (RMSE, bound-pinning, staleness) before a fit can be adopted. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. `calibrate_deribit.py` does the same for BTC on Deribit, and `calibrate_map.py` runs either fit in seconds on a CPU through a certified neural pricing map (see below). |
-| Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under GBM, rough Bergomi with jumps, and real SPY/BTC price history. It loses to both on GBM (the negative result below), wins on tail risk under rough volatility with costs ([docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md)), and on real paths keeps only its cost efficiency, not its tail advantage ([docs/hedging_real_paths.md](docs/hedging_real_paths.md)). |
+| Live calibration | `calibrate.py` fits the rough volatility parameters (η, ρ, H and the forward variance ξ, jointly) to the SPY option smile using a vega-weighted Huber loss, global search with differential evolution, and a local polish, then applies a quality gate (RMSE, bound-pinning, staleness) before a fit can be adopted. It can then regenerate the training set and retrain the 0DTE model on the calibrated dynamics. `calibrate_deribit.py` does the same for BTC on Deribit, and `calibrate_map.py` runs either fit in seconds on a CPU through a regionally validated neural pricing map (see below). |
+| Deep hedging | Buehler and coauthors (2019). A policy network maps the hedging state to a position and is trained to minimize the 95% conditional value at risk of the terminal loss, with transaction costs inside the objective. Benchmarked against a vol-matched Black-Scholes delta hedge **and** a cost-aware Whalley-Wilmott no-trade band on identical paths, under GBM, rough Bergomi with jumps, and real SPY/BTC price history. It loses to both on GBM (the negative result below), has the lower CVaR₉₅ under rough volatility with costs — mostly by trading less ([docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md)) — and on real paths keeps only its cost efficiency, not its tail advantage ([docs/hedging_real_paths.md](docs/hedging_real_paths.md)). |
 | Market simulator for hedging | A Wasserstein GAN trained on historical SPY returns generates fat-tailed paths, mapped onto the pricing measure by enforcing the terminal variance and the martingale condition. Known limitation: the shipped generator is mode-collapsed (participation ratio 4.66 of 30 factors), so its paths are forecastable and it is not a sound measure for evaluating a hedging policy. Quantified in `docs/hedging_findings.md`. |
 | Real market data | A live [Deribit](https://www.deribit.com) option chain: 836 BTC instruments across 12 expiries, fetched from public endpoints with no API key. Coin-denominated premiums are converted on the per-expiry forward, implied vol is inverted on BOTH bid and ask so the market shows as a band, and the surface is checked for butterfly, vertical, calendar and put-call-parity arbitrage. Everything downstream reads a committed snapshot, so it runs offline. See [`docs/real_market_data.md`](docs/real_market_data.md). |
 | Explainability | Integrated Gradients through the ensemble against an at-the-money baseline, with the completeness check (attributions sum to the price difference) reported alongside. |
 
 ## Results
 
-Everything below is measured, not asserted. The evaluation script prices an independent test set against high-precision (200,000-path) Monte Carlo references.
+Everything below is measured, not asserted. The evaluation script prices a held-out test set
+against high-precision (200,000-path) Monte Carlo references. The test set is a fresh Latin
+hypercube from the same `PARAM_RANGES` box, labelled by the same simulator, so these figures
+are interpolation error inside the trained box rather than evidence of generalisation beyond
+it; the Curran cross-check in [docs/approximation_benchmark.md](docs/approximation_benchmark.md)
+is the independent arbiter on price.
 
-Main pricer, 5-member ensemble, 600 test points:
+Main pricer, 5-member ensemble, 600 test points, against the served `artifacts/model.pt`
+(`artifacts/eval.json` carries the checkpoint's sha256 and a regression test fails the suite
+if the two ever drift apart):
 
 | Quantity | Error (RMSE) |
 |---|---|
-| Price | 1.4 basis points of strike |
-| Delta | 7.1e-4 |
+| Price | 1.3 basis points of strike |
+| Delta | 7.3e-4 |
 | Vega | 13e-4 |
 
-### That 1.4 bp is not a noise floor, it is a fixable bias
+### The price error is mostly a fixable bias, not a noise floor
 
-An earlier version of this README explained the 1.4 bp away as the label noise floor. That
-was wrong, and finding out why produced the most interesting result in the project.
+Reading the 1.4 bp the previous head measured as the label noise floor is the wrong reading,
+and finding out why produced the most interesting result in the project.
 
-On 600 held-out points, **89.3% of price errors were positive** and the mean accounted for
-**47.6% of total MSE**. Bucketing by true price magnitude showed a flat additive offset
+On the 600 held-out points that head measured, **89.3% of price errors were positive** and the
+mean accounted for **47.6% of total MSE**. Bucketing by true price magnitude showed a flat additive offset
 (+1.05, +1.03, +1.06, +1.20, +0.89 bps across five decades of price), and at points where
 the true price is below 0.01 bps the network still predicted ~1.08 bps and never went below
 0.898. The cause is the output layer: `nn.Softplus()` cannot emit zero, so it floors at
@@ -136,9 +144,16 @@ The conditioned head is now the served checkpoint. Promotion is gated:
 200,000-path references on a seed used by neither training nor the ablation, and
 writes `model.pt` only if the candidate beats the incumbent on **both** RMSE and
 |bias|. The previous checkpoint is kept as `model_legacy_unconditioned_head.pt`.
-Swapping a served model on a training-time validation number is how the old one
-came to carry a +0.99 bp bias that this README described as an irreducible noise
-floor.
+Swapping a served model on a training-time validation number is what let the old
+head carry a +0.99 bp bias that looked like an irreducible noise floor.
+
+The independent 600-point evaluation above agrees with the ablation on the size of
+the effect: on the served head the mean error is +0.45 bps and accounts for 11.5%
+of MSE, against +0.97 bps and 47.6% on the head it replaced, with 79.0% of errors
+positive against 89.3%. The price of it is dispersion — the served head's 95th
+percentile is 2.6 bps against 2.4, and its worst point 10.0 bps against 8.4. The
+served head's figures are `artifacts/eval.json`; the legacy head's are the same
+file at commit `2de187d`, measured under the identical protocol.
 
 **What the promotion actually bought, and what it cost.** Paired comparison, both
 models priced on the same 1,500 points against the same references:
@@ -190,8 +205,19 @@ honest comparison is not only against Monte Carlo. Against Levy (1992) moment ma
 | Levy moment matching | 44.344 bps | +19.813 | 103.300 | 56 µs |
 | Monte Carlo, 200k paths | (reference) | n/a | n/a | 357,000 µs |
 
-**33x more accurate** than the closed form at 13x its cost, and 500x faster than Monte
-Carlo, a genuine point on the speed/accuracy frontier that neither alternative occupies.
+**33x more accurate** than Levy at 13x its cost, and 500x faster than the 200,000-path
+reference in the row above. Both ratios need their scope stated. The 33x is an RMSE ratio
+over the full trained box, where volatility runs to 80%; Levy's error is a bias that grows
+with maturity, so at a more typical σ = 0.25 the margin narrows to about 5x (0.72 against
+3.65 bps of mean absolute error). The 500x is against a reference roughly twenty times more
+accurate than the thing being timed, so it is not an iso-accuracy comparison.
+
+Levy is also not the only closed form for an arithmetic Asian, and against the better one
+the network loses on price: Curran's (1994) conditioning approximation is a rigorous lower
+bound, and on a 36-cell grid at σ = 0.25 it is 6.9x more accurate than the ensemble at about
+an eighth of the latency ([docs/approximation_benchmark.md](docs/approximation_benchmark.md)).
+What the surrogate offers over Curran is differentiability — all five Greeks as exact
+derivatives from the same pass — and batch throughput, not price accuracy.
 
 The one regime where Levy still wins is where the true price is essentially zero
 (0.082 vs 0.310 bps), which is the Softplus floor seen from an independent direction. Note
@@ -331,8 +357,11 @@ standard errors and defaults its headline to the out-of-sample one.
 
 Two follow-up experiments bracket that result. Under rough Bergomi with jumps and
 transaction costs, an incomplete market where a static delta is no longer near-optimal,
-a policy trained on those dynamics does beat delta and Whalley-Wilmott on tail loss from
-50-100 bp of cost ([docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md)). And on
+a policy trained on those dynamics does reach a lower CVaR₉₅ than delta and Whalley-Wilmott
+from 50-100 bp of cost, mostly by trading less: 89% of its 88.5 bp advantage over delta in
+the in-sample cell at 50 bp is a smaller commission bill, and on demeaned tail alone the
+Whalley-Wilmott band is still ahead below 200 bp
+([docs/deep_hedging_regimes.md](docs/deep_hedging_regimes.md)). And on
 real SPY and BTC-USD price history, with every hedger given only ex-ante information, the
 tail advantage does not transfer while the cost efficiency does
 ([docs/hedging_real_paths.md](docs/hedging_real_paths.md), produced by
@@ -388,7 +417,7 @@ backend/
     train_0dte.py         0DTE ensemble training; stamps calibration provenance into the checkpoint
     calibrate.py          Live SPY smile calibration (eta, rho, H, xi jointly) with the quality gate
     calibrate_deribit.py  The same calibration against a Deribit BTC surface
-    calibrate_map.py      CPU calibration through the certified neural pricing map (seconds, no GPU)
+    calibrate_map.py      CPU calibration through the regionally validated pricing map (seconds, no GPU)
     heston.py             Heston COS reference pricer, verified against the published values
     iv_surface.py         Arbitrage audit of the 0DTE surrogate and the constrained IV surface
     deribit.py            Deribit public REST client with an on-disk snapshot cache
@@ -427,7 +456,7 @@ parameters, trained on 6.2 million GPU-labelled rows banked in `data/pricing_map
 calibrator needs 68 seconds on an RTX 5080; on a live 618-quote SPY capture the map's
 parameters, repriced under the true Monte Carlo model, sat within 0.046 vol points of the
 MC fit (whose own noise floor is about 0.97 vol points; commit `054a9d7`). The same
-certification was then repeated out to longer maturities: a live 1,284-quote, 13-expiry
+The same end-to-end validation was then repeated out to longer maturities: a live 1,284-quote, 13-expiry
 SPY surface spanning 3-56 days, fitted in 25 s on CPU, where the map's own RMSE
 (2.483 vol points) matched a 200,000-path Monte Carlo repricing of its parameters
 (2.457) to 0.03 vol points (commit `22edbf5`; `scripts/validate_pricing_map.py`,
@@ -448,7 +477,7 @@ around 190 MB as a result: 626 gzipped surface captures (208 SPY, 209 BTC, 209 E
 2026-08-20 to 2026-08-23; 30 MB), the BTC series logs, and nine `pricing_map*/` shard
 directories holding 482 `.npz` files of training labels (132 MB). The clone is therefore
 slower than the code alone would warrant; the shards are kept in history because they
-are the ground truth behind the certified map and cannot be regenerated without the
+are the ground truth behind the pricing map and cannot be regenerated without the
 GPU. `.gitignore`
 tracks exactly these three subtrees and ignores everything else under `data/`, including
 new recorder captures, so a running recorder never dirties the tree; a capture is banked

@@ -332,8 +332,13 @@ def model_info() -> dict:
     eval_file = Path(__file__).resolve().parents[2] / "artifacts" / "eval.json"
     if eval_file.exists():
         report = json.loads(eval_file.read_text())
+        # "checkpoint" carries the sha256 of the model.pt these figures were
+        # measured against, so the site can name the checkpoint its error
+        # numbers describe - the same provenance the 0DTE panel already shows.
+        # Older reports predate the field, hence the membership test.
         meta["eval"] = {k: report[k] for k in
-                        ("n_points", "ref_paths", "single", "ensemble")}
+                        ("n_points", "ref_paths", "single", "ensemble",
+                         "checkpoint") if k in report}
     meta["zero_dte"] = zero_dte_info()
     return meta
 
@@ -774,6 +779,16 @@ class RiskReportRequest(BaseModel):
     delta_cost: float | None = None
     dynamics_label: str = ""
     cost_bps: int | None = None
+    # The bootstrap standard errors the Hedging tab already prints. With them
+    # the note declines to name a winner when the top two are inside their
+    # combined errors; without them it falls back to a relative-gap test, so
+    # they stay optional and an older client still gets an honest note.
+    bs_cvar_se: float | None = None
+    deep_cvar_se: float | None = None
+    ww_cvar_se: float | None = None
+    # The Integrated Gradients baseline's own price, so the note can quote the
+    # figure the attribution panel shows rather than name the baseline in words.
+    baseline_price: float | None = None
 
 
 @app.post("/api/risk-report")
@@ -783,7 +798,9 @@ def risk_report(req: RiskReportRequest):
         req.ticker, req.nn_price, req.bs_cvar, req.deep_cvar, req.attributions,
         contract=req.contract, ww_cvar=req.ww_cvar, deep_cost=req.deep_cost,
         delta_cost=req.delta_cost, dynamics_label=req.dynamics_label,
-        cost_bps=req.cost_bps,
+        cost_bps=req.cost_bps, bs_cvar_se=req.bs_cvar_se,
+        deep_cvar_se=req.deep_cvar_se, ww_cvar_se=req.ww_cvar_se,
+        baseline_price=req.baseline_price,
     )
 
 

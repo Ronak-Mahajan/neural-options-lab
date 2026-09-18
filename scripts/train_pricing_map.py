@@ -10,7 +10,7 @@ carry ~2.2 vp of Monte Carlo noise in the production region at 131k paths, so
 no network can score below the noise of its own validation targets. The
 binding criterion is validate_pricing_map.py's END-TO-END test: calibrate a
 real surface with MC and with the map, reprice the map's parameters under MC.
-Certified 2026-08-20 on a live 618-quote SPY capture: the map's parameters
+Validated 2026-08-20 on a live 618-quote SPY capture: the map's parameters
 cost +0.046 vp under the true model (MC fit noise floor ~0.97) at 3 s on CPU
 vs 68 s on the RTX 5080. Held-out RMSE remains printed as a training
 diagnostic. Validation splits BY PARAMETER SET, never by row: 31 rows share

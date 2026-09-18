@@ -239,3 +239,36 @@ def test_residual_bands_partition_the_quotes(capture):
     assert sum(v["n"] for v in r["per_expiry"].values()) == len(capture.cal.quotes)
     assert abs(r["rmse_volpts"] - capture.cal.rmse_volpts(theta)) < 1e-9
     assert r["bands"][0]["z_lo"] == 0.0 and r["bands"][-1]["z_hi"] is None
+
+
+# --------------------------------------------------------------------------
+# The eta-extension stage. Section 3.5 of docs/joint_skew_refit.md rests on
+# these three helpers reading the COMMITTED map's own metadata instead of
+# hard-coding a ceiling: the whole point of that experiment is that the 4.0
+# every SPY fit sits on is calibrate.BOUNDS and not a property of the map.
+# --------------------------------------------------------------------------
+
+def test_map_eta_box_is_read_from_the_committed_checkpoint():
+    lo, hi = jr.map_eta_box()
+    # gen_pricing_map.BOX banked the map over eta in (0.5, 8.0); if this ever
+    # comes back as the calibrator's (0.5, 4.0) the extension stage would be
+    # silently testing nothing.
+    assert (lo, hi) == (0.5, 8.0)
+    assert hi > BOUNDS["eta"][1], (
+        "the map's box must reach past the optimiser bound, or there is no "
+        "extension to run")
+
+
+def test_extended_eta_grid_starts_at_the_optimiser_bound():
+    grid = jr.extended_eta_grid(8.0)
+    assert grid[0] == BOUNDS["eta"][1] == 4.0
+    assert grid[-1] == 8.0
+    np.testing.assert_allclose(grid, np.arange(4.0, 8.0 + 1e-9, 0.5))
+    # A ceiling that is not on the step lattice must not overshoot the box.
+    assert jr.extended_eta_grid(7.3)[-1] <= 7.3
+
+
+def test_extended_bounds_open_eta_and_leave_the_rest_alone():
+    b = jr.extended_bounds(8.0)
+    assert b[0] == (BOUNDS["eta"][0], 8.0)
+    assert b[1:] == list(jr.JOINT_BOUNDS[1:])

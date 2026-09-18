@@ -14,8 +14,8 @@ interior to its bounds, and what does it cost in smile RMSE?
 What this script does (each stage checkpoints to JSON and resumes)
 ------------------------------------------------------------------
 1. `skew-check`  Map-based ATM skew. psi(tau) is a central difference in
-   log-moneyness of the pricing map's implied vols (MapPricer, the certified
-   surrogate of rough_bergomi_mc) on a five-point stencil k in
+   log-moneyness of the pricing map's implied vols (MapPricer, the regionally
+   validated surrogate of rough_bergomi_mc) on a five-point stencil k in
    {-2h, -h, 0, +h, +2h} centred on the forward (the market's and the MC
    stencil's ATM), h = max(0.25 atm_iv sqrt(tau), 0.002) like
    scripts/atm_skew_term_structure.py, at the capture's own expiries. It is
@@ -34,17 +34,23 @@ What this script does (each stage checkpoints to JSON and resumes)
    MapCalibrator.fit does (plus Powell polishes from the previous lambda's
    optimum and from the profile's best cell; the best polish wins), for
    lambda on a log grid. lambda = 0 IS MapCalibrator.fit.
-4. `bootstrap`   Quote-resampling (stratified by expiry) uncertainty of the
+4. `eta-extend` The same profile strip and four-parameter fits with eta free
+   up to the COMMITTED map's own training ceiling (pricing_map.pt's box,
+   eta to 8.0) beside the same fits capped at the calibrator's 4.0, so that
+   "is the smile optimum at eta 4, or is 4 where the optimiser stops?" is
+   answered rather than assumed. The winning extended point is then checked
+   against rough_bergomi_mc, which the map has no licence above eta 4.
+5. `bootstrap`   Quote-resampling (stratified by expiry) uncertainty of the
    joint optimum at the recommended lambda.
-5. `licence`     The map-vs-MC psi comparison repeated at profile cells with
+6. `licence`     The map-vs-MC psi comparison repeated at profile cells with
    small eta (|psi| small), where the map's ABSOLUTE psi error becomes a
    large RELATIVE one: it bounds the region of the profile the map can be
    trusted in.
-6. `mc`          Monte Carlo validation with the true engine: the skew ladder
+7. `mc`          Monte Carlo validation with the true engine: the skew ladder
    at the joint, served, pure-smile and smallest-interior-eta parameters,
    and the smile RMSE of each on one capture by pricing every quote with
    rough_bergomi_mc.
-7. `report`      Assemble docs/joint_skew_refit.{json,png} and
+8. `report`      Assemble docs/joint_skew_refit.{json,png} and
    artifacts/rough_calibration_skewjoint.json (analysis, not served).
 
 Polishing: scipy's Powell WITH bounds (what MapCalibrator.fit uses) minimises
@@ -451,6 +457,37 @@ def profile_best_cell(state: dict, lam: float) -> dict:
                key=lambda c: c["smile_loss"] + lam * c["chi2"])
 
 
+# ── (2b) eta above the calibrator's ceiling ────────────────────────────────
+def map_eta_box(pricer: MapPricer | None = None) -> tuple[float, float]:
+    """The eta interval the committed map was TRAINED on, read from the
+    checkpoint's own metadata.
+
+    The 4.0 ceiling every SPY fit sits on is an optimiser bound
+    (calibrate.BOUNDS, exposed as calibrate_map.ETA_MAX['SPY']), not a
+    property of the surrogate: artifacts/pricing_map.pt was banked over
+    gen_pricing_map.BOX with eta in (0.5, 8.0), and the BTC path already
+    drives the same map to 8. So "is the smile optimum AT eta 4, or is 4
+    where the optimiser stops?" is answerable from committed artifacts, with
+    nothing regenerated - which is what this stage does.
+    """
+    lo, hi = (pricer or MapPricer()).box["eta"]
+    return float(lo), float(hi)
+
+
+def extended_eta_grid(eta_hi: float, eta_lo: float = BOUNDS["eta"][1],
+                      step: float = 0.5) -> np.ndarray:
+    """eta from the calibrator's ceiling up to the map's box top, inclusive.
+    Starting AT the ceiling keeps the strip self-contained: the eta = 4
+    column is the anchor every extended cell is compared against."""
+    n = int(math.floor((float(eta_hi) - float(eta_lo)) / step + 1e-9)) + 1
+    return float(eta_lo) + step * np.arange(max(n, 1), dtype=float)
+
+
+def extended_bounds(eta_hi: float) -> list:
+    """JOINT_BOUNDS with eta opened to the map's box."""
+    return [(BOUNDS["eta"][0], float(eta_hi))] + list(JOINT_BOUNDS[1:])
+
+
 # ── (3) joint fit ──────────────────────────────────────────────────────────
 class JointObjective:
     """smile Huber loss (MapCalibrator.loss, same formula on the same map)
@@ -521,16 +558,19 @@ def polish(obj, x0, bounds=JOINT_BOUNDS, powell_kw: dict | None = None) -> dict:
 
 def joint_fit(obj: JointObjective, seed: int = 7, extra_starts=(),
               de_kw: dict | None = None, powell_kw: dict | None = None,
-              polish_extra: int = 1) -> dict:
+              polish_extra: int = 1, bounds=JOINT_BOUNDS) -> dict:
     """DE + Powell with MapCalibrator.fit's settings and seed (the population
     is evaluated in one batched call per generation, which does not change
     the deferred-updating trajectory), plus Powell polishes from the best
-    `polish_extra` of `extra_starts` (ranked by objective); best polish wins."""
+    `polish_extra` of `extra_starts` (ranked by objective); best polish wins.
+
+    `bounds` defaults to the calibrator's box; the eta-extend stage passes the
+    same box with eta opened to the map's own training range."""
     de_kw = dict(DE_KW, **(de_kw or {}))
     powell_kw = dict(POWELL_KW, **(powell_kw or {}))
     t0 = time.perf_counter()
     n0 = obj.n_evals
-    de = differential_evolution(obj.vectorized, JOINT_BOUNDS, seed=seed,
+    de = differential_evolution(obj.vectorized, bounds, seed=seed,
                                 vectorized=True, **de_kw)
     nfev_de = obj.n_evals - n0
     starts = [("de", np.asarray(de.x, dtype=float))]
@@ -541,7 +581,7 @@ def joint_fit(obj: JointObjective, seed: int = 7, extra_starts=(),
         starts += [extra[i] for i in order]
     best, winner, polished = None, None, []
     for name, x0 in starts:
-        r = polish(obj, x0, JOINT_BOUNDS, powell_kw)
+        r = polish(obj, x0, bounds, powell_kw)
         polished.append({"start": name, "x0": np.asarray(x0, dtype=float).tolist(),
                          "fun": r["fun"], "x": r["x"].tolist(), "nfev": r["nfev"],
                          "method": r["method"], "start_fun": r["start_fun"],
@@ -794,7 +834,7 @@ def mc_smile_rmse(cs: CaptureSet, theta, n_paths: int, seed: int, log,
     because in the far wing (z >= 2, half the quotes) plain MC on 400k
     paths cannot resolve a deep-ITM call's time value and the inversion is
     noise-dominated, while inside z < 2 the map-vs-MC agreement is the
-    certified 0.03-0.10 vp. The map's RMSE on the same quotes is reported
+    regionally validated 0.03-0.10 vp. The map's RMSE on the same quotes is reported
     alongside (its own error at these parameters)."""
     from backend.quant.calibrate import iv_fit_report
     eta, rho, H, xi = map(float, theta[:4])
@@ -1157,6 +1197,139 @@ def stage_joint(work: Path, caps: list[Path], idx: list[int], log, lambdas=LAMBD
         joint_capture(cs, work / f"joint_{i}.json", prof, log, lambdas)
 
 
+def stage_eta_extend(work: Path, caps: list[Path], idx: list[int], log,
+                     eta_max: float | None = None, H_grid=H_GRID,
+                     lambdas=(0.0, 0.1), step: float = 0.5, seed: int = 7,
+                     mc_capture: int = 1, mc_paths: int = 200_000,
+                     mc_reps: int = 4, mc_smile_paths: int = 0) -> dict:
+    """Does the smile optimum sit AT eta 4, or is 4 where the optimiser stops?
+
+    Re-runs the profile strip and the joint fits with eta free up to the
+    COMMITTED map's own training ceiling (map_eta_box, 8.0) beside the same
+    fits capped at the calibrator's 4.0, on the same captures, same seed and
+    same map. Nothing is regenerated and nothing served changes; the map is
+    deterministic, so the only cost is a few minutes of CPU.
+
+    The map has no Monte Carlo licence above eta 4 (stage_licence covers the
+    profile's own box), so the winning extended point is checked against
+    rough_bergomi_mc on the capture's expiries before anything is concluded
+    from it; `--smile-paths` > 0 additionally reprices the whole capture with
+    the true engine, which is what decides whether a map RMSE that improves
+    above eta 4 is real or is the surrogate's own error. That check earns its
+    cost: on spy_20260821T150017Z the pure-smile arm's 0.02 vp map gain at
+    eta 8 does NOT survive the engine (1.53 -> 1.55 vp over all 585 quotes,
+    1.34 -> 1.44 inside z < 2), while the lambda = 0.1 knee's 0.08 vp gain
+    does (2.12 -> 2.01, 1.64 -> 1.60). Keep --smile-paths > 0 before quoting
+    any extended smile RMSE. docs/joint_skew_refit.md section 3.5.
+    """
+    pricer = MapPricer()
+    eta_lo_box, eta_hi_box = map_eta_box(pricer)
+    eta_hi = float(eta_max) if eta_max is not None else eta_hi_box
+    eta_grid = extended_eta_grid(eta_hi, step=step)
+    ext_bounds = extended_bounds(eta_hi)
+    out_path = work / "eta_extend.json"
+    out = load_json(out_path, {})
+    out.update({"map_box_eta": [eta_lo_box, eta_hi_box],
+                "calibrator_eta_bounds": list(BOUNDS["eta"]),
+                "map_file": "artifacts/pricing_map.pt",
+                "eta_grid": eta_grid.tolist(), "H_grid": list(map(float, H_grid)),
+                "lambdas": list(lambdas), "bounds_extended": [list(b) for b in ext_bounds],
+                "seed": seed})
+    log(f"[eta-extend] map box eta {eta_lo_box}-{eta_hi_box}; calibrator bound "
+        f"{BOUNDS['eta'][1]}; strip eta {eta_grid[0]:g}..{eta_grid[-1]:g} "
+        f"({len(eta_grid)} x {len(H_grid)} cells per capture)")
+    per_capture = out.get("per_capture", {})
+    for i in idx:
+        cs = CaptureSet(caps[i], pricer)
+        log(f"[eta-extend] capture {i}: {cs.path.name}")
+        strip = profile_capture(cs, work / f"eta_extend_profile_{i}.json", log,
+                                H_grid, eta_grid)
+        cells = list(strip["cells"].values())
+        best_cell = min(cells, key=lambda c: c["smile_loss"])
+        anchor = min((c for c in cells if abs(c["eta"] - BOUNDS["eta"][1]) < 1e-9),
+                     key=lambda c: c["smile_loss"])
+        # the four-parameter fits, capped and extended, from the same seed
+        fits_ckpt = work / f"eta_extend_joint_{i}.json"
+        fstate = load_json(fits_ckpt, {"capture": cs.path.name, "seed": seed, "fits": {}})
+        for lam in lambdas:
+            for tag, bnds in (("capped", JOINT_BOUNDS), ("extended", ext_bounds)):
+                key = f"{lam:g}|{tag}"
+                if key in fstate["fits"]:
+                    continue
+                obj = JointObjective(cs, lam)
+                starts = [("served", served_theta()),
+                          ("strip_best", np.array([best_cell["eta"], best_cell["rho"],
+                                                   best_cell["H"], best_cell["xi"]]))]
+                r = joint_fit(obj, seed=seed, extra_starts=starts, bounds=bnds)
+                ev = cs.evaluate(r["theta"])
+                fstate["fits"][key] = {
+                    "lambda": lam, "bounds": tag, **ev, "J": r["J"],
+                    "eta_interior_map_box": eta_interior(float(r["theta"][0]), eta_lo_box, eta_hi),
+                    "winner": r["winner"], "nfev_total": r["nfev_total"],
+                    "seconds": r["seconds"]}
+                save_json(fits_ckpt, fstate)
+                th = r["theta"]
+                log(f"  [{cs.path.name[4:19]}] lambda={lam:g} {tag}: eta={th[0]:.4f} "
+                    f"rho={th[1]:.4f} H={th[2]:.4f} sqrt(xi)={math.sqrt(th[3]):.4f} "
+                    f"rmse={ev['rmse_volpts']:.3f} b={ev['b_expiries']:+.3f} "
+                    f"chi2={ev['chi2']:.2f} J={r['J']:.3f} ({r['seconds']:.0f}s)")
+        keep = ("H", "eta", "rho", "xi", "rmse_volpts", "smile_loss", "b_expiries", "chi2")
+        per_capture[str(i)] = {
+            "capture": cs.path.name,
+            "best_cell_extended": {k: best_cell[k] for k in keep},
+            "best_cell_at_bound": {k: anchor[k] for k in keep},
+            "rmse_gain_volpts": anchor["rmse_volpts"] - best_cell["rmse_volpts"],
+            "best_cell_by_eta": {f"{e:g}": {k: min((c for c in cells if abs(c["eta"] - e) < 1e-9),
+                                                  key=lambda c: c["smile_loss"])[k] for k in keep}
+                                 for e in eta_grid},
+            "fits": fstate["fits"],
+            "market_b": cs.market_fit.get("b"), "market_se_b": cs.market_fit.get("se_b")}
+        out["per_capture"] = per_capture
+        save_json(out_path, out)
+        log(f"[eta-extend] capture {i}: best strip cell eta {best_cell['eta']:g}, "
+            f"H {best_cell['H']:.3f}, RMSE {best_cell['rmse_volpts']:.3f} vp "
+            f"(at the 4.0 bound {anchor['rmse_volpts']:.3f} vp, H {anchor['H']:.3f}); "
+            f"b {best_cell['b_expiries']:+.3f} vs {anchor['b_expiries']:+.3f}")
+    # Monte Carlo check of the map where it has no licence (eta > 4): both
+    # ends of every capped/extended pair on one capture, because the extended
+    # arm's whole claim - that the ridge is flat in eta and the knee moves off
+    # the bound - is a claim about the surrogate until the true engine says so.
+    mc_check = out.get("mc_check", {})
+    if per_capture.get(str(mc_capture)) and mc_paths:
+        cs = CaptureSet(caps[mc_capture], pricer)
+        blk = per_capture[str(mc_capture)]
+        pairs = [(f"{lam:g}|{tag}", np.array(blk["fits"][f"{lam:g}|{tag}"]["theta"], dtype=float))
+                 for lam in lambdas for tag in ("capped", "extended")
+                 if f"{lam:g}|{tag}" in blk["fits"]]
+        for name, th in pairs:
+            if name not in mc_check:
+                log(f"[eta-extend] MC check {name}: theta {np.round(th, 4).tolist()}, "
+                    f"{mc_reps} x {mc_paths:,} paths on {len(cs.taus)} expiries")
+                rows = mc_skew_on_taus(th, cs.taus, cs.meta["spot"], cs.rate, mc_paths,
+                                       mc_reps, 20260917, log)
+                cmp_mc = compare_map_vs_mc(cs, th, rows)
+                psi_mc = np.array([r["psi"] for r in rows])
+                mc_check[name] = {"theta": th.tolist(), "compare": cmp_mc,
+                                  "chi2_mc": skew_chi2(psi_mc, cs.psi_mkt, cs.se_mkt),
+                                  "b_expiries_mc": ats.fit_power_law(
+                                      cs.taus, psi_mc, [r["se"] for r in rows]).get("b")}
+                log(f"[eta-extend] MC {name}: psi rel rms diff {cmp_mc['diff_rel_rms']:.3f}, "
+                    f"b map {cmp_mc['b_map']:+.4f} vs MC {cmp_mc['b_mc']:+.4f} "
+                    f"+- {cmp_mc['se_b_mc']:.4f}")
+                out["mc_check"] = mc_check
+                save_json(out_path, out)
+            if mc_smile_paths and "smile" not in mc_check[name]:
+                log(f"[eta-extend] MC smile RMSE {name}: {len(cs.cal.quotes)} quotes, "
+                    f"{mc_smile_paths:,} paths")
+                mc_check[name]["smile"] = mc_smile_rmse(cs, th, mc_smile_paths, 4242, log)
+                out["mc_check"] = mc_check
+                save_json(out_path, out)
+    out["generated"] = now()
+    out["done"] = True
+    save_json(out_path, out)
+    return out
+
+
 def recommended_lambda(work: Path, n_caps: int, b_market: float, se_b_market: float) -> tuple[float, dict]:
     joints = [load_json(work / f"joint_{i}.json", None) for i in range(n_caps)]
     joints = [j for j in joints if j]
@@ -1484,6 +1657,7 @@ def stage_report(work: Path, caps: list[Path], out_dir: Path, artifact: Path, lo
         "pure_smile": pure,
         "recommended": rec,
         "bootstrap": boot,
+        "eta_extension": load_json(work / "eta_extend.json", None),
         "licence_cells": licence,
         "licence_summary": licence_summary,
         "licence_eta_min": licence_summary["eta_min_passing"],
@@ -1531,8 +1705,13 @@ def stage_report(work: Path, caps: list[Path], out_dir: Path, artifact: Path, lo
         "search_paths": None, "polish_paths": None, "final_paths": None,
         "pricing_engine": "pricing_map.pt (deterministic surrogate); MC validation in docs/joint_skew_refit.json",
         "quote_source": cs.meta.get("quote_source"),
+        # half_spread_iv already arrives in vol points: calibrate.py:633 divides
+        # the half-spread by vega and multiplies by 100 before it is stored, and
+        # the reference writer at calibrate.py:1302 records it with no further
+        # scaling. Scaling again here put this artifact 100x off the one it is
+        # meant to be comparable with, on the same 585 quotes.
         "median_half_spread_iv_volpts": round(float(np.median([q.half_spread_iv for q in cs.cal.quotes
-                                                              if np.isfinite(q.half_spread_iv)])) * 100, 4),
+                                                              if np.isfinite(q.half_spread_iv)])), 4),
         "kernel": base.get("kernel"),
         "accepted": None,
         "reject_reasons": [],
@@ -1578,8 +1757,8 @@ def stage_report(work: Path, caps: list[Path], out_dir: Path, artifact: Path, lo
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("stage", choices=("skew-check", "profile", "joint", "bootstrap", "licence", "mc",
-                                     "report", "all"))
+    p.add_argument("stage", choices=("skew-check", "profile", "joint", "eta-extend", "bootstrap",
+                                     "licence", "mc", "report", "all"))
     p.add_argument("--work-dir", type=Path, default=DEFAULT_WORK)
     p.add_argument("--log-file", type=Path, default=None)
     p.add_argument("--captures", nargs="*", default=None)
@@ -1594,6 +1773,10 @@ def main(argv=None) -> int:
     p.add_argument("--smile-paths", type=int, default=400_000)
     p.add_argument("--threads", type=int, default=None)
     p.add_argument("--grid-n", type=int, default=None, help="smoke runs: coarser (H, eta) grid")
+    p.add_argument("--eta-max", type=float, default=None,
+                   help="eta-extend: ceiling for the extended strip and bounds "
+                        "(default: the committed map's own box top)")
+    p.add_argument("--eta-step", type=float, default=0.5, help="eta-extend: strip spacing")
     p.add_argument("--lambdas", nargs="*", type=float, default=None, help="override the lambda grid")
     p.add_argument("--out-dir", type=Path, default=DOCS)
     p.add_argument("--artifact", type=Path, default=ARTIFACTS / "rough_calibration_skewjoint.json")
@@ -1618,6 +1801,10 @@ def main(argv=None) -> int:
         stage_profile(work, caps, idx, log, H_grid, eta_grid)
     if args.stage in ("joint", "all"):
         stage_joint(work, caps, idx, log, lambdas)
+    if args.stage in ("eta-extend", "all"):
+        stage_eta_extend(work, caps, idx, log, eta_max=args.eta_max, H_grid=H_grid,
+                         step=args.eta_step, mc_paths=args.paths, mc_reps=args.mc_reps,
+                         mc_smile_paths=args.smile_paths)
     if args.stage in ("bootstrap", "all"):
         stage_bootstrap(work, caps, idx[0] if args.stage == "bootstrap" else 1, args.lam,
                         args.reps, args.rep_offset, log)

@@ -203,6 +203,10 @@ function setReadout(id, text) {
 // surrogate, which is trained on a narrower moneyness band.
 const ZERO_DTE_CUTOFF = 12 / 252;
 const is0dte = () => state.maturity <= ZERO_DTE_CUTOFF + 1e-9;
+// The short-dated network's trained volatility band. It is not on the wire
+// (the checkpoint block carries the moneyness and maturity box only), so it
+// is transcribed from the sampling bounds in backend/quant/dataset_0dte.py.
+const ZERO_DTE_SIGMA = [0.05, 0.80];
 
 // A position is contracts x shares each; a negative count is a short, which
 // flips the sign of the premium and of every Greek.
@@ -223,8 +227,11 @@ function fmtSigned(v, digits) {
     minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-// Whole-share and whole-dollar figures for a book; per-contract figures keep
-// the four decimals the model's own accuracy supports.
+// Whole-share and whole-dollar figures for a book. The per-share premium keeps
+// four decimals because the cross-check beside it is a gap of a few
+// ten-thousandths of a dollar and needs something to compare against; those
+// digits are finer than the model's own measured error, which is why the card
+// sub-line prints that error in dollars next to the price.
 function renderPosition() {
   const value = $("pos-value"), sub = $("pos-sub");
   const hint = $("position-hint");
@@ -287,7 +294,8 @@ function renderGreeks() {
   if (cash) {
     cash.textContent = greekBasis === "position" && lastGreeks
       ? "Cash delta " + fmtSigned(lastGreeks.delta * positionSize() * state.spot, 2) +
-        ": the value of the underlying this position is equivalent to."
+        ": the position's equivalent exposure to the underlying at this spot, " +
+        "to first order. Gamma above says how fast it changes."
       : "";
   }
 }
@@ -305,7 +313,10 @@ function moneynessWords() {
 function maturityWords() {
   const T = state.maturity;
   const days = Math.max(1, Math.round(T * 252));
-  if (days <= 45) return days === 1 ? "one-day" : days + "-day";
+  // Expiries on this page are trading days, 252 to the year, and theta is
+  // quoted on the same clock; the word keeps the contract sentence and the
+  // risk strip on one calendar.
+  if (days <= 45) return days === 1 ? "one trading-day" : days + " trading-day";
   if (T < 0.95) return Math.round(T * 12) + "-month";
   if (Math.abs(T - 1) < 0.03) return "one-year";
   if (Math.abs(T - 2) < 0.03) return "two-year";
@@ -348,7 +359,9 @@ const CONTRACT_SCOPE = {
 
 function renderContractLine() {
   const pill = $("contract-pill");
-  pill.textContent = marketData ? marketData.ticker : "Example";
+  // Loading a ticker makes the inputs real; the contract stays hypothetical,
+  // and the pill is the one word that says so.
+  pill.textContent = marketData ? marketData.ticker + " · hypothetical" : "Example";
   pill.classList.toggle("live", !!marketData);
   $("contract-text").textContent = contractSentence();
   const scope = $("contract-scope");
@@ -415,6 +428,11 @@ function refreshReadouts() {
     const g = $("group-domain");
     if (short && g) g.open = true;
     wasShortDated = short;
+    // The accuracy teaser, the accuracy chips and the model card all quote a
+    // measured error, and the model that produces the price changes here. They
+    // are painted from the same place that knows the regime so they can never
+    // carry one model's number under the other model's name.
+    paintModelScope();
   }
 }
 let wasShortDated = null;
@@ -449,9 +467,7 @@ async function updatePrice() {
     animateNumber($("mc-price"), d.mc.price, fmtMoney);
     lastGreeks = d.nn.greeks;
     renderPosition();
-    $("nn-sub").textContent = is0dte()
-      ? "per contract · short-dated model"
-      : "per contract · average-price contract";
+    $("nn-sub").textContent = nnSubText();
     lastCheck = { price: d.mc.price, n_paths: d.mc.n_paths,
                   half: (d.mc.ci_high - d.mc.ci_low) / 2 };
     $("mc-ci").textContent = "±$" +
@@ -465,26 +481,39 @@ async function updatePrice() {
     const diff = Math.abs(d.nn.price - d.mc.price);
     const bpsK = diff / state.strike * 1e4;
     animateNumber($("speedup"), bpsK, (v) => v.toFixed(1) + " bps");
-    // Three states, not two. At 50,000 paths the simulation's error bar is
-    // tighter than the network's own published error, so a gap can sit
-    // outside the bar and still be exactly what the model promises. Calling
-    // that a failure would misreport the result in the alarming direction.
+    // Four states. At 50,000 paths the simulation's error bar is tighter than
+    // the network's own published error, so a gap can sit outside the bar and
+    // still be exactly what the model promises; calling that a failure would
+    // misreport the result in the alarming direction. The band comes from
+    // whichever network priced this contract, and the sentence names it, so a
+    // short-dated quote is never judged against the averaged ensemble's
+    // quantile. And where the premium is near zero, basis points of strike
+    // stop describing the contract, so the gap is reported against the price.
     const inCI = d.comparison.within_mc_ci;
-    const tol = modelInfo && modelInfo.eval
-      ? modelInfo.eval.ensemble.price.p95_abs_bps : 2.5;
+    const tol = crossCheckTolBps();
+    const measured = is0dte()
+      ? "the short-dated model's measured validation error"
+      : "the averaged-contract ensemble's measured error on held-out contracts";
+    const rel = diff / Math.max(Math.abs(d.nn.price), 1e-9);
     const agr = $("agreement");
-    if (inCI) {
+    if (rel > 0.02) {
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · " +
+        (rel * 100).toFixed(0) + "% of the price. Near zero the network's " +
+        "Softplus output floor dominates, so read this check in dollars " +
+        "rather than in basis points of strike.";
+      agr.className = "card-sub agreement-neutral";
+    } else if (inCI) {
       agr.textContent = "$" + diff.toFixed(4) +
         " from the simulation · inside its 95% error bar";
       agr.className = "card-sub agreement-ok";
     } else if (bpsK <= tol) {
       agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
-        "than the error bar, inside this model's measured error on held-out contracts";
+        "than the error bar, inside " + measured;
       agr.className = "card-sub agreement-neutral";
     } else {
       agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
-        "than both. Treat this price as indicative, or raise the cross-check " +
-        "precision in the sidebar.";
+        "than the error bar and wider than " + measured + ". Treat this price " +
+        "as indicative, or raise the cross-check precision in the sidebar.";
       agr.className = "card-sub agreement-warn";
     }
     $("hero-error").hidden = true;
@@ -561,7 +590,7 @@ async function updateConvergence() {
       },
       {
         x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
-        mode: "lines", name: "Network price",
+        mode: "lines", name: "Model price",
         line: { color: COLORS.nn, width: 2.5, dash: "dash" },
         hovertemplate: "NN: $%{y:.4f}<extra></extra>",
       },
@@ -605,7 +634,7 @@ async function updateIVSurface() {
     const okB = d.g_min > 0, okC = d.calendar_min > 0;
     $("ivsurface-stats").innerHTML =
       hedgeStatChip("No-arbitrage check",
-        okB && okC ? "passed at every point" : "violation found",
+        okB && okC ? "no violations on this grid" : "violation found on this grid",
         okB && okC ? "good" : "") +
       hedgeStatChip("Distance from the pricing model",
         (d.fit && d.fit.iv_rmse_volpts_resolved != null
@@ -750,7 +779,9 @@ async function updateSurface() {
 const ERROR_METRA = {
   price: { label: "pricing error (bps of strike)", unit: "bps" },
   delta: { label: "delta error (×10⁻⁴)", unit: "×10⁻⁴" },
-  vega: { label: "vega error (×10⁻⁴ per unit σ)", unit: "×10⁻⁴" },
+  // The risk strip quotes vega per volatility POINT; evaluate.py measures it
+  // per 1.00 of sigma, a hundred times larger, so the axis says which.
+  vega: { label: "vega error (×10⁻⁴ of strike, per 1.00 of σ)", unit: "×10⁻⁴" },
 };
 let errorReport = null;
 let errorMetric = "price";
@@ -763,17 +794,43 @@ function renderErrorDistribution() {
   const ens = d.errors[errorMetric].ensemble;
 
   const QUANTITY = { price: "price", delta: "delta", vega: "vega" };
+  // artifacts/eval.json is the averaged-contract ensemble's held-out set, so
+  // the panel says whose error it is drawing whatever the contract on screen.
   $("error-sub").textContent =
-    "How far the network's " + QUANTITY[errorMetric] + " sits from a " +
-    (d.ref_paths / 1000).toFixed(0) + ",000-path simulation, on " +
-    d.n_points.toLocaleString() + " contracts it never saw in training.";
+    "How far the averaged-contract ensemble's " + QUANTITY[errorMetric] +
+    " sits from a " + (d.ref_paths / 1000).toFixed(0) + ",000-path simulation, on " +
+    d.n_points.toLocaleString() + " averaged contracts held out of training, " +
+    "drawn from the same parameter box, so this is its error inside that box. " +
+    "The short-dated model is measured separately, on the methodology page.";
   const e = d.ensemble[errorMetric];
+  // The mean is a signed bias, not a third dispersion statistic: most of the
+  // RMSE on price is the ensemble sitting rich, and that is the part a reader
+  // would act on. Name it, and give the scatter that is left after it.
+  const bias = e.mean_bps;
+  const scatter = Math.sqrt(Math.max(e.rmse_bps * e.rmse_bps - bias * bias, 0));
+  const ofStrike = errorMetric === "price" ? " of strike" : "";
+  // Only price carries a mean the sample can resolve. On delta and vega the
+  // mean sits well inside the standard error of the mean, so calling it a
+  // systematic bias would assert a direction the 600 points do not support.
+  const seOfMean = scatter / Math.sqrt(Math.max(d.n_points, 1));
+  const biasResolved = Math.abs(bias) > 2 * seOfMean;
+  const biasClause = biasResolved
+    ? "A systematic bias of " + (bias >= 0 ? "+" : "−") +
+      Math.abs(bias).toFixed(1) + " " + meta.unit + " runs through it" +
+      (errorMetric === "price"
+        ? " — the ensemble prices " + (bias >= 0 ? "rich" : "cheap") +
+          " against the simulation" : "") +
+      ", with about " + scatter.toFixed(1) + " " + meta.unit +
+      " of scatter around that bias."
+    : "The mean error is " + (bias >= 0 ? "+" : "−") +
+      Math.abs(bias).toFixed(1) + " " + meta.unit +
+      ", inside the standard error of the mean over these " +
+      d.n_points.toLocaleString() +
+      " points, so the errors scatter around zero rather than leaning one way.";
   $("error-stat").textContent =
-    "Five averaged networks: mean " + (e.mean_bps >= 0 ? "+" : "") +
-    e.mean_bps.toFixed(1) + " " + meta.unit + " · typical error " +
-    e.rmse_bps.toFixed(1) + " · 95% of errors within " +
-    e.p95_abs_bps.toFixed(1) + " " + meta.unit +
-    (errorMetric === "price" ? " of strike" : "") + " (one network: " +
+    "Five averaged networks: typical error " + e.rmse_bps.toFixed(1) + " " +
+    meta.unit + ofStrike + ". " + biasClause + " 95% of errors fall within " +
+    e.p95_abs_bps.toFixed(1) + " " + meta.unit + ofStrike + " (one network: " +
     d.single[errorMetric].rmse_bps.toFixed(1) + " typical).";
 
   // Shared bins so the two histograms are directly comparable.
@@ -824,6 +881,172 @@ async function loadErrorDistribution() {
 
 // ──────────────────────────────────────────────────────────── model badge ──
 let modelInfo = null;
+
+// Two different networks price this page. Above 12 trading days it is the
+// averaged-contract (Asian) ensemble, whose held-out error is artifacts/
+// eval.json; at or below it a rough-Bergomi network, whose own validation
+// error arrives on the wire as zero_dte.val_rmse_bps_of_strike. Every accuracy
+// sentence on the page is built through these helpers so that it names the
+// model it is quoting and can never carry the other one's number.
+function shortDatedRmseBps() {
+  const z = modelInfo && modelInfo.zero_dte;
+  return z && z.available && typeof z.val_rmse_bps_of_strike === "number"
+    ? z.val_rmse_bps_of_strike : null;
+}
+
+// Typical held-out error of whichever model priced the contract on screen,
+// in basis points of strike.
+function activeModelRmseBps() {
+  if (!modelInfo) return null;
+  return is0dte() ? shortDatedRmseBps()
+    : (modelInfo.eval ? modelInfo.eval.ensemble.price.rmse_bps : null);
+}
+
+// Band the cross-check card judges the network-to-simulation gap against: the
+// 95th percentile of the averaged ensemble's held-out errors above the cutoff,
+// the short-dated network's own validation RMSE below it. Judging a
+// short-dated quote against the averaged ensemble's quantile is what sent a
+// contract behaving exactly as documented into the alarming state.
+function crossCheckTolBps() {
+  if (is0dte()) {
+    const z = shortDatedRmseBps();
+    return z == null ? 4 : z;
+  }
+  return modelInfo && modelInfo.eval
+    ? modelInfo.eval.ensemble.price.p95_abs_bps : 2.5;
+}
+
+// The price card's sub-line: what the figure is per, which contract and model
+// produced it, and what that model's measured error is worth in dollars at
+// this strike - the four decimals above are finer than that band.
+function nnSubText() {
+  const base = is0dte()
+    ? "per share · standard European contract, short-dated rough-volatility model"
+    : "per share · average-price contract";
+  const bps = activeModelRmseBps();
+  if (bps == null) return base;
+  const band = bps * state.strike / 1e4;
+  return base + " · typical model error ±$" +
+    (band >= 0.1 ? band.toFixed(2) : band.toFixed(3)) + " at this strike";
+}
+
+function accuracyTeaserText() {
+  if (!modelInfo) return "";
+  if (is0dte()) {
+    const r = shortDatedRmseBps();
+    return (r == null
+      ? "Short-dated model: its held-out error is on the methodology page."
+      : "Short-dated model: typical error " + r.toFixed(1) + " basis points of "
+        + "strike against its 20,000-path training labels, 0.8 to 3.8 against "
+        + "400,000-path references, worst single strike 14.4 bps.")
+      + " A standing benchmark, measured once; it does not move with the "
+      + "contract on screen. The chart below measures the averaged-contract "
+      + "ensemble, not this model.";
+  }
+  const e = modelInfo.eval;
+  if (!e) return "";
+  return "Averaged-contract ensemble: typical error " +
+    e.ensemble.price.rmse_bps.toFixed(1) + " basis points of strike on " +
+    e.n_points.toLocaleString() + " held-out contracts against " +
+    (e.ref_paths / 1000).toFixed(0) + ",000-path references. A standing " +
+    "benchmark, measured once; it does not move with the contract on screen. " +
+    "Individual contracts run higher: " +
+    e.ensemble.price.p95_abs_bps.toFixed(1) + " bps at the 95th percentile, " +
+    e.ensemble.price.max_abs_bps.toFixed(1) + " bps at the worst point measured.";
+}
+
+// Rows of the model-badge popover. The trained box differs by regime and the
+// sidebar warning quotes the live one, so whichever box is in force is named
+// first and both are on the card.
+function modelCardRows() {
+  const m = modelInfo;
+  const p = m.param_ranges || {};
+  const z = m.zero_dte;
+  const zr = shortDatedRmseBps();
+  const pairs = [
+    ["Architecture, averaged contract",
+      (m.n_members > 1 ? m.n_members + " networks, " : "One network, ") +
+      m.n_parameters.toLocaleString() + " parameters each"],
+    ["Training data, averaged contract", m.n_samples.toLocaleString() +
+      " contracts labelled by Monte Carlo" + (m.mc_paths_per_label
+        ? " at " + m.mc_paths_per_label.toLocaleString() + " paths each" : "")],
+  ];
+  if (m.eval) {
+    pairs.push(["Accuracy, averaged contract", "typical pricing error " +
+      m.eval.ensemble.price.rmse_bps.toFixed(1) + " basis points of strike, on " +
+      m.eval.n_points.toLocaleString() + " held-out contracts against " +
+      (m.eval.ref_paths / 1000).toFixed(0) + ",000-path references"]);
+  }
+  if (zr != null) {
+    pairs.push(["Accuracy, short-dated model", "typical pricing error " +
+      zr.toFixed(1) + " basis points of strike against its 20,000-path " +
+      "training labels"]);
+  }
+  const asianBox = (p.moneyness && p.maturity && p.sigma)
+    ? ["Trained range, averaged contract", "spot over strike " + p.moneyness[0] +
+       " to " + p.moneyness[1] + ", expiry " + p.maturity[0] + " to " +
+       p.maturity[1] + " years, volatility " + Math.round(p.sigma[0] * 100) +
+       "% to " + Math.round(p.sigma[1] * 100) + "%"]
+    : null;
+  const shortBox = (z && z.available && z.moneyness &&
+      typeof z.maturity_floor_years === "number" &&
+      typeof z.maturity_cutoff_years === "number")
+    ? ["Trained range, short-dated model", "spot over strike " + z.moneyness[0] +
+       " to " + z.moneyness[1] + ", expiry " +
+       Math.round(z.maturity_floor_years * 252) + " to " +
+       Math.round(z.maturity_cutoff_years * 252) + " trading days, volatility " +
+       Math.round(ZERO_DTE_SIGMA[0] * 100) + "% to " +
+       Math.round(ZERO_DTE_SIGMA[1] * 100) + "%"]
+    : null;
+  for (const row of (is0dte() ? [shortBox, asianBox] : [asianBox, shortBox]))
+    if (row) pairs.push(row);
+  // The short-dated checkpoint carries its own provenance: whether its
+  // rough-Bergomi parameters came from an accepted market calibration, and
+  // which one. Every field comes from the checkpoint; nothing is typed here.
+  if (z && z.available) {
+    const hurst = typeof z.H === "number" ? ", Hurst index " + z.H.toFixed(3) : "";
+    pairs.push(["Short-dated model", (z.calibrated
+      ? "rough Bergomi calibrated to market option prices"
+      : "rough Bergomi with default parameters, not market-calibrated") + hurst +
+      (z.calibration_note ? ". " + z.calibration_note : "")]);
+  }
+  return pairs;
+}
+
+// Everything that quotes a model's identity or its measured error. Called when
+// the model info lands and again whenever the pricing regime changes.
+function paintModelScope() {
+  const m = modelInfo;
+  if (!m) return;
+  const body = $("model-card-body");
+  if (body) body.innerHTML = modelCardRows().map(([k, v]) =>
+    "<dt>" + k + "</dt><dd>" + v + "</dd>").join("");
+  const teaser = $("accuracy-teaser");
+  if (teaser) teaser.textContent = accuracyTeaserText();
+  // The price card names its model and its error band too. Leave it alone
+  // while it is carrying the no-arbitrage-floor warning, which owns the slot.
+  const sub = $("nn-sub");
+  if (sub && lastNNPrice != null && sub.className === "card-sub")
+    sub.textContent = nnSubText();
+  const acc = $("accuracy-stats");
+  if (!acc) return;
+  const z = m.zero_dte;
+  const zr = shortDatedRmseBps();
+  acc.innerHTML = is0dte()
+    ? hedgeStatChip("Pricing this contract", "short-dated rough-volatility model") +
+      (z && z.n_members ? hedgeStatChip("Ensemble", z.n_members + " networks") : "") +
+      (zr != null ? hedgeStatChip("Typical error, short-dated model",
+        zr.toFixed(1) + " bps of strike") : "") +
+      hedgeStatChip("Chart below", "averaged-contract ensemble")
+    : hedgeStatChip("Pricing this contract", "averaged-contract ensemble") +
+      hedgeStatChip("Ensemble", m.n_members + " networks") +
+      hedgeStatChip("Parameters", m.n_parameters.toLocaleString() + " each") +
+      hedgeStatChip("Training set",
+        m.n_samples.toLocaleString() + " Monte Carlo-labelled contracts") +
+      (m.eval ? hedgeStatChip("Typical error, averaged contract",
+        m.eval.ensemble.price.rmse_bps.toFixed(1) + " bps of strike") : "");
+}
+
 async function loadModelInfo() {
   const dot = $("status-dot"), txt = $("model-badge-text");
   const body = $("model-card-body");
@@ -841,48 +1064,7 @@ async function loadModelInfo() {
     modelInfo = m;
     dot.className = "status-dot ok";
     txt.textContent = "Model ready";
-    const p = m.param_ranges || {};
-    const pairs = [
-      ["Architecture", (m.n_members > 1 ? m.n_members + " networks, " : "One network, ") +
-        m.n_parameters.toLocaleString() + " parameters each"],
-      ["Training data", m.n_samples.toLocaleString() +
-        " contracts labelled by Monte Carlo" +
-        (m.mc_paths_per_label ? " at " + m.mc_paths_per_label.toLocaleString() + " paths each" : "")],
-    ];
-    if (m.eval) {
-      pairs.push(["Accuracy", "typical pricing error " +
-        m.eval.ensemble.price.rmse_bps.toFixed(1) + " basis points of strike, on " +
-        m.eval.n_points.toLocaleString() + " held-out contracts against " +
-        (m.eval.ref_paths / 1000).toFixed(0) + ",000-path references"]);
-    }
-    if (p.moneyness && p.maturity && p.sigma) {
-      pairs.push(["Trained range", "spot over strike " + p.moneyness[0] + " to " +
-        p.moneyness[1] + ", expiry " + p.maturity[0] + " to " + p.maturity[1] +
-        " years, volatility " + Math.round(p.sigma[0] * 100) + "% to " +
-        Math.round(p.sigma[1] * 100) + "%"]);
-    }
-    // The short-dated checkpoint carries its own provenance: whether its
-    // rough-Bergomi parameters came from an accepted market calibration, and
-    // which one. Every field comes from the checkpoint; nothing is typed here.
-    const z = m.zero_dte;
-    if (z && z.available) {
-      const hurst = typeof z.H === "number" ? ", Hurst index " + z.H.toFixed(3) : "";
-      pairs.push(["Short-dated model", (z.calibrated
-        ? "rough Bergomi calibrated to market option prices"
-        : "rough Bergomi with default parameters, not market-calibrated") + hurst +
-        (z.calibration_note ? ". " + z.calibration_note : "")]);
-    }
-    body.innerHTML = rows(pairs);
-    const acc = $("accuracy-stats");
-    if (acc) {
-      acc.innerHTML =
-        hedgeStatChip("Ensemble", m.n_members + " networks") +
-        hedgeStatChip("Parameters", m.n_parameters.toLocaleString() + " each") +
-        hedgeStatChip("Training set",
-          m.n_samples.toLocaleString() + " Monte Carlo-labelled contracts") +
-        (m.eval ? hedgeStatChip("Typical error",
-          m.eval.ensemble.price.rmse_bps.toFixed(1) + " bps of strike") : "");
-    }
+    paintModelScope();
     const lede = $("report-lede");
     if (lede) {
       lede.textContent = m.report_writer === "model"
@@ -892,13 +1074,6 @@ async function loadModelInfo() {
         : "A short risk summary assembled from the current price, its "
           + "attribution and the hedging run, written by a rule-based "
           + "narrator on this server.";
-    }
-    const teaser = $("accuracy-teaser");
-    if (teaser && m.eval) {
-      teaser.textContent = "Typical error " +
-        m.eval.ensemble.price.rmse_bps.toFixed(1) +
-        " basis points of strike on " + m.eval.n_points.toLocaleString() +
-        " contracts the models never saw. A standing benchmark, not a live figure.";
     }
   } catch {
     dot.className = "status-dot bad";
@@ -998,8 +1173,25 @@ async function solveImpliedVol() {
     setSlider("sigma", pct);
     $("in-sigma").value = pct;
     refreshAll();
-    note.textContent = "A premium of $" + d.target_price.toFixed(4) +
-      " implies " + pct.toFixed(2) + "% volatility under this model.";
+    // What the solver returns is the volatility INPUT that reproduces the
+    // premium, and its last digits are inside the pricer's own error: vega
+    // converts that error into volatility points, so the note says how far the
+    // answer can move rather than quoting it to a hundredth.
+    const bps = activeModelRmseBps();
+    const vega = lastGreeks ? lastGreeks.vega : null;
+    const volPts = (bps != null && vega && Math.abs(vega) > 1e-9)
+      ? Math.abs(bps * state.strike / 1e4 / vega) : null;
+    note.textContent = "$" + d.target_price.toFixed(4) + " is reproduced by " +
+      pct.toFixed(1) + "% volatility " + (is0dte()
+        ? "in the short-dated model, where it sets the rough-volatility " +
+          "forward variance (ξ₀ = σ²) rather than a Black-Scholes implied " +
+          "volatility."
+        : "in this average-price model. That is a model input, not a " +
+          "market-convention implied volatility.") +
+      (volPts != null
+        ? " The model's own " + bps.toFixed(1) + " bps price error moves it by " +
+          "about " + volPts.toFixed(2) + " of a volatility point."
+        : "");
   } catch (err) {
     note.textContent = err.message;
   } finally {
@@ -1039,13 +1231,19 @@ bindSizeField("in-mult", "mult", { min: 1, max: 10000, integer: true });
 bindSegmented("greek-basis", (v) => { greekBasis = v; renderGreeks(); });
 
 // A quote that can leave the page: the contract, every input, the price, the
-// Greeks, the independent check and when it was produced.
+// Greeks, the Monte Carlo cross-check and when it was produced. The check runs
+// the same model's dynamics through a different numerical method, so it is a
+// cross-check and not an independent valuation.
 function quoteRows() {
   const g = lastGreeks || {};
   const n = positionSize();
-  const stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+  // This row leads the clipboard quote and the downloaded CSV, the one
+  // artifact that leaves the page, so the stamp is the reader's own clock and
+  // it names the zone. sv-SE is the ISO-shaped locale; any locale would do.
+  const stamp = new Date().toLocaleString("sv-SE", { hour12: false });
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
   const rows = [
-    ["Produced", stamp + " local"],
+    ["Produced", stamp + " " + zone],
     ["Instrument", contractShort()],
     ["Underlying", marketData ? marketData.ticker : "hypothetical"],
     ["Spot", state.spot],
@@ -1056,13 +1254,16 @@ function quoteRows() {
     ["Type", state.optionType],
     ["Contracts", state.qty],
     ["Shares per contract", state.mult],
-    ["Price per contract", lastNNPrice == null ? "" : lastNNPrice.toFixed(6)],
+    // The pricer values an option on ONE unit of underlying, so the price and
+    // the five Greeks below are per share; multiply by the shares per contract
+    // for a contract, and by the position rows below for a book.
+    ["Price per share", lastNNPrice == null ? "" : lastNNPrice.toFixed(6)],
     ["Position value", lastNNPrice == null ? "" : (lastNNPrice * n).toFixed(2)],
-    ["Delta per contract", g.delta == null ? "" : g.delta.toFixed(6)],
-    ["Gamma per contract", g.gamma == null ? "" : g.gamma.toFixed(6)],
-    ["Vega per contract", g.vega == null ? "" : g.vega.toFixed(6)],
-    ["Theta per contract, per trading day", g.theta == null ? "" : g.theta.toFixed(6)],
-    ["Rho per contract", g.rho == null ? "" : g.rho.toFixed(6)],
+    ["Delta per share", g.delta == null ? "" : g.delta.toFixed(6)],
+    ["Gamma per share", g.gamma == null ? "" : g.gamma.toFixed(6)],
+    ["Vega per share", g.vega == null ? "" : g.vega.toFixed(6)],
+    ["Theta per share, per trading day", g.theta == null ? "" : g.theta.toFixed(6)],
+    ["Rho per share", g.rho == null ? "" : g.rho.toFixed(6)],
     ["Delta, whole position", g.delta == null ? "" : (g.delta * n).toFixed(2)],
     ["Gamma, whole position", g.gamma == null ? "" : (g.gamma * n).toFixed(2)],
     ["Vega, whole position", g.vega == null ? "" : (g.vega * n).toFixed(2)],
@@ -1075,11 +1276,18 @@ function quoteRows() {
     rows.push(["Cross-check 95% half-width", lastCheck.half.toFixed(6)]);
   }
   if (modelInfo) {
-    rows.push(["Model", modelInfo.n_members + " networks x " +
-      modelInfo.n_parameters + " parameters"]);
-    if (modelInfo.eval) {
-      rows.push(["Model typical error",
-        modelInfo.eval.ensemble.price.rmse_bps.toFixed(2) + " bps of strike"]);
+    // Which network priced this quote, and its own error - not the other
+    // one's. Below 12 trading days the short-dated ensemble produced the row
+    // above, and quoting the averaged ensemble's figure beside it would put
+    // the wrong accuracy on the only artifact that leaves the page.
+    rows.push(["Pricing model", is0dte()
+      ? "short-dated rough-volatility ensemble"
+      : modelInfo.n_members + " networks x " + modelInfo.n_parameters +
+        " parameters, averaged-contract ensemble"]);
+    const bps = activeModelRmseBps();
+    if (bps != null) {
+      rows.push(["Pricing model typical error",
+        bps.toFixed(2) + " bps of strike"]);
     }
   }
   return rows;
@@ -1362,6 +1570,13 @@ document.querySelectorAll("#maturity-quickpick .pick").forEach((btn) => {
 // demo range, and set the strike at-the-money.
 let marketData = null;
 
+// backend/quant/market_data.py returns the symbol the risk-free rate actually
+// came from: ^IRX first, ^TNX when that fails.
+const RATE_SOURCE_NAMES = {
+  "^IRX": "13-week Treasury bill (^IRX)",
+  "^TNX": "10-year Treasury note (^TNX)",
+};
+
 function rescaleSpotSliders(spot) {
   const step = spot >= 500 ? 5 : spot >= 100 ? 1 : spot >= 20 ? 0.5 : 0.1;
   const lo = Math.ceil((0.55 * spot) / step) * step;
@@ -1393,12 +1608,28 @@ async function fetchTicker() {
     for (const id of ["in-spot", "in-strike", "in-sigma", "in-rate"])
       $(id).dispatchEvent(new Event("input"));
 
+    // market_data tries ^IRX and falls back to ^TNX, the 10-year, and says
+    // which in rate_source; the sidebar promises that this chip names the
+    // instrument, so it reads the field rather than asserting the bill. The
+    // quote is used as the model's continuously compounded rate without
+    // conversion, which is what "used as" says and "converted to" would not.
+    const rateName = RATE_SOURCE_NAMES[d.rate_source] ||
+      ("Treasury yield" + (d.rate_source ? " (" + d.rate_source + ")" : ""));
     chip.innerHTML =
       "<b>" + d.ticker + "</b> $" + d.spot.toLocaleString(undefined,
         { maximumFractionDigits: 2 }) +
       " · one-year realised volatility " + (d.sigma_raw * 100).toFixed(1) +
-      "% · 13-week Treasury bill " + (d.rate_raw * 100).toFixed(2) + "%" +
-      "<br>as of " + d.as_of.slice(0, 16).replace("T", " ") +
+      "% · " + rateName + " " + (d.rate_raw * 100).toFixed(2) +
+      "%, used as the model's continuously compounded rate" +
+      "<br>as of " + d.as_of.slice(0, 16).replace("T", " ") + " " +
+      (d.as_of_tz || "UTC") + ", the time the server fetched it" +
+      // The spot is a trade only when the quote endpoint answered; otherwise
+      // it is the previous session's close, which is what it always is outside
+      // market hours. The chip says which rather than leaving the reader to
+      // assume the first.
+      (d.spot_source === "last_close"
+        ? "; the spot is the last daily close, not a trade"
+        : d.spot_source === "last_price" ? "; the spot is the last trade" : "") +
       (Math.abs(state.spot - d.spot) > 0.005
         ? "<br>priced at $" + state.spot.toLocaleString() +
           ", the nearest step on the spot slider"
@@ -1432,12 +1663,17 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 
 // ───────────────────────────────────────────────────────────── XAI ──
 let lastAttributions = null;
+// The desk note quotes the Integrated Gradients baseline by value, so it needs
+// the same baseline_price this panel prints; keep it beside the attributions
+// rather than re-deriving it from a second /api/explain call.
+let lastBaselinePrice = null;
 async function updateXAI() {
   try {
     const d = await api("/api/explain", optionBody());
     clearShimmer("plot-xai");
     clearPanelMessage("plot-xai");
     lastAttributions = d.attributions;
+    lastBaselinePrice = d.baseline_price;
     renderReportInputs();
 
     const bT = d.baseline.maturity;
@@ -1458,11 +1694,15 @@ async function updateXAI() {
       $("xai-sub").textContent += " The spot bar is near zero because this " +
         "contract is at the money, the same as the baseline option.";
     }
+    // Integrated Gradients is complete against its baseline: the four
+    // contributions sum to the price MINUS the baseline option, so the
+    // baseline has to be in the sentence for the arithmetic to close.
     $("xai-stat").textContent = "Integrated Gradients against a baseline option " +
       "at " + (bT < 13 / 252 ? Math.round(bT * 252) + " days" : bT + " years") +
       " to expiry, 5% volatility and a zero rate" +
       (d.regime === "0dte_rough_bergomi" ? ", in the short-dated regime" : "") +
-      ". The four contributions sum to the price to within $" +
+      ". The four contributions plus that baseline's $" +
+      d.baseline_price.toFixed(2) + " reproduce the price to within $" +
       Math.abs(d.completeness_error).toFixed(4) + ".";
 
     Plotly.react("plot-xai", [{
@@ -1511,7 +1751,7 @@ const CHIP_HELP = {
   "Delta hedge": "The same measure for a Black-Scholes delta hedge that pays the same transaction costs on every trade.",
   "Whalley-Wilmott band": "The same measure for a delta hedge that only trades when it drifts outside a cost-aware no-trade band (Whalley and Wilmott, 1997). This is the strongest classical baseline.",
   "Trading cost per path": "Average transaction costs paid over one path by the learned policy and by the delta hedge.",
-  "No-arbitrage check": "Whether a butterfly spread could ever have a negative price, and whether total variance ever falls as expiry lengthens. Either would be an arbitrage. Both are checked by automatic differentiation at every grid point.",
+  "No-arbitrage check": "Whether a butterfly spread could ever have a negative price, and whether total variance ever falls as expiry lengthens. Either would be an arbitrage. Both are evaluated by automatic differentiation at every point of the displayed grid. The penalties that produced the surface are soft, so this is a check, not a proof.",
   "Distance from the pricing model": "How far this arbitrage-free surface sits from the pricing ensemble it was fitted to, in volatility points.",
 };
 function hedgeStatChip(k, v, cls) {
@@ -1565,42 +1805,88 @@ async function runHedge() {
         d.delta.cvar95 === best ? "good" : "") +
       (ww ? hedgeStatChip("Worst-5% loss · Whalley-Wilmott band",
         $$(-ww.cvar95) + pm(ww.cvar95_se), ww.cvar95 === best ? "good" : "") : "") +
+      // A worst-5% loss is the mean loss plus the tail about that mean, and on
+      // these runs most of the gap between the hedgers is the mean half - the
+      // commission bill. Three tail chips and a cost chip let a reader take
+      // the tail difference for tail shape, so the mean stands beside them.
+      hedgeStatChip("Average P&L per path",
+        $$(d.deep.mean) + " vs " + $$(d.delta.mean) + " for delta" +
+        (ww ? " and " + $$(ww.mean) + " for the band" : "")) +
       hedgeStatChip("Trading cost per path",
         $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs) + " for delta");
 
-    // Say who won, in a sentence, covering every ordering the run can produce.
-    const names = [["the learned policy", d.deep.cvar95],
-                   ["the delta hedge", d.delta.cvar95]];
-    if (ww) names.push(["the Whalley-Wilmott band", ww.cvar95]);
+    // Say who won, in a sentence, covering every ordering the run can produce
+    // - and only as far as the error bars printed in the chips above will
+    // carry it. Two CVaRs eleven cents apart with standard errors of nine and
+    // seven cents are not a ranking, so the wording is gated on the gap
+    // clearing two combined standard errors.
+    const names = [["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0],
+                   ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0]];
+    if (ww) names.push(["the Whalley-Wilmott band", ww.cvar95, ww.cvar95_se || 0]);
     names.sort((a, b) => a[1] - b[1]);
+    const separated = (a, b) =>
+      Math.abs(a[1] - b[1]) > 2 * Math.hypot(a[2], b[2]);
     const costBps = (d.cost * 10000).toFixed(0);
     const market = d.dynamics === "gbm"
       ? "Black-Scholes paths" : "rough-volatility paths with jumps";
-    let verdict = "Over " + d.n_paths.toLocaleString() + " " + market +
-      " at " + costBps + " basis points a trade, " + names[0][0] +
-      " has the smallest worst-5% loss, " + $$(-names[0][1]) + ", against " +
-      $$(-names[1][1]) + " for " + names[1][0] +
-      (names[2] ? " and " + $$(-names[2][1]) + " for " + names[2][0] : "") + ". ";
-    verdict += improvement >= 0
-      ? "The learned policy beats a plain delta hedge by " +
-        Math.abs(improvement).toFixed(0) + "% on tail loss while paying " +
-        $$(d.deep.mean_costs) + " a path in costs against " +
-        $$(d.delta.mean_costs) + "."
-      : "A plain delta hedge keeps the smaller tail loss here; the learned " +
-        "policy trades less (" + $$(d.deep.mean_costs) + " a path against " +
-        $$(d.delta.mean_costs) + ") but that saving does not cover the wider tail.";
+    const opening = "Over " + d.n_paths.toLocaleString() + " " + market +
+      " at " + costBps + " basis points a trade, ";
+    let verdict = separated(names[0], names[1])
+      ? opening + names[0][0] + " has the smallest worst-5% loss, " +
+        $$(-names[0][1]) + pm(names[0][2]) + ", against " + $$(-names[1][1]) +
+        pm(names[1][2]) + " for " + names[1][0] +
+        (names[2] ? " and " + $$(-names[2][1]) + pm(names[2][2]) + " for " +
+          names[2][0] : "") + ". "
+      : opening + names[0][0] + " and " + names[1][0] + " are level on " +
+        "worst-5% loss, " + $$(-names[0][1]) + pm(names[0][2]) + " and " +
+        $$(-names[1][1]) + pm(names[1][2]) + ", a gap inside two combined " +
+        "standard errors" + (names[2] ? "; " + names[2][0] + " is behind at " +
+          $$(-names[2][1]) + pm(names[2][2]) : "") + ". ";
+    // The pairwise comparison against the delta hedge is gated the same way,
+    // and it says where it sits in the ranking rather than following a
+    // conceded loss with a favourable number.
+    const deepVsDelta = separated(
+      ["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0],
+      ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0]);
+    const costs = $$(d.deep.mean_costs) + " a path in costs against " +
+      $$(d.delta.mean_costs) + " for the delta hedge";
+    const pct = Math.abs(improvement).toFixed(0);
+    if (!deepVsDelta) {
+      verdict += "The learned policy and a plain delta hedge are level on tail " +
+        "loss here, and the policy pays " + costs + ".";
+    } else if (improvement >= 0) {
+      verdict += names[0][0] === "the learned policy"
+        ? "The learned policy beats a plain delta hedge by " + pct +
+          "% on tail loss while paying " + costs + "."
+        : "Against the delta hedge alone the learned policy is " + pct +
+          "% better on tail loss and pays " + costs + "; " + names[0][0] +
+          " is the one to beat at this cost level.";
+    } else {
+      verdict += "A plain delta hedge keeps the smaller tail loss here; the " +
+        "learned policy trades less (" + costs + ") but that saving does not " +
+        "cover the wider tail.";
+    }
     $("hedge-verdict").textContent = verdict;
     $("hedge-convention").textContent =
       "Worst-5% loss is the average profit or loss across the worst 5% of " +
       "simulated paths, in dollars per option at a $" + K + " strike. Closer " +
       "to zero is better; ± is a bootstrap standard error.";
-    $("hedge-method").textContent = d.measure_note || "";
+    // The served note states the vol-matching as a neutral fact. It is a
+    // handicap taken on purpose, and a reader who spots it without the reason
+    // reads it as a mistake.
+    $("hedge-method").textContent = (d.measure_note || "") +
+      " Handing the baselines the volatility these dynamics actually realise " +
+      "is information a live hedger would not have; it is given to them " +
+      "deliberately, so the learned policy has to beat the strongest honest " +
+      "version of each.";
 
     $("hedge-sub").textContent =
       "Short one 30-day at-the-money call, hedged daily on " +
       d.n_paths.toLocaleString() + " simulated paths of " +
       (d.dynamics_label || "the selected market") + ". Premium " +
-      $$(d.premium) + ", " + costBps + " basis points a trade. " +
+      $$(d.premium) + " per option at a $" + K + " strike, and a proportional " +
+      "cost of " + costBps + " basis points of the notional traded on every " +
+      "trade. " +
       (d.sigma_source === "SPY calibration"
         ? "Volatility (" + (d.sigma * 100).toFixed(1) + "%) and rate (" +
           (d.rate * 100).toFixed(1) + "%) come from the SPY calibration this " +
@@ -1723,6 +2009,17 @@ $("btn-risk").addEventListener("click", async () => {
       deep_cvar: -lastHedge.deep.cvar95 * K,
       ww_cvar: lastHedge.whalley_wilmott
         ? -lastHedge.whalley_wilmott.cvar95 * K : null,
+      // The Hedging tab only calls a winner when the gap clears two combined
+      // bootstrap standard errors; send the same errors so the desk note
+      // applies the same test instead of ranking on point estimates.
+      bs_cvar_se: lastHedge.delta.cvar95_se != null
+        ? lastHedge.delta.cvar95_se * K : null,
+      deep_cvar_se: lastHedge.deep.cvar95_se != null
+        ? lastHedge.deep.cvar95_se * K : null,
+      ww_cvar_se: (lastHedge.whalley_wilmott
+        && lastHedge.whalley_wilmott.cvar95_se != null)
+        ? lastHedge.whalley_wilmott.cvar95_se * K : null,
+      baseline_price: lastBaselinePrice,
       deep_cost: lastHedge.deep.mean_costs * K,
       delta_cost: lastHedge.delta.mean_costs * K,
       dynamics_label: lastHedge.dynamics_label || "",
@@ -1818,8 +2115,11 @@ function wsConnect() {
       // The server caps the requested rate (MAX_STREAM_HZ); show the rate it
       // actually granted. This frame has no tick fields - falling through
       // used to throw a TypeError on every connect.
+      // The stat beside this caption is the pricing wall-clock, not the tick
+      // period, and the two would otherwise imply two different rates.
       $("stream-sub").textContent = "Live: " + d.hz +
-        " simulated ticks a second, each priced by the network.";
+        " simulated ticks a second. Pricing time is the network's wall-clock " +
+        "for the price and all five Greeks on this server.";
       return;
     }
 

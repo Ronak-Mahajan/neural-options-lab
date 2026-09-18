@@ -1,9 +1,9 @@
 """Calibrate rough Bergomi (with optional Merton jumps) on the neural map.
 
-The certified pricing-map surrogate (artifacts/pricing_map.pt) evaluates a
+The regionally validated pricing-map surrogate (artifacts/pricing_map.pt) evaluates a
 whole surface in microseconds on CPU, where the Monte Carlo engine needs a
 GPU and ~0.5 s. This module is the calibration path built on it - the one
-that keeps working after the GPU is gone. Certified five times end-to-end
+that keeps working after the GPU is gone. Validated five times end-to-end
 against the MC engine on live surfaces (SPY short-tau, SPY 3-56 days, BTC
 full surface): winning-arm parameters within 0.005-0.10 vp under MC
 repricing, seconds vs minutes.
@@ -208,7 +208,7 @@ def main() -> None:
                         "parameters at 2.76 vp -- WORSE than diffusive. The "
                         "optimizer had mined map error in a thin corner of "
                         "the training box (lam at 87%% of bound, sig_j on its "
-                        "floor). Diffusive fits are certified against MC "
+                        "floor). Diffusive fits are validated against MC "
                         "(three times, both markets); JUMP fits are not, and "
                         "must be verified under MC before use -- "
                         "scripts/btc_jumps_map.py is the template.")

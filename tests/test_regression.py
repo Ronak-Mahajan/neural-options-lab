@@ -339,7 +339,10 @@ def test_calibration_is_refused_when_it_predates_the_current_kernel(tmp_path,
     from backend.quant import dataset_0dte as d
 
     monkeypatch.setattr(d, "ARTIFACTS", tmp_path)
-    cal = tmp_path / "rough_calibration.json"
+    # Address the SPY calibration through CAL_FILES, not by its file name: the
+    # subject here is the three gates, and which artifact SPY points at is a
+    # separate decision (pinned by the FIX9 test below).
+    cal = tmp_path / d.CAL_FILES["SPY"]
     defaults = {"eta": 1.5, "rho": -0.7, "H": 0.1}
 
     # Legacy: accepted, but no kernel field.
@@ -750,3 +753,105 @@ def test_jumps_fatten_the_left_tail():
     p_j = put(rough_bergomi_mc(*args, n_paths=100_000, seed=11,
                                jumps=(25.0, -0.02, 0.03)))
     assert p_j > 3.0 * max(p_nj, 1e-4), f"{p_nj:.5f} -> {p_j:.5f}"
+
+
+# --------------------------------------------------------------------------- #
+#  evaluate.py - the published error report and the checkpoint it describes
+# --------------------------------------------------------------------------- #
+
+def test_eval_report_matches_the_served_checkpoint():
+    """artifacts/eval.json is where every error figure the site publishes comes
+    from: the headline RMSE, the error-distribution chart, and the tolerance the
+    dashboard's agreement light judges a quote against. It was written once,
+    against a checkpoint that was retrained and promoted weeks later, and
+    nothing in this suite noticed - a report that does not name its model cannot
+    be told apart from a stale one.
+
+    So it names it. This fails the moment artifacts/model.pt changes without
+    `python -m backend.quant.evaluate` being re-run, which is exactly the moment
+    the published numbers stop describing the model being served.
+    """
+    import json
+    from pathlib import Path
+    from backend.quant.evaluate import (SERVED_CHECKPOINT,
+                                        checkpoint_fingerprint)
+
+    report_file = (Path(__file__).resolve().parents[1] / "artifacts"
+                   / "eval.json")
+    assert report_file.exists(), (
+        f"{report_file} is missing; generate it with "
+        "python -m backend.quant.evaluate")
+    report = json.loads(report_file.read_text(encoding="utf-8"))
+
+    recorded = report.get("checkpoint")
+    assert recorded, (
+        "artifacts/eval.json records no checkpoint fingerprint, so nothing "
+        "ties its error figures to a model; regenerate it with "
+        "python -m backend.quant.evaluate")
+
+    served = checkpoint_fingerprint(SERVED_CHECKPOINT)
+    assert recorded["file"] == served["file"], (
+        f"eval.json describes {recorded['file']}, but the engine serves "
+        f"{served['file']}")
+    assert recorded["sha256"] == served["sha256"], (
+        f"eval.json was measured against {recorded['file']} sha256 "
+        f"{recorded['sha256'][:12]} ({recorded['bytes']} bytes); the served "
+        f"checkpoint is sha256 {served['sha256'][:12]} ({served['bytes']} "
+        "bytes). Every error figure the dashboard publishes describes a model "
+        "that is no longer served - rerun python -m backend.quant.evaluate")
+
+
+def test_the_fingerprint_separates_the_served_head_from_the_retired_one():
+    """The guard above is only worth having if it can actually tell the served
+    checkpoint from the one it replaced. It hashes the bytes for that reason:
+    the two ship at identical length on disk, so a size check - or an mtime, or
+    a git stamp on a checkpoint retrained in place - would have passed straight
+    through the substitution that made the report stale.
+    """
+    from backend.quant.engine import ARTIFACTS
+    from backend.quant.evaluate import (SERVED_CHECKPOINT,
+                                        checkpoint_fingerprint)
+
+    legacy = ARTIFACTS / "model_legacy_unconditioned_head.pt"
+    if not legacy.exists():
+        pytest.skip("the retired checkpoint is not shipped")
+    served = checkpoint_fingerprint(SERVED_CHECKPOINT)
+    retired = checkpoint_fingerprint(legacy)
+    assert served["sha256"] != retired["sha256"]
+    assert len(served["sha256"]) == 64
+
+
+def test_the_spy_recipe_regenerates_the_served_0dte_dynamics():
+    """Re-running the documented 0DTE recipe must reproduce the served model.
+
+    `dataset_0dte.load_calibrated_dynamics` used to read
+    `rough_calibration.json`, which now holds a later SPY fit its own gate
+    rejects for a pinned eta. The loader therefore fell through to the
+    historical defaults and regenerated a training set the served checkpoint
+    was never trained on - silently, because falling back is the documented
+    behaviour. Point it at the record of the fit the checkpoint carries, and
+    pin that here so the two cannot drift apart again.
+    """
+    import json
+    from pathlib import Path
+    from backend.quant import dataset_0dte as d
+
+    artifacts = Path(__file__).resolve().parents[1] / "artifacts"
+    ckpt = artifacts / "model_0dte.pt"
+    if not ckpt.exists():
+        pytest.skip("no served 0DTE checkpoint")
+    meta = torch.load(ckpt, map_location="cpu", weights_only=False)["meta"]
+    served = {"eta": float(meta["eta"]), "rho": float(meta["rho"]),
+              "H": float(meta["H"])}
+
+    dyn = d.load_calibrated_dynamics("SPY")
+    assert dyn == pytest.approx(served, abs=1e-4), (
+        "the SPY calibration the recipe reads no longer matches the served "
+        f"checkpoint: recipe {dyn}, checkpoint {served}")
+
+    # And the checkpoint's own provenance note has to name that same file, or
+    # a reader following the note lands on the wrong fit.
+    cal_name = d.CAL_FILES["SPY"]
+    assert cal_name in meta["calibration_note"], meta["calibration_note"]
+    cal = json.loads((artifacts / cal_name).read_text())
+    assert cal["kernel"] == d.KERNEL_ID and cal["accepted"] is True

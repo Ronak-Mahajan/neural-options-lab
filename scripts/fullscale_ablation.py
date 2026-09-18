@@ -313,6 +313,11 @@ def main():
             "blocks": args.blocks, "n_members": args.ensemble,
             "n_samples": args.samples, "mc_paths_per_label": args.paths,
             "epochs": args.epochs, "seed": args.seed,
+            # Both arms optimise dml_loss, so a checkpoint promoted from here
+            # IS a differential-ML model; without these two fields it cannot
+            # say so, and backend/quant/evaluate.py then has to record "the
+            # checkpoint does not say" rather than the training recipe.
+            "differential_ml": True, "lambda_diff": args.lam,
             "n_monitoring_steps": N_MONITORING_STEPS,
             "param_ranges": PARAM_RANGES, "label_dtype": "float64",
             "label_device": str(dev), "train_seconds": round(secs, 1),
