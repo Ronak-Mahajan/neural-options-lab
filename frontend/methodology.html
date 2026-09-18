@@ -612,8 +612,24 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   evaluation measures on those paths, the learned policy loses to a vol-matched delta hedge in
   7 cells and to the Whalley-Wilmott band in 11. Even under rough volatility the band remains
   the stronger baseline until costs reach 100 bp. The dashboard runs all three hedgers on the
-  same paths and ranks them by tail loss for the run in front of you, and it says so when the
-  top two sit inside their combined bootstrap standard errors.
+  same paths and ranks them by tail loss for the run in front of you.
+</p>
+
+<p>
+  Because they share paths, the dashboard compares them the way the table above does: paired.
+  One bootstrap resample of the paths is drawn per replicate and every hedger is scored on it,
+  so the common path risk cancels inside each replicate and what is left is the sampling error
+  of the comparison itself. Combining two separate error bars instead &mdash; hypot(SE<sub>a</sub>,
+  SE<sub>b</sub>) &mdash; would assume the hedgers were independent, and they are the opposite
+  of independent: a path that is bad for one is usually bad for all three. On the served run at
+  50 bp the paired errors are 20&ndash;58 % smaller than the unpaired formula claims, which
+  changes what the page is entitled to say. The learned policy beats the vol-matched delta
+  hedge by $0.94 &plusmn; 0.11 and the Ruf&ndash;Wang linear hedge by $0.14 &plusmn; 0.06, both
+  intervals clear of zero. Against the Whalley-Wilmott band it is $0.10 &plusmn; 0.08 behind,
+  an interval that still contains zero: the band leads on the point estimate and wins about
+  89 % of resamples, and that is as far as 15,000 paths will carry it. Both the Hedging tab and
+  the risk summary read the same intervals, so they cannot disagree about what this run
+  separates.
 </p>
 
 <div class="tbl-wrap">

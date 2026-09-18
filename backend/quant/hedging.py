@@ -252,6 +252,110 @@ def cvar_bootstrap_se(pl: np.ndarray, alpha: float = CVAR_ALPHA,
     return float(np.std([cvar(pl[i], alpha) for i in idx], ddof=1))
 
 
+def paired_cvar_bootstrap(pls: dict[str, np.ndarray],
+                          alpha: float = CVAR_ALPHA, n_boot: int = 2000,
+                          seed: int = 1, max_elems: int = 1_500_000) -> dict:
+    """Bootstrap every hedger's CVaR on ONE resampling of the shared paths.
+
+    Every strategy in `compare` is run on the same simulated paths, in the
+    same order, so `pls[a][i]` and `pls[b][i]` are the same path hedged two
+    ways. That pairing is information, and `cvar_bootstrap_se` throws it
+    away: it gives each hedger's own sampling error, from which the error of
+    a DIFFERENCE can only be recovered as hypot(se_a, se_b), and that formula
+    assumes the two are independent. They are the opposite of independent -
+    a path that is bad for one hedger is usually bad for all of them - so
+    hypot overstates the error of the difference, sometimes by a lot, and a
+    real ranking gets reported as a tie.
+
+    Here one bootstrap index draw is shared by every strategy in a replicate,
+    so the common path risk cancels inside each replicate difference and what
+    is left is the sampling error of the comparison itself. The marginal
+    standard errors are read off the same replicates, so the individual
+    errors and the difference errors are one estimate of one thing rather
+    than two that have to be reconciled.
+
+    Returns ``{"names", "n_boot", "alpha", "cvar", "se", "pairs"}``. `cvar`
+    and `se` are per strategy; `pairs` is keyed ``"a|b"`` and carries the
+    difference ``cvar[a] - cvar[b]`` in loss units (NEGATIVE means `a` has
+    the smaller loss, i.e. `a` is the better hedger), its paired standard
+    error, a 2.5/97.5 percentile bootstrap interval, the bootstrap bias, the
+    fraction of replicates in which `a` wins, the correlation between the two
+    hedgers' replicate CVaRs, and `hypot_se` - what the unpaired formula
+    would have claimed - so the difference the pairing makes stays visible.
+
+    Bounded memory by construction: replicates are drawn in blocks sized so
+    that no intermediate exceeds `max_elems` entries, because this runs in
+    the same 512 MB container that serves the dashboard. Block size changes
+    how the random stream is consumed, so `max_elems` is part of the
+    reproducibility contract along with `seed` and `n_boot`: the point CVaRs
+    are unaffected, the replicate draw is not. Fewer than two replicates
+    leaves every error and correlation as NaN rather than inventing one.
+    """
+    names = list(pls)
+    if not names:
+        return {"names": [], "n_boot": 0, "alpha": alpha, "cvar": {},
+                "se": {}, "pairs": {}}
+    arrays = {k: np.asarray(v, dtype=np.float64).ravel() for k, v in pls.items()}
+    n = arrays[names[0]].size
+    if any(a.size != n for a in arrays.values()):
+        raise ValueError("paired bootstrap needs one P&L per path per "
+                         "strategy, in the same path order: got sizes "
+                         + repr({k: a.size for k, a in arrays.items()}))
+    if n == 0:
+        nan = float("nan")
+        return {"names": names, "n_boot": 0, "alpha": alpha,
+                "cvar": {k: nan for k in names},
+                "se": {k: nan for k in names}, "pairs": {}}
+
+    losses = {k: -a for k, a in arrays.items()}      # CVaR acts on losses
+    k_tail = int(math.ceil(alpha * n))
+    rng = np.random.default_rng(seed)
+    reps = {k: np.empty(n_boot, dtype=np.float64) for k in names}
+    block = max(1, int(max_elems // n))
+    done = 0
+    while done < n_boot:
+        b = min(block, n_boot - done)
+        idx = rng.integers(0, n, size=(b, n))
+        for k in names:
+            s = losses[k][idx]
+            if k_tail < n:
+                reps[k][done:done + b] = np.partition(
+                    s, k_tail, axis=1)[:, k_tail:].mean(axis=1)
+            else:
+                reps[k][done:done + b] = s.max(axis=1)
+        done += b
+
+    nan = float("nan")
+    spread = n_boot >= 2          # one replicate measures no spread at all
+    point = {k: cvar(arrays[k], alpha) for k in names}
+    se = {k: float(reps[k].std(ddof=1)) if spread else nan for k in names}
+    pairs: dict[str, dict] = {}
+    for i, a in enumerate(names):
+        for b_ in names[i + 1:]:
+            d = reps[a] - reps[b_]
+            diff = point[a] - point[b_]
+            lo, hi = (float(x) for x in np.percentile(d, (2.5, 97.5)))
+            if spread and d.std() > 0.0:
+                corr = float(np.corrcoef(reps[a], reps[b_])[0, 1])
+            else:
+                # Identical replicates: the two hedgers move together
+                # exactly, which is a correlation of one, not undefined.
+                corr = 1.0 if spread else nan
+            pairs[f"{a}|{b_}"] = {
+                "diff": diff,
+                "se": float(d.std(ddof=1)) if spread else nan,
+                "ci_low": lo, "ci_high": hi,
+                "excludes_zero": bool(lo > 0.0 or hi < 0.0),
+                "bias": float(d.mean() - diff),
+                "p_first_better": float((d < 0.0).mean()),
+                "corr": corr,
+                "hypot_se": (float(math.hypot(se[a], se[b_])) if spread
+                             else nan),
+            }
+    return {"names": names, "n_boot": int(n_boot), "alpha": alpha,
+            "cvar": point, "se": se, "pairs": pairs}
+
+
 # ---------------------------------------------------------------------------
 # Linear-regression hedge (Ruf & Wang, JBES 2022)
 # ---------------------------------------------------------------------------
@@ -743,14 +847,23 @@ class HedgingEngine:
                         example[measure][f"{name}_holdings"] = np.round(
                             hist[idx], 5).tolist()
 
+            # Every strategy above ran on the same paths in the same order,
+            # so these arrays are aligned path by path and can be compared
+            # pairwise. One bootstrap draw serves all of them: the marginal
+            # errors below and the difference errors in `paired` are then the
+            # same estimate rather than two that could disagree.
+            pl_all = {name: np.concatenate(acc[name]["pl"])
+                      for name in strategies}
+            paired = paired_cvar_bootstrap(pl_all, seed=1)
+
             out = {}
             for name in strategies:
-                pl = np.concatenate(acc[name]["pl"])
+                pl = pl_all[name]
                 cst = np.concatenate(acc[name]["costs"])
                 out[name] = {
                     "mean": float(pl.mean()), "std": float(pl.std()),
                     "cvar95": cvar(pl),
-                    "cvar95_se": cvar_bootstrap_se(pl, seed=1),
+                    "cvar95_se": paired["se"][name],
                     "p5": float(np.percentile(pl, 5)),
                     "p95": float(np.percentile(pl, 95)),
                     "mean_costs": float(cst.mean()),
@@ -766,6 +879,7 @@ class HedgingEngine:
                 "linear_features": list(lin_fit["features"]),
                 "deep_over_delta_cvar95": ratio,
                 "deep_beats_delta": bool(ratio < 1.0),
+                "paired_bootstrap": paired,
                 **out,
             }
 
@@ -787,6 +901,7 @@ class HedgingEngine:
             "delta_naive": p["delta_naive"],
             "whalley_wilmott": p["whalley_wilmott"],
             "linear": p["linear"],
+            "paired_bootstrap": p["paired_bootstrap"],
             "deep_over_delta_cvar95": p["deep_over_delta_cvar95"],
             "deep_beats_delta": p["deep_beats_delta"],
             "by_measure": by_measure,

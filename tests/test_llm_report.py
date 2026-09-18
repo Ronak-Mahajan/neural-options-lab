@@ -204,3 +204,99 @@ def test_no_edge_is_claimed_over_a_delta_hedge_the_run_cannot_separate():
                                 deep_cvar_se=0.09, bs_cvar_se=0.11)
     assert "does not separate from the delta hedge" in note
     assert "edge over the delta hedge" not in note
+
+
+# ---------------------------------------------------------------------------
+# The paired bootstrap decides what "level" means
+# ---------------------------------------------------------------------------
+#
+# The three hedgers run on the same paths, so the sampling error of a
+# DIFFERENCE is measured by re-sampling those paths once per replicate, not by
+# combining two separate error bars. When the dashboard sends that verdict the
+# note must follow it, because the Hedging tab is following the same one and
+# the two narrate a single run.
+
+PAIRED_SEPARATES_BAND = {"band|deep": True, "band|delta": True,
+                         "deep|delta": True}
+PAIRED_LEVEL_AT_TOP = {"band|deep": False, "band|delta": True,
+                       "deep|delta": True}
+
+
+def test_the_paired_verdict_overrides_the_unpaired_one_at_the_top():
+    """Errors that look overlapping can still be a real difference.
+
+    The band and the policy are 11 cents apart with error bars of 9 and 7
+    cents, so the unpaired bar calls it a tie. If the paired test separates
+    them - which it can, because the two hedgers' losses move together - the
+    note must name the winner rather than hide behind the looser test.
+    """
+    unpaired = llm.compose_risk_note(
+        **BAND_WINS, bs_cvar_se=0.11, deep_cvar_se=0.07, ww_cvar_se=0.09)
+    assert "are level at the top" in unpaired["note"]
+
+    paired = llm.compose_risk_note(
+        **BAND_WINS, bs_cvar_se=0.11, deep_cvar_se=0.07, ww_cvar_se=0.09,
+        paired=PAIRED_SEPARATES_BAND)
+    note = paired["note"]
+    assert "are level at the top" not in note
+    assert llm.BAND in note
+    # And it must still be the BAND that is crowned, not the policy.
+    assert f"{llm.BAND[:1].upper()}{llm.BAND[1:]} carries the smallest" in note
+
+
+def test_the_paired_verdict_can_also_refuse_a_gap_the_unpaired_bar_allows():
+    """Pairing is not a licence to declare winners; it can withhold one too."""
+    wide = dict(BAND_WINS)
+    wide["ww_cvar"] = -3.20              # a gap the unpaired test clears
+    separated = llm.compose_risk_note(
+        **wide, bs_cvar_se=0.05, deep_cvar_se=0.05, ww_cvar_se=0.05)
+    assert "are level at the top" not in separated["note"]
+
+    held = llm.compose_risk_note(
+        **wide, bs_cvar_se=0.05, deep_cvar_se=0.05, ww_cvar_se=0.05,
+        paired=PAIRED_LEVEL_AT_TOP)
+    assert "are level at the top" in held["note"]
+    assert "the 95% interval for the difference" in held["note"]
+
+
+def test_the_paired_map_is_read_whichever_way_the_pair_is_named():
+    """Key order must not decide the answer."""
+    ranked, separated, basis = llm.rank_policies(
+        -5.01, -4.07, -3.96, 0.11, 0.07, 0.09,
+        paired={"band|deep": True})
+    assert basis == "paired" and separated is True
+    assert ranked[0][0] == llm.BAND
+
+
+def test_the_policy_delta_pair_is_tested_in_its_own_right():
+    """The band can lead while the policy still genuinely beats delta.
+
+    The pairwise claim against the delta hedge is a separate comparison and
+    gets its own paired verdict, so a conceded top spot does not silently
+    suppress a result that the run does support.
+    """
+    # Band level with the policy at the top, but the policy clear of delta:
+    # the note keeps the result it has.
+    note = llm.compose_risk_note(
+        **BAND_WINS, bs_cvar_se=0.11, deep_cvar_se=0.07, ww_cvar_se=0.09,
+        paired=PAIRED_LEVEL_AT_TOP)["note"]
+    assert "does not separate from the delta hedge" not in note
+    assert "edge over the delta hedge" in note
+
+    # Same run, but the paired test cannot separate the policy from delta
+    # either: the edge sentence has to go.
+    tied = llm.compose_risk_note(
+        **BAND_WINS, bs_cvar_se=0.11, deep_cvar_se=0.07, ww_cvar_se=0.09,
+        paired={"band|deep": False, "deep|delta": False})["note"]
+    assert "does not separate from the delta hedge" in tied
+    assert "edge over the delta hedge" not in tied
+
+
+def test_an_absent_paired_map_leaves_the_old_behaviour_alone():
+    """An older client that sends no paired map still gets an honest note."""
+    for paired in (None, {}):
+        out = llm.compose_risk_note(
+            **BAND_WINS, bs_cvar_se=0.11, deep_cvar_se=0.07, ww_cvar_se=0.09,
+            paired=paired)
+        assert "are level at the top" in out["note"]
+        assert "combined bootstrap" in out["note"]

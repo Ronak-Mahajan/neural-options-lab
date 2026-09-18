@@ -1760,6 +1760,31 @@ function hedgeStatChip(k, v, cls) {
     "</span><span class='v" + (cls ? " " + cls : "") + "'>" + v + "</span></div>";
 }
 
+// Which hedger pairs the paired bootstrap separates, in the short names the
+// desk note uses, so both tabs decide "who won" the same way. The backend
+// keys pairs by strategy ("deep", "delta", "whalley_wilmott", "linear") in
+// the order it generated them; this normalises to a sorted key over the
+// three policies the note talks about. Returns null when the run predates
+// the paired bootstrap, and the note then falls back to its own test.
+const PAIRED_SHORT = { deep: "deep", delta: "delta", whalley_wilmott: "band" };
+
+// Policy names are written lower-case so they read inside a sentence; this
+// lifts one that has to open its own.
+const capFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function pairedSeparationMap(hedge) {
+  const pairs = hedge && hedge.paired_bootstrap && hedge.paired_bootstrap.pairs;
+  if (!pairs) return null;
+  const out = {};
+  for (const key of Object.keys(pairs)) {
+    const [a, b] = key.split("|");
+    const sa = PAIRED_SHORT[a], sb = PAIRED_SHORT[b];
+    if (!sa || !sb) continue;
+    out[[sa, sb].sort().join("|")] = !!pairs[key].excludes_zero;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 async function runHedge() {
   const btn = $("btn-hedge");
   btn.textContent = "Simulating…";
@@ -1816,16 +1841,43 @@ async function runHedge() {
         $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs) + " for delta");
 
     // Say who won, in a sentence, covering every ordering the run can produce
-    // - and only as far as the error bars printed in the chips above will
-    // carry it. Two CVaRs eleven cents apart with standard errors of nine and
-    // seven cents are not a ranking, so the wording is gated on the gap
-    // clearing two combined standard errors.
-    const names = [["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0],
-                   ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0]];
-    if (ww) names.push(["the Whalley-Wilmott band", ww.cvar95, ww.cvar95_se || 0]);
+    // (see pairedSeparationMap below for the test this leans on).
+    // - and only as far as the evidence will carry it. Every hedger ran on
+    // the same paths, so the comparison is a PAIRED one: the backend
+    // re-samples those paths once per replicate and reports the sampling
+    // error of each difference directly. That is a tighter and more honest
+    // test than combining two separate error bars, which would assume the
+    // hedgers were independent when a path that is bad for one is usually
+    // bad for all of them.
+    const names = [["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0, "deep"],
+                   ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0, "delta"]];
+    if (ww) names.push(["the Whalley-Wilmott band", ww.cvar95, ww.cvar95_se || 0,
+                        "whalley_wilmott"]);
     names.sort((a, b) => a[1] - b[1]);
-    const separated = (a, b) =>
-      Math.abs(a[1] - b[1]) > 2 * Math.hypot(a[2], b[2]);
+    const pairStat = (a, b) => {
+      const p = d.paired_bootstrap && d.paired_bootstrap.pairs;
+      if (!p) return null;
+      return p[a[3] + "|" + b[3]] || p[b[3] + "|" + a[3]] || null;
+    };
+    // A 95% paired bootstrap interval for the difference that stays on one
+    // side of zero separates them; otherwise fall back to the unpaired bar.
+    const separated = (a, b) => {
+      const s = pairStat(a, b);
+      return s ? s.excludes_zero
+               : Math.abs(a[1] - b[1]) > 2 * Math.hypot(a[2], b[2]);
+    };
+    // How the two were compared, in the reader's units. The paired branch
+    // quotes the gap and its own error rather than asking anyone to combine
+    // the two chips above, which would give the wrong answer.
+    const gapPhrase = (a, b) => {
+      const s = pairStat(a, b);
+      if (!s) return "a gap inside two combined standard errors";
+      const gap = "$" + Math.abs(s.diff * K).toFixed(2) + " ± " +
+        (s.se * K).toFixed(2) + " on the same paths";
+      return s.excludes_zero
+        ? gap + ", a 95% paired bootstrap interval clear of zero"
+        : gap + ", a 95% paired bootstrap interval that still contains zero";
+    };
     const costBps = (d.cost * 10000).toFixed(0);
     const market = d.dynamics === "gbm"
       ? "Black-Scholes paths" : "rough-volatility paths with jumps";
@@ -1836,18 +1888,19 @@ async function runHedge() {
         $$(-names[0][1]) + pm(names[0][2]) + ", against " + $$(-names[1][1]) +
         pm(names[1][2]) + " for " + names[1][0] +
         (names[2] ? " and " + $$(-names[2][1]) + pm(names[2][2]) + " for " +
-          names[2][0] : "") + ". "
+          names[2][0] : "") + " — " + gapPhrase(names[0], names[1]) + ". "
       : opening + names[0][0] + " and " + names[1][0] + " are level on " +
         "worst-5% loss, " + $$(-names[0][1]) + pm(names[0][2]) + " and " +
-        $$(-names[1][1]) + pm(names[1][2]) + ", a gap inside two combined " +
-        "standard errors" + (names[2] ? "; " + names[2][0] + " is behind at " +
+        $$(-names[1][1]) + pm(names[1][2]) + ": " +
+        gapPhrase(names[0], names[1]) +
+        (names[2] ? ". " + capFirst(names[2][0]) + " is behind at " +
           $$(-names[2][1]) + pm(names[2][2]) : "") + ". ";
     // The pairwise comparison against the delta hedge is gated the same way,
     // and it says where it sits in the ranking rather than following a
     // conceded loss with a favourable number.
     const deepVsDelta = separated(
-      ["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0],
-      ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0]);
+      ["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0, "deep"],
+      ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0, "delta"]);
     const costs = $$(d.deep.mean_costs) + " a path in costs against " +
       $$(d.delta.mean_costs) + " for the delta hedge";
     const pct = Math.abs(improvement).toFixed(0);
@@ -2019,6 +2072,11 @@ $("btn-risk").addEventListener("click", async () => {
       ww_cvar_se: (lastHedge.whalley_wilmott
         && lastHedge.whalley_wilmott.cvar95_se != null)
         ? lastHedge.whalley_wilmott.cvar95_se * K : null,
+      // Which pairs the PAIRED bootstrap separates. The three hedgers ran on
+      // the same paths, so the error of a difference is not hypot of their
+      // two error bars; sending the paired verdict keeps the note and the
+      // Hedging tab applying one test to one run.
+      paired_separated: pairedSeparationMap(lastHedge),
       baseline_price: lastBaselinePrice,
       deep_cost: lastHedge.deep.mean_costs * K,
       delta_cost: lastHedge.delta.mean_costs * K,
