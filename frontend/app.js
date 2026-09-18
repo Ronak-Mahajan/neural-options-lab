@@ -782,6 +782,9 @@ const ERROR_METRA = {
   // The risk strip quotes vega per volatility POINT; evaluate.py measures it
   // per 1.00 of sigma, a hundred times larger, so the axis says which.
   vega: { label: "vega error (×10⁻⁴ of strike, per 1.00 of σ)", unit: "×10⁻⁴" },
+  // Measured at unit strike, so this is d²(C/K)/d(S/K)²: the risk strip's
+  // per-$ gamma at a $100 strike is a hundredth of it.
+  gamma: { label: "gamma error (×10⁻⁴ of strike, per unit of S/K²)", unit: "×10⁻⁴" },
 };
 let errorReport = null;
 let errorMetric = "price";
@@ -793,7 +796,7 @@ function renderErrorDistribution() {
   const single = d.errors[errorMetric].single;
   const ens = d.errors[errorMetric].ensemble;
 
-  const QUANTITY = { price: "price", delta: "delta", vega: "vega" };
+  const QUANTITY = { price: "price", delta: "delta", vega: "vega", gamma: "gamma" };
   // artifacts/eval.json is the averaged-contract ensemble's held-out set, so
   // the panel says whose error it is drawing whatever the contract on screen.
   $("error-sub").textContent =
@@ -827,9 +830,16 @@ function renderErrorDistribution() {
       ", inside the standard error of the mean over these " +
       d.n_points.toLocaleString() +
       " points, so the errors scatter around zero rather than leaning one way.";
+  // Gamma's reference is itself a Monte Carlo estimate (a conditional
+  // density at the strike), so its own noise is part of the measured gap.
+  const refClause = (errorMetric === "gamma" && d.gamma_reference_se_rms_bps != null)
+    ? " The reference carries " + d.gamma_reference_se_rms_bps.toFixed(1) + " " +
+      meta.unit + " of Monte Carlo noise of its own (RMS), which sets the floor " +
+      "this comparison can resolve."
+    : "";
   $("error-stat").textContent =
     "Five averaged networks: typical error " + e.rmse_bps.toFixed(1) + " " +
-    meta.unit + ofStrike + ". " + biasClause + " 95% of errors fall within " +
+    meta.unit + ofStrike + ". " + biasClause + refClause + " 95% of errors fall within " +
     e.p95_abs_bps.toFixed(1) + " " + meta.unit + ofStrike + " (one network: " +
     d.single[errorMetric].rmse_bps.toFixed(1) + " typical).";
 

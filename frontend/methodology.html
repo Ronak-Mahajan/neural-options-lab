@@ -241,8 +241,17 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   All five Greeks are exact derivatives of the network obtained by automatic differentiation,
   not finite differences. The test suite checks four of them: delta, vega and theta against
   finite-difference perturbations of the network, and rho against the closed-form parity
-  derivative at three contracts, to 1e-6. Gamma is the same autograd derivative and carries no
-  independently measured accuracy anywhere in this project.
+  derivative at three contracts, to 1e-6. Gamma is measured on the same 600 held-out contracts
+  against a conditional-Monte-Carlo reference: the arithmetic average is linear in the spot, so
+  gamma is the discounted density of the scaled average at the strike, and conditioning on the
+  first increment gives that density in closed form with no kernel and no bandwidth (it
+  reproduces Black&ndash;Scholes gamma to machine precision when the contract has one fixing).
+  The ensemble's gamma error is 140 &times; 10<sup>&minus;4</sup> RMSE per unit of (S/K)<sup>2</sup>,
+  of which the reference's own Monte Carlo noise accounts for 51 &times; 10<sup>&minus;4</sup> RMS;
+  where gamma is large (Black&ndash;Scholes-scale gamma above 0.5, 228 contracts) the median
+  relative error is 0.6 %. The error concentrates at small &sigma;&radic;T, the same hinge region the
+  arbitrage audit identifies: 340&ndash;420 &times; 10<sup>&minus;4</sup> RMSE below &sigma;&radic;T = 0.1
+  against 75 above 0.2.
   They are quoted per share of the underlying: delta per $1 of spot, gamma per $1 squared,
   vega and rho per point of volatility and of rate (1 % = 1 point), and theta per trading day,
   252 to a year. Every maturity on the site is in the same trading days, so decay per day

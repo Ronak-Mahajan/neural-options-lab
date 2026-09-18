@@ -338,7 +338,8 @@ def model_info() -> dict:
         # Older reports predate the field, hence the membership test.
         meta["eval"] = {k: report[k] for k in
                         ("n_points", "ref_paths", "single", "ensemble",
-                         "checkpoint") if k in report}
+                         "checkpoint", "gamma_reference_se_rms_bps")
+                        if k in report}
     meta["zero_dte"] = zero_dte_info()
     return meta
 
