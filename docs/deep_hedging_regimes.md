@@ -190,3 +190,51 @@ What that buys is stated precisely in "What the CVaR gap is made of": the policy
 - The premium is booked at the Monte Carlo price under the simulated measure. Booking at Black-Scholes shifts every hedger's P&L in a table by the same constant, but that does not leave the ratios alone: CVaR is translation-equivariant, so a common shift moves numerator and denominator by the same absolute amount and the ratio moves. Priced at each measure's own realized terminal vol the shift is -2.3 bp on `gbm`, +32.1 bp on `rbergomi` and +32.9 bp on `rbergomi_jumps` - the rough measures' Monte Carlo premium sits well below Black-Scholes at the same terminal vol. Recomputing all 135 ratios on that booking moves them by a median of 0.015, and by up to 0.22 in the zero-cost `gbm` cells where the ratios are 3 to 6. No cell changes its W/L verdict and the crossover table is unchanged; the closest call is deep[rbergomi_jumps] versus delta on `rbergomi_jumps` at 10 bp, which goes from 1.058 +- 0.030 to 1.064 +- 0.033 against a two-SE loss line of 1.066. The shift is one constant inside every bootstrap resample, so the standard errors of the shifted ratios are the reported CVaR and ratio standard errors propagated through it rather than a fresh bootstrap; the margin on that closest cell, 0.002, is small enough that a rerun is what would settle it.
 
 Compute: training 1743.1 s for the two rough checkpoints, evaluation 44.4 s, 4 torch threads.
+
+## The served dashboard uses this protocol too
+
+The ratios in every table above are bootstrapped paired: `boot_indices` draws one
+index matrix per cell and each hedger is scored on it, so the ratio's standard
+error is the error of a comparison between hedgers that saw the same paths.
+
+The live dashboard now does the same. `backend.quant.hedging.paired_cvar_bootstrap`
+draws one resample per replicate, scores every strategy on it, and reports each
+pair's difference with its own standard error, a 2.5/97.5 percentile interval, the
+share of replicates each hedger wins, and the correlation between their replicate
+CVaRs. The marginal error bars printed on the chips are read off the same
+replicates, so the individual errors and the difference errors are one estimate
+rather than two that have to be reconciled.
+
+The difference this makes on the served run (rough Bergomi + jumps, 50 bp,
+15,000 paths), in dollars per option at a $100 strike:
+
+| comparison | difference | paired SE | unpaired hypot | corr | 95% interval | first hedger wins |
+|---|---|---|---|---|---|---|
+| deep − delta | −0.942 | 0.105 | 0.132 | 0.40 | [−1.145, −0.738] | 100.0 % |
+| deep − Whalley-Wilmott | +0.105 | 0.083 | 0.115 | 0.48 | [−0.064, +0.262] | 11.2 % |
+| deep − linear | −0.137 | 0.062 | 0.111 | 0.70 | [−0.260, −0.015] | 98.9 % |
+| delta − Whalley-Wilmott | +1.046 | 0.060 | 0.141 | 0.84 | [+0.931, +1.165] | 0.0 % |
+| Whalley-Wilmott − linear | −0.242 | 0.057 | 0.122 | 0.78 | [−0.356, −0.130] | 100.0 % |
+
+A negative difference means the first hedger carries the smaller loss. The paired
+error is 20 % to 58 % below the unpaired formula, and the reader can check any row
+by hand: se² = se_a² + se_b² − 2 ρ se_a se_b, with se_a and se_b the chip error
+bars and ρ the correlation in the table.
+
+Two conclusions the unpaired test could not support, and one it wrongly implied:
+
+- The learned policy beats the vol-matched delta hedge, and beats the Ruf-Wang
+  linear hedge, on intervals clear of zero. The second of those is a 14-cent gap
+  that the unpaired bar (0.111) would have called a tie.
+- Against the Whalley-Wilmott band the policy is 10 cents behind with an interval
+  that still contains zero. Pairing narrows the error from 0.115 to 0.083 and
+  still does not separate them: the band leads on the point estimate and wins
+  89 % of resamples, which is suggestive and is not a result. Settling it needs
+  more paths, not a better test.
+
+The estimator is checkable on a case whose answer is known in advance. The vol-matched
+and naive delta hedges are the same rule at the same volatility on this measure, so
+their tail losses differ by 0.006 dollars on every resample: the paired standard error
+is 0.000 and the correlation is 1.000, while the unpaired formula would have quoted
+0.155 and called a six-tenths-of-a-cent difference a tie. Two hedgers that move
+together are exactly where the independence assumption does the most damage.

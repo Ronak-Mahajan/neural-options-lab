@@ -789,6 +789,12 @@ class RiskReportRequest(BaseModel):
     # The Integrated Gradients baseline's own price, so the note can quote the
     # figure the attribution panel shows rather than name the baseline in words.
     baseline_price: float | None = None
+    # Which hedger pairs a PAIRED bootstrap on the shared paths separates,
+    # keyed "a|b" with the two short names ("deep", "delta", "band") in
+    # alphabetical order. Every hedger runs on the same paths, so the error of
+    # a difference is not hypot of the two individual errors; when this is
+    # present the note uses it, so both tabs apply one test to one run.
+    paired_separated: dict[str, bool] | None = None
 
 
 @app.post("/api/risk-report")
@@ -800,7 +806,7 @@ def risk_report(req: RiskReportRequest):
         delta_cost=req.delta_cost, dynamics_label=req.dynamics_label,
         cost_bps=req.cost_bps, bs_cvar_se=req.bs_cvar_se,
         deep_cvar_se=req.deep_cvar_se, ww_cvar_se=req.ww_cvar_se,
-        baseline_price=req.baseline_price,
+        baseline_price=req.baseline_price, paired=req.paired_separated,
     )
 
 

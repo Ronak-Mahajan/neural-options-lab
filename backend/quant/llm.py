@@ -79,7 +79,8 @@ def rank_policies(bs_cvar: float, deep_cvar: float,
                   ww_cvar: float | None = None,
                   bs_cvar_se: float | None = None,
                   deep_cvar_se: float | None = None,
-                  ww_cvar_se: float | None = None):
+                  ww_cvar_se: float | None = None,
+                  paired: dict | None = None):
     """Order every hedger on the page by tail loss, smallest loss first.
 
     CVaR95 reaches this module as a P&L quantile, so a *less negative* number
@@ -87,8 +88,9 @@ def rank_policies(bs_cvar: float, deep_cvar: float,
 
     Returns ``(ranked, separated, basis)``: `ranked` is a list of
     ``(name, cvar, se)`` best first; `separated` says whether the top two are
-    far enough apart to call a winner; `basis` is ``"se"`` when bootstrap
-    standard errors decided that and ``"gap"`` when only the raw gap was
+    far enough apart to call a winner; `basis` is ``"paired"`` when the
+    paired bootstrap on the shared paths decided it, ``"se"`` when two
+    unpaired standard errors did, and ``"gap"`` when only the raw gap was
     available.
     """
     entries = [(DEEP, float(deep_cvar), deep_cvar_se),
@@ -99,6 +101,13 @@ def rank_policies(bs_cvar: float, deep_cvar: float,
 
     top, second = ranked[0], ranked[1]
     gap = top[1] - second[1]
+    told = _paired_separated(paired, top[0], second[0])
+    if told is not None:
+        # The hedgers ran on the same paths, so the difference has its own
+        # sampling error, measured on the shared resamples. That is the test
+        # to use whenever it is available; the unpaired bar below assumes an
+        # independence these three do not have.
+        return ranked, told, "paired"
     if top[2] is not None and second[2] is not None:
         # Two combined standard errors of the DIFFERENCE, which for two
         # independent bootstrap estimates is hypot(se_a, se_b) - the same test
@@ -111,14 +120,41 @@ def rank_policies(bs_cvar: float, deep_cvar: float,
     return ranked, gap > RELATIVE_TIE * scale, "gap"
 
 
+#: Short keys for the paired-bootstrap map the dashboard sends. The pair key
+#: is the two short names joined by "|" in alphabetical order, so the caller
+#: does not have to know which hedger the note will rank first.
+_SHORT = {DEEP: "deep", DELTA: "delta", BAND: "band"}
+
+
+def _paired_separated(paired, a_name: str, b_name: str):
+    """Whether a PAIRED test separates these two, or None if it cannot say.
+
+    Every hedger runs on the same paths, so the sampling error of a
+    difference is not hypot(se_a, se_b) - that formula assumes independence,
+    and a path that is bad for one hedger is usually bad for all of them. The
+    dashboard sends the paired verdict computed on the shared resamples; when
+    it is present it is authoritative, because it is the only one of the two
+    tests that is measuring the right quantity.
+    """
+    if not paired:
+        return None
+    key = "|".join(sorted((_SHORT.get(a_name, ""), _SHORT.get(b_name, ""))))
+    value = paired.get(key)
+    return None if value is None else bool(value)
+
+
 def _pair_is_level(a_cvar: float, a_se, b_cvar: float, b_se,
-                   fallback: bool) -> bool:
+                   fallback: bool, paired=None,
+                   a_name: str = "", b_name: str = "") -> bool:
     """Whether two hedgers are too close for this run to separate them.
 
-    Same bar as `rank_policies`: two standard errors of the difference. When
-    either bootstrap error is missing there is nothing to test against, so the
-    caller's ranking-derived answer stands.
+    Prefers the paired bootstrap, which tests the difference on the shared
+    paths. Falls back to two unpaired combined standard errors, and then to
+    the caller's ranking-derived answer when there is nothing to test with.
     """
+    told = _paired_separated(paired, a_name, b_name)
+    if told is not None:
+        return not told
     if a_se is None or b_se is None:
         return fallback
     return abs(a_cvar - b_cvar) <= 2.0 * math.hypot(abs(float(a_se)),
@@ -133,6 +169,10 @@ def _ranking_prose(ranked, separated, basis):
     top_name, second_name = ranked[0][0], ranked[1][0]
     if separated:
         verdict = f"{_cap(top_name)} carries the smallest tail loss."
+    elif basis == "paired":
+        verdict = (f"{_cap(top_name)} and {second_name} are level at the top: "
+                   f"re-sampling the shared paths, the 95% interval for the "
+                   f"difference between them still contains zero.")
     elif basis == "se":
         verdict = (f"{_cap(top_name)} and {second_name} are level at the top: "
                    f"the gap between them is inside their combined bootstrap "
@@ -152,7 +192,8 @@ def compose_risk_note(ticker: str, nn_price: float, bs_cvar: float,
                       bs_cvar_se: float | None = None,
                       deep_cvar_se: float | None = None,
                       ww_cvar_se: float | None = None,
-                      baseline_price: float | None = None) -> dict:
+                      baseline_price: float | None = None,
+                      paired: dict | None = None) -> dict:
     """Assemble the rule-written note and the model prompt from one ranking.
 
     Returns ``{"note", "prompt", "ranked", "separated"}``. Both writers are
@@ -163,7 +204,8 @@ def compose_risk_note(ticker: str, nn_price: float, bs_cvar: float,
         subject = subject + f" on {ticker}"
 
     ranked, separated, basis = rank_policies(
-        bs_cvar, deep_cvar, ww_cvar, bs_cvar_se, deep_cvar_se, ww_cvar_se)
+        bs_cvar, deep_cvar, ww_cvar, bs_cvar_se, deep_cvar_se, ww_cvar_se,
+        paired=paired)
     order_line, verdict_line = _ranking_prose(ranked, separated, basis)
 
     market = dynamics_label or "the simulated market"
@@ -199,7 +241,8 @@ def compose_risk_note(ticker: str, nn_price: float, bs_cvar: float,
     # themselves, and the note must not call that an edge either.
     deep_delta_level = _pair_is_level(
         float(deep_cvar), deep_cvar_se, float(bs_cvar), bs_cvar_se,
-        top_two == {DEEP, DELTA} and not separated)
+        top_two == {DEEP, DELTA} and not separated,
+        paired=paired, a_name=DEEP, b_name=DELTA)
     band_clause = ""
     if ww_cvar is not None:
         if top_two == {DEEP, BAND} and not separated:
@@ -336,14 +379,15 @@ def get_risk_report_stream(ticker: str, nn_price: float, bs_cvar: float,
                            bs_cvar_se: float | None = None,
                            deep_cvar_se: float | None = None,
                            ww_cvar_se: float | None = None,
-                           baseline_price: float | None = None):
+                           baseline_price: float | None = None,
+                           paired: dict | None = None):
     """Streams the risk summary from Groq, or from the rule-based narrator."""
     parts = compose_risk_note(
         ticker, nn_price, bs_cvar, deep_cvar, attributions,
         contract=contract, ww_cvar=ww_cvar, deep_cost=deep_cost,
         delta_cost=delta_cost, dynamics_label=dynamics_label,
         cost_bps=cost_bps, bs_cvar_se=bs_cvar_se, deep_cvar_se=deep_cvar_se,
-        ww_cvar_se=ww_cvar_se, baseline_price=baseline_price,
+        ww_cvar_se=ww_cvar_se, baseline_price=baseline_price, paired=paired,
     )
 
     api_key = os.environ.get("GROQ_API_KEY")
