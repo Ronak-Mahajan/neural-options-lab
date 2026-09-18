@@ -2,25 +2,31 @@
 
 Validation RMSE during training is computed against *noisy* MC labels, so it
 overstates the model's real error. This script draws an independent LHS test
-set and, for each point, runs a 200k-path Monte Carlo that produces three
-references in one pass:
+set and, for each point, runs a 200k-path Monte Carlo that produces four
+references:
 
     price  - control-variate estimator (SE well under 1 bp over most of box)
     delta  - pathwise estimator of dPrice/dm
     vega   - pathwise estimator of dPrice/dsigma
+    gamma  - conditional-density estimator of d2Price/dm2 (gamma_reference):
+             the average is linear in the spot, so gamma is the discounted
+             density of the scaled average at the strike, and conditioning
+             on the first increment gives that density in closed form
 
 It then reports signed errors for the first ensemble member alone ("single
-model") and the full ensemble average, for all three quantities. Everything
-is expressed in 1e-4 units of the quantity (price: bps of strike; delta and
-vega: x10^-4), cached to artifacts/eval.json, and served to the dashboard's
-error-distribution chart.
+model") and the full ensemble average, for all four quantities. Everything
+is expressed in 1e-4 units of the quantity (price: bps of strike; delta,
+vega and gamma: x10^-4 at unit strike), cached to artifacts/eval.json, and
+served to the dashboard's error-distribution chart. The gamma reference is
+itself a Monte Carlo estimate; its RMS standard error is recorded alongside
+so the reported gamma error can be read against the noise floor.
 
 The report records the SHA-256 of the checkpoint it measured, so a report and
 the model it describes can never quietly come apart; the regression suite
 checks the two against each other.
 
 Usage (from the repo root, after training):
-    python -m backend.quant.evaluate                # 600 points, ~4 min
+    python -m backend.quant.evaluate                # 600 points, ~25 min on 8 cores
     python -m backend.quant.evaluate --points 1000 --ref-paths 400000
 """
 
@@ -38,6 +44,7 @@ from scipy.stats import qmc
 
 from .dataset import PARAM_RANGES, _simulate_chunk
 from .engine import ARTIFACTS, PricingEngine
+from .gamma_reference import gamma_conditional
 
 #: The checkpoint PricingEngine() loads by default, and the one every number in
 #: this report describes: PARAM_RANGES starts at 0.05 years, above the 12/252
@@ -95,14 +102,24 @@ def main() -> None:
     X = lows + sampler.random(args.points) * (highs - lows)
 
     print(f"pricing {args.points} reference points with "
-          f"{args.ref_paths:,}-path Monte Carlo (price + pathwise Greeks)...")
-    ref = np.empty((args.points, 3))                       # price, delta, vega
+          f"{args.ref_paths:,}-path Monte Carlo (price + pathwise Greeks, "
+          f"conditional-density gamma)...")
+    ref = np.empty((args.points, 4))               # price, delta, vega, gamma
+    gamma_ref_se = np.empty(args.points)
     t0 = time.perf_counter()
     for i in range(args.points):
         rng = np.random.default_rng(10_000 + i)
         price, delta, vega = _simulate_chunk(X[i:i + 1], args.ref_paths,
                                              engine.n_steps, rng)
-        ref[i] = price[0], delta[0], vega[0]
+        # Gamma has no pathwise estimator; it is the discounted density of
+        # the scaled average at the strike, estimated by conditioning on the
+        # first increment (see gamma_reference). Its own seed keeps it
+        # reproducible independently of the pathwise draw above.
+        m, mat, sig, r = (float(v) for v in X[i])
+        g = gamma_conditional(m, mat, sig, r, engine.n_steps,
+                              n_paths=args.ref_paths, seed=20_000 + i)
+        ref[i] = price[0], delta[0], vega[0], g["gamma"]
+        gamma_ref_se[i] = g["se"]
         if i % 100 == 0:
             print(f"  {i:>5}/{args.points}  "
                   f"({time.perf_counter() - t0:5.1f}s)", flush=True)
@@ -117,16 +134,21 @@ def main() -> None:
                                                    option_type="call")
     for name, member in (("single", 0), ("ensemble", None)):
         deltas, vegas = np.empty(args.points), np.empty(args.points)
+        gammas = np.empty(args.points)
         for i, (m, mat, sig, r) in enumerate(X):
             out = engine.price_with_greeks(float(m), 1.0, float(mat),
                                            float(sig), float(r), "call",
                                            member=member)
             deltas[i] = out["greeks"]["delta"]
             vegas[i] = out["greeks"]["vega"] * 100.0   # back to per unit vol
+            # At unit strike the engine's gamma is d2(C/K)/dm2 exactly, the
+            # quantity the conditional-density reference estimates.
+            gammas[i] = out["greeks"]["gamma"]
         pred[name]["delta"] = deltas
         pred[name]["vega"] = vegas
+        pred[name]["gamma"] = gammas
 
-    metrics = ("price", "delta", "vega")
+    metrics = ("price", "delta", "vega", "gamma")
     errors = {met: {name: pred[name][met] - ref[:, j]
                     for name in ("single", "ensemble")}
               for j, met in enumerate(metrics)}
@@ -146,6 +168,12 @@ def main() -> None:
         "differential_ml": (bool(engine.meta["differential_ml"])
                             if "differential_ml" in engine.meta else None),
         "training_arm": engine.meta.get("arm"),
+        # The gamma reference is itself a Monte Carlo estimate; this is the
+        # RMS of its per-point standard error, in the same 1e-4 units as the
+        # gamma error statistics, so a reader can see how much of the
+        # reported gamma error is the reference's own noise.
+        "gamma_reference_se_rms_bps": float(
+            np.sqrt(np.mean((gamma_ref_se * 1e4) ** 2))),
         "single": {met: summarize(errors[met]["single"]) for met in metrics},
         "ensemble": {met: summarize(errors[met]["ensemble"])
                      for met in metrics},
