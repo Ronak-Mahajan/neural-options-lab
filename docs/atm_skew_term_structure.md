@@ -236,11 +236,25 @@ carry no term structure to compare with.
    -0.321 (raw) to -0.312 (Richardson). Neither changes any conclusion. n_steps = 50 at every
    maturity is the project protocol; its discretisation error at 126 d (dt = 2.5 days) was
    not studied.
-5. **Quote resolution.** ATM half-spreads in the captures are 1-6 vol points; the local
-   quadratic averages 18-80 quotes per expiry and its residual RMS is 0.1-0.5 vp, so the
-   per-expiry psi SE is 0.006-0.07. The pooled chi^2/dof of 71 says the 56 rows do not share
-   one power law at that precision: the exponent varies by +-0.04 within and across the two
-   days, and that spread, not quote noise, is the quoted SE.
+5. **Quote resolution, and what it does not excuse.** The book is tight: inside the
+   |k| <= 2 atm_iv sqrt(tau) band the per-(capture, expiry) median half-spread runs
+   0.022-0.072 vol points across the 56 rows (`half_spread_iv` as
+   `backend.quant.calibrate.build_expiry_quotes` records it - half the price bid-ask
+   divided by Black-Scholes vega - read back through `quotes_from_capture`; the median
+   over all 585 quotes of the 2026-08-21 11:00 capture is 0.0480 vp, and the live
+   snapshot of that same minute which `artifacts/rough_calibration.json` records puts it
+   at 0.0477). The local quadratic averages 18-80 quotes
+   per expiry and its residual RMS is 0.09-0.50 vp - 2.5 to 17.6 times the in-band
+   half-spread, median 7 times. So the scatter the market fit sees is smile shape the quadratic
+   does not capture, not quote noise, and the 1.74-vp calibration RMSE is roughly 36
+   half-spreads wide rather than a fraction of one. The pooled chi^2/dof of 71 says the
+   same thing about the exponent: the 56 rows do not share one power law at this
+   precision, the exponent varies by +-0.04 within and across the two days, and that
+   spread, not the book, sets the quoted SE. The per-expiry psi SE is 0.006-0.07 because
+   it is scaled by those residuals. Nothing in the fit depends on the half-spread scale -
+   the WLS weights are 1/half_spread^2 up to a common factor and the SEs are residual-
+   scaled - but the band-sensitivity question this raises (how much of psi is the
+   quadratic's reach rather than the market's slope) is open.
 6. **Short lever arm and few days.** The market window is a factor 5 in tau (2-10 trading
    days) on two consecutive trading days. The model exponent drifts by 0.03 across that
    window, so a market measurement at the 0.01 level would need more days of captures and,

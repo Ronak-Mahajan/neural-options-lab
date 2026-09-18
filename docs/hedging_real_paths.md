@@ -6,6 +6,15 @@ measured in commit `0785c91` (2026-08-20); the numbers below are the replay of
 2026-09-11, which reproduces that run (same windows plus three weeks of new history) and
 adds the rows the commit body summarised in words.
 
+**Which checkpoint this is, before any table.** The `deep` rows on this page are
+`artifacts/hedger.pt`, the default `HedgingEngine` checkpoint. It is neither of the two
+checkpoints the dashboard serves (`backend/api/main.py` maps the rough regime to
+`hedger_rbergomi_jumps.pt` and GBM to `hedger_gbm.pt`), and it is byte-identical to the
+retracted `hedger_legacy_broken_measure.pt`; §4 gives the hashes and what follows from
+them. The served policies have not been replayed on history, so every comparison below
+between this page and a simulated result is a comparison across two different policies as
+well as two different measures.
+
 **Summary.** Every other hedging number in this project is measured on simulated paths:
 risk-neutral GBM ([hedging_findings.md](hedging_findings.md)), rough Bergomi with jumps
 ([deep_hedging_regimes.md](deep_hedging_regimes.md)), or the WGAN. This experiment replays
@@ -26,11 +35,14 @@ over from simulation and one does not:
   (SPY 0.048 vs 0.042, BTC 0.095 vs 0.071), so what survives on real paths is a cheaper
   hedge, not a safer one.
 
-In simulation the deep hedger also improved the tail; on history it does not. Real daily
-returns carry autocorrelation and volatility clustering that neither GBM nor the WGAN
-reproduces, and the tail claim did not transfer. The README's tail-risk claims for deep
-hedging are simulation-scoped; this page is the evidence for what does and does not carry
-over.
+In simulation a deep hedger improved the tail; the checkpoint replayed here does not, on
+history. That is two changes at once — a different measure and a different policy, since
+the simulated tail improvement belongs to `hedger_rbergomi_jumps.pt` and these rows are
+`hedger.pt` — so this page is evidence that the tail claim did not survive the crossing,
+not a measurement of how much of the loss each change accounts for. What real daily
+returns add is autocorrelation and volatility clustering that neither GBM nor the WGAN
+reproduces. The README's tail-risk claims for deep hedging are simulation-scoped; this
+page is the evidence for what does and does not carry over.
 
 ## 1. Protocol
 
@@ -44,7 +56,7 @@ The protocol is chosen to be attackable in the right places, and the places are 
 | Volatility | The trailing 60-day realised volatility **at entry**, clipped to the policy's training box [0.08, 0.65]. Every hedger receives the same forecast; nobody sees the window's own realised vol. 4 SPY windows and 76 BTC windows were clipped. |
 | Premium | Booked at Black-Scholes under that ex-ante vol, the price a desk quoting off this forecast would have collected, so the P&L wears the forecast error the way a desk does. |
 | Rates | 4% for SPY, 0 for BTC. |
-| Hedgers | `deep`: the shipped policy `artifacts/hedger.pt`, the checkpoint `HedgingEngine` loads by default. `delta`: Black-Scholes delta at the ex-ante vol. `whalley_wilmott`: the no-trade band around that delta with risk aversion 1.0. |
+| Hedgers | `deep`: `artifacts/hedger.pt`, the checkpoint `HedgingEngine` loads when it is given none - which is not one of the two the dashboard serves; §4 says what it is. `delta`: Black-Scholes delta at the ex-ante vol. `whalley_wilmott`: the no-trade band around that delta with risk aversion 1.0. |
 | Costs | Proportional, charged on every trade and on the final unwind, at 10 bp and 50 bp. |
 | Statistic | Mean, standard deviation and CVaR₉₅ (mean of the worst 5% of losses) of terminal P&L per unit of entry spot, with a 500-draw bootstrap standard error on CVaR₉₅, plus the paired deep-minus-delta difference. |
 
@@ -110,12 +122,20 @@ Paired deep minus delta: −0.0027 at 10 bp (deep better on 47% of windows); +0.
 
 ## 4. What this does not settle
 
-- **Which policy was replayed.** The script loads the shipped `artifacts/hedger.pt`, the
-  policy the dashboard serves. The checkpoints trained under rough Bergomi with jumps
-  (`hedger_rbergomi.pt`, `hedger_rbergomi_jumps.pt`), the ones with the simulated tail
-  advantage, have not been replayed on history; the script has no checkpoint option yet.
-  That replay is the direct test of whether the rough-vol tail advantage survives real
-  paths, and it is the next experiment.
+- **Which policy was replayed.** The script loads `artifacts/hedger.pt`, the checkpoint
+  `HedgingEngine` takes when it is given none. That is not the policy the dashboard
+  serves: `backend/api/main.py` maps the rough regime to `hedger_rbergomi_jumps.pt` and
+  the GBM regime to `hedger_gbm.pt`, and reaches for `hedger.pt` only if one of those
+  files is missing. `hedger.pt` is also byte-identical to
+  `artifacts/hedger_legacy_broken_measure.pt` (both MD5 `36a6296bab32831f77c38840d0b2067b`),
+  the retracted checkpoint: its meta carries no `train_measure` and no
+  `martingale_enforced`, and `backend/quant/hedging.py` records that the measure it was
+  trained under was neither a martingale nor correctly scaled. So these tables are a
+  historical replay of the retracted policy, not of anything the site serves, and the
+  three rows labelled `deep` should be read that way. Two replays are therefore open: the
+  two served checkpoints on the same windows, and the rough-measure checkpoints
+  (`hedger_rbergomi.pt`, `hedger_rbergomi_jumps.pt`) that carry the simulated tail
+  advantage. The script takes no checkpoint argument, so both need one added first.
 - **Overlap.** Windows overlap 25 of 30 days. The paired win rates and means are robust
   to that; the CVaR standard errors are not, and should be read as roughly 2.5x too
   small.

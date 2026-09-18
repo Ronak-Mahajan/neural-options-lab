@@ -86,9 +86,10 @@ that is.
   monotone in w at fixed k), dC/dT >= 0 at fixed strike, and the bounds
   max(S - K e^{-rT}, 0) <= C <= S.
 - **Resolution.** A price error dP moves the implied vol by dP / vega. The surrogate's
-  own accuracy is about 1.5 bps of strike (README), so where the Black-Scholes vega per
-  unit strike per unit vol falls below **0.02** (`VEGA_FLOOR`), 1.5 bps is already
-  0.75 vol points and the implied vol read off the surrogate carries no information about
+  own accuracy is 1.33 bps of strike (`artifacts/eval.json`, ensemble price RMSE over 600
+  held-out points), so where the Black-Scholes vega per
+  unit strike per unit vol falls below **0.02** (`VEGA_FLOOR`), that error is already
+  0.67 vol points and the implied vol read off the surrogate carries no information about
   the smile: at sigma = 0.05 and T = 1 day the resolved band is |k| < 0.003, three grid
   cells wide. Every statistic below is therefore reported on the full box **and** on the
   vega-resolved sub-region, and the write-up is careful to say which.

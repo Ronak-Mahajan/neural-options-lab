@@ -48,9 +48,10 @@ Conventions
   risk-neutral density in k is g(k) exp(-d_-^2 / 2) / sqrt(2 pi w), so g < 0 is a
   negative density.  Calendar-spread arbitrage is absent iff dw/dT >= 0 at fixed k.
 * "Resolved" points: a price error dP moves the implied vol by dP / vega.  The
-  served surrogate's own accuracy is ~1.5 bps of strike (README), so where the BS
-  vega per unit strike per unit vol falls below ``VEGA_FLOOR`` = 0.02 a 1.5 bp error
-  is already 0.75 vol points and the implied vol of the price surrogate carries no
+  served surrogate's own accuracy is 1.33 bps of strike (artifacts/eval.json,
+  ensemble price RMSE over 600 held-out points), so where the BS vega per unit
+  strike per unit vol falls below ``VEGA_FLOOR`` = 0.02 that error is already
+  0.67 vol points and the implied vol of the price surrogate carries no
   information about the smile.  Every statistic below is reported on the full box
   AND on the resolved sub-region.
 
@@ -82,7 +83,7 @@ T_BOX = (1.0 / TRADING_DAYS, 12.0 / TRADING_DAYS)
 SIGMA_BOX = (0.05, 0.80)
 RATE_BOX = (0.0, 0.10)
 #: BS vega per unit strike per unit vol below which an implied vol read off the
-#: price surrogate is not resolved (1.5 bp of price = 0.75 vol point at the floor)
+#: price surrogate is not resolved (1.33 bp of price = 0.67 vol point at the floor)
 VEGA_FLOOR = 0.02
 #: Huber switch on the vega-normalised residual, in units of vol (2 vol points),
 #: the same delta calibrate.py uses against market quotes

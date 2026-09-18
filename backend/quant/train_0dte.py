@@ -79,10 +79,15 @@ def main():
         if same and cal.get("accepted") and cal.get("kernel") == dyn.get("kernel"):
             calibrated = True
             market = cal.get("ticker") or cal.get("market", "?")
+            # A calibration record recovered from a checkpoint carries the
+            # parameters but not the per-expiry detail, so `expiries` can be
+            # present and null; count what is there rather than assume a list.
+            n_expiries = (len(cal.get("expiries") or [])
+                          or cal.get("provenance", {}).get("n_expiries", "?"))
             note = (f"Calibrated to {market} on "
                     f"{cal.get('as_of', '?')}: {cal.get('n_quotes', '?')} "
                     f"quotes ({cal.get('quote_source', '?')}) across "
-                    f"{len(cal.get('expiries', []))} expiries, implied-vol "
+                    f"{n_expiries} expiries, implied-vol "
                     f"RMSE {cal.get('iv_rmse_volpts', '?')} vol points, "
                     f"accepted by the quality gate ({cal_path.name}).")
             break

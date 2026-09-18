@@ -15,6 +15,10 @@ is expressed in 1e-4 units of the quantity (price: bps of strike; delta and
 vega: x10^-4), cached to artifacts/eval.json, and served to the dashboard's
 error-distribution chart.
 
+The report records the SHA-256 of the checkpoint it measured, so a report and
+the model it describes can never quietly come apart; the regression suite
+checks the two against each other.
+
 Usage (from the repo root, after training):
     python -m backend.quant.evaluate                # 600 points, ~4 min
     python -m backend.quant.evaluate --points 1000 --ref-paths 400000
@@ -23,8 +27,10 @@ Usage (from the repo root, after training):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -32,6 +38,35 @@ from scipy.stats import qmc
 
 from .dataset import PARAM_RANGES, _simulate_chunk
 from .engine import ARTIFACTS, PricingEngine
+
+#: The checkpoint PricingEngine() loads by default, and the one every number in
+#: this report describes: PARAM_RANGES starts at 0.05 years, above the 12/252
+#: cutoff below which the engine routes to the 0DTE surrogate instead, so no
+#: test point here is priced by model_0dte.pt.
+SERVED_CHECKPOINT = ARTIFACTS / "model.pt"
+
+
+def checkpoint_fingerprint(path: Path) -> dict:
+    """Byte identity of the checkpoint a report was measured against.
+
+    Without it a report cannot be told apart from a stale one. That is not
+    hypothetical here: eval.json was committed once, model.pt was retrained
+    and promoted four weeks later, and the dashboard went on quoting the
+    retired head's error because nothing in either file could contradict the
+    other. The hash ties them together, and
+    tests/test_regression.py::test_eval_report_matches_the_served_checkpoint
+    turns the drift into a failing test instead of a slide nobody can defend.
+
+    Hashing the bytes rather than reading a git stamp is deliberate: the
+    container that serves the site carries the artifacts but no .git, and a
+    checkpoint retrained in place never moves the git stamp at all.
+    """
+    data = path.read_bytes()
+    return {
+        "file": path.name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+    }
 
 
 def summarize(err: np.ndarray) -> dict:
@@ -100,7 +135,17 @@ def main() -> None:
         "n_points": args.points,
         "ref_paths": args.ref_paths,
         "n_members": engine.n_members,
-        "differential_ml": bool(engine.meta.get("differential_ml", False)),
+        "checkpoint": checkpoint_fingerprint(SERVED_CHECKPOINT),
+        # What the checkpoint records about its own training, not a guess.
+        # The served checkpoint was promoted out of scripts/fullscale_ablation.py,
+        # whose meta block omits this key although both of its arms optimise
+        # dml_loss (price MSE + pathwise delta and vega MSE, lam = 1.0). None
+        # therefore means "the checkpoint does not say"; defaulting it to False
+        # would publish a claim about the training recipe that the training
+        # script contradicts.
+        "differential_ml": (bool(engine.meta["differential_ml"])
+                            if "differential_ml" in engine.meta else None),
+        "training_arm": engine.meta.get("arm"),
         "single": {met: summarize(errors[met]["single"]) for met in metrics},
         "ensemble": {met: summarize(errors[met]["ensemble"])
                      for met in metrics},
@@ -123,7 +168,9 @@ def main() -> None:
             print(f"{met:>6} | {name:>8}:  RMSE {s['rmse_bps']:6.2f}   "
                   f"MAE {s['mae_bps']:6.2f}   P95 |e| {s['p95_abs_bps']:6.2f}"
                   f"   max |e| {s['max_abs_bps']:7.2f}   (x1e-4 units)")
-    print(f"\nsaved {out_file}")
+    fp = report["checkpoint"]
+    print(f"\ncheckpoint {fp['file']}  sha256 {fp['sha256'][:16]}...")
+    print(f"saved {out_file}")
 
 
 if __name__ == "__main__":

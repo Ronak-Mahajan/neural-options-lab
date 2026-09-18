@@ -28,7 +28,13 @@ KERNEL_ID = "riemann_liouville_volterra_joint_v1"
 #: calibrate_deribit.py (live two-sided books, 24/7, so staleness cannot
 #: occur). Adopting a market is an explicit choice by the caller -- the two
 #: fits describe DIFFERENT underlyings and are not interchangeable.
-CAL_FILES = {"SPY": "rough_calibration.json",
+#: SPY points at the 2026-08-20 fit because that is the one the served 0DTE
+#: ensemble was trained under, and re-running this generator has to reproduce
+#: the served model's dynamics rather than whichever fit happens to be newest.
+#: rough_calibration.json now holds a later SPY fit that its own gate rejects
+#: for a pinned eta, so reading it here returns the historical defaults and
+#: silently regenerates a dataset the checkpoint was never trained on.
+CAL_FILES = {"SPY": "rough_calibration_20260820.json",
              "BTC": "rough_calibration_btc.json"}
 
 

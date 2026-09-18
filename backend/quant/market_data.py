@@ -67,10 +67,15 @@ def fetch_market_params(ticker: str) -> dict:
         tk = yf.Ticker(ticker)
         closes = _history_close(tk, "1y")
         spot = float(closes.iloc[-1])
+        # Which of the two the spot is matters to a reader: outside market
+        # hours, or whenever fast_info fails, it is the previous session's
+        # close and not a trade. The page cannot say that unless this says it.
+        spot_source = "last_close"
         try:  # prefer the live quote when available
             live = float(tk.fast_info["last_price"])
             if math.isfinite(live) and live > 0:
                 spot = live
+                spot_source = "last_price"
         except Exception:
             pass
     except MarketDataError:
@@ -95,6 +100,7 @@ def fetch_market_params(ticker: str) -> dict:
     result = {
         "ticker": ticker,
         "spot": round(spot, 4),
+        "spot_source": spot_source,
         "sigma": round(sigma, 6),
         "sigma_raw": round(sigma_raw, 6),
         "rate": round(rate, 6),
@@ -102,7 +108,12 @@ def fetch_market_params(ticker: str) -> dict:
         "rate_source": rate_source,
         "n_return_days": int(len(log_ret)),
         "clamped": bool(sigma != sigma_raw or rate != rate_raw),
-        "as_of": time.strftime("%Y-%m-%d %H:%M:%S"),
+        # Stamped in UTC explicitly. time.strftime() with no argument reads the
+        # container's local clock, which happens to be UTC on the host that
+        # serves this but is not something the page can assume; the chip that
+        # renders this labels it UTC, so the stamp has to actually be UTC.
+        "as_of": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+        "as_of_tz": "UTC",
     }
     _CACHE[ticker] = (now, result)
     return result

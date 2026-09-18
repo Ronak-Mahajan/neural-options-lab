@@ -145,17 +145,30 @@ class PricingEngine:
     def _parity_adjustment_torch(self, m, mat, r) -> torch.Tensor:
         """exp(-rT) * (E[A]/K - 1) with spot=m, strike=1, differentiable.
 
-        E[A]/K = (m/n) * sum_i exp(r t_i) =
-        m * e^{r dt} expm1(rT) / (n expm1(r dt)).
-        r is clamped away from 0 to keep the geometric series well-defined;
-        the induced rho error below r=1e-6 is negligible.
+        E[A]/K = (m/n) * sum_{i=1..n} exp(r t_i), t_i = i * T / n, evaluated
+        as that sum rather than through its geometric-series closed form
+        m * e^{r dt} * expm1(rT) / (n * expm1(r dt)). The two agree wherever
+        the closed form is defined, but the closed form is 0/0 at r = 0 - a
+        rate the API accepts - and any guard that holds r away from zero
+        (a clamp, a floor, an epsilon) carries zero derivative there, which
+        silently deletes the whole parity contribution from rho and leaves a
+        put reporting its call's rho. The sum is analytic in r at every rate,
+        so autograd returns the true sensitivity throughout: at r = 0 the
+        term itself vanishes (E[A] = S there, every fixing carries forward
+        m) while its derivative does not, and that derivative is exactly the
+        gap between a put's rho and a call's. Differentiating the whole
+        parity term at r = 0 gives -T * (m - 1) + m * T * (n + 1) / (2n),
+        whose first piece is the discount factor's own sensitivity and
+        vanishes only at the money. Accumulated in float64 and cast back, so
+        summing n terms costs no precision against the closed form.
         """
         n = self.n_steps
-        r_safe = torch.clamp(r, min=1e-6)
-        dt = mat / n
-        ea = m * torch.exp(r_safe * dt) * torch.expm1(r_safe * mat) \
-            / (n * torch.expm1(r_safe * dt))
-        return torch.exp(-r_safe * mat) * (ea - 1.0)
+        m64, mat64, r64 = (m.to(torch.float64), mat.to(torch.float64),
+                           r.to(torch.float64))
+        steps = torch.arange(1, n + 1, dtype=torch.float64, device=m.device)
+        t = (mat64 / n).unsqueeze(-1) * steps          # fixing dates t_i
+        ea = m64 * torch.exp(r64.unsqueeze(-1) * t).mean(dim=-1)
+        return (torch.exp(-r64 * mat64) * (ea - 1.0)).to(m.dtype)
 
     # ------------------------------------------------------------ public API
     def price_with_greeks(self, spot: float, strike: float, maturity: float,

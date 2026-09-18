@@ -1,9 +1,9 @@
-"""Certify the pricing-map surrogate against the Monte Carlo it replaces.
+"""Validate the pricing-map surrogate against the Monte Carlo it replaces.
 
 A held-out RMSE says the network matches MC pointwise. That is necessary and
 insufficient: calibration composes thousands of map evaluations inside an
 optimizer, and small correlated errors can steer a fit even when pointwise
-errors look fine. So the certification is END TO END, on a real recorded
+errors look fine. So the validation is END TO END, on a real recorded
 surface (the recorder's own captures):
 
     1. calibrate the diffusive model against the surface with the MC engine
@@ -165,9 +165,16 @@ def main() -> None:
     noise = cal.objective_noise(mc_theta, n_reps=3)[1]
     print(f"\nNN-found parameters cost {gap:+.3f} vp under the true model "
           f"(MC fit noise floor ~{noise:.3f})")
-    print("CERTIFIED: the map can calibrate without a GPU" if gap < 0.25
-          else "NOT certified: retrain with more data/epochs before relying "
-               "on it")
+    # The 0.25 vp gate is a convention, not a derived bound: it is roughly a
+    # quarter of the MC fit noise floor this script prints beside it, so a gap
+    # inside it cannot be distinguished from the reference's own scatter. Say
+    # the threshold out loud rather than let a bare pass/fail word carry it.
+    print(f"VALIDATED on this capture ({gap:+.3f} vp inside the 0.25 vp gate): "
+          "the map can calibrate without a GPU here. The result is regional, "
+          "not unconditional -- one capture, one seed."
+          if gap < 0.25
+          else f"NOT validated ({gap:+.3f} vp against a 0.25 vp gate): retrain "
+               "with more data/epochs before relying on it")
 
 
 if __name__ == "__main__":

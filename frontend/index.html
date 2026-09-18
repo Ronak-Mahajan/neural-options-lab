@@ -4,16 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neural Options Lab — price options, size the risk, hedge it</title>
-<meta name="description" content="Price Asian and short-dated options in milliseconds, with all five Greeks, a position size, and an independent Monte Carlo check on every number. Then hedge the position under transaction costs.">
+<meta name="description" content="Price Asian and short-dated options in milliseconds, with all five Greeks, a position size, and a fresh Monte Carlo check on every number. Then hedge the position under transaction costs.">
 <meta name="theme-color" content="#1c1c1e">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Neural Options Lab">
-<meta property="og:description" content="Price an option, size the position, see what it risks. Every number is computed live and checked against an independent simulation.">
+<meta property="og:description" content="Price an option, size the position, see what it risks. Every number is computed live and re-checked by a fresh Monte Carlo simulation.">
 <meta property="og:url" content="https://neural-options-lab.onrender.com/">
 <meta property="og:image" content="https://neural-options-lab.onrender.com/hero.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Neural Options Lab">
-<meta name="twitter:description" content="Price an option, size the position, see what it risks. Every number is computed live and checked against an independent simulation.">
+<meta name="twitter:description" content="Price an option, size the position, see what it risks. Every number is computed live and re-checked by a fresh Monte Carlo simulation.">
 <meta name="twitter:image" content="https://neural-options-lab.onrender.com/hero.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c2c2e'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='JetBrains Mono,Consolas,monospace' font-size='38' font-weight='600' fill='%23f5f5f7'%3E%E2%88%82%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -85,21 +85,21 @@
 
       <div class="param">
         <div class="param-head"><label for="in-spot">Spot <i class="sym">S₀</i>
-          <button type="button" class="help" data-help="Today's price of the underlying stock. Only the ratio of spot to strike affects the price, so the level itself does not matter.">?</button></label>
+          <button type="button" class="help" data-help="Today's price of the underlying stock. Only the ratio of spot to strike affects the price, so the level itself does not matter. That ratio has to stay inside the model's range — 0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below — and the sidebar says so when it does not.">?</button></label>
           <input class="param-val mono" id="val-spot" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="spot value, type to set exactly"></div>
         <input type="range" id="in-spot" min="55" max="195" step="1" value="100" aria-label="Spot price">
       </div>
 
       <div class="param">
         <div class="param-head"><label for="in-strike">Strike <i class="sym">K</i>
-          <button type="button" class="help" data-help="The price at which the option can be exercised. At-the-money means strike equals spot.">?</button></label>
+          <button type="button" class="help" data-help="The price at which the option can be exercised. At-the-money means strike equals spot. Spot over strike has to stay inside the model's range — 0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below — and the sidebar says so when it does not.">?</button></label>
           <input class="param-val mono" id="val-strike" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="strike value, type to set exactly"></div>
         <input type="range" id="in-strike" min="55" max="195" step="1" value="100" aria-label="Strike price">
       </div>
 
       <div class="param">
         <div class="param-head"><label for="in-maturity">Time to expiry <i class="sym">T</i>
-          <button type="button" class="help" data-help="How long until the option expires, in years. Contracts of 12 trading days or less are priced by a second model trained on rough volatility, so the price is not continuous across that boundary.">?</button></label>
+          <button type="button" class="help" data-help="How long until the option expires, in years. Supported range 0.004 to 2 years, that is one trading day to two years. Contracts of 12 trading days or less are priced by a second model trained on rough volatility, so the price is not continuous across that boundary.">?</button></label>
           <input class="param-val mono" id="val-maturity" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="1.00y" aria-label="maturity value, type to set exactly"></div>
         <!-- min is a hair above the 0DTE surrogate's trained floor of 1/252 = 0.003968;
              the old 0.0039 minimum was rejected by the API with a 422 at the slider's
@@ -137,7 +137,7 @@
       <h2 class="kicker">Market assumptions</h2>
       <div class="param">
         <div class="param-head"><label for="in-sigma">Volatility <i class="sym">σ</i>
-          <button type="button" class="help" data-help="How much the underlying moves, annualised. Supported range 5% to 80%.">?</button></label>
+          <button type="button" class="help" data-help="How much the underlying moves, annualised. Supported range 5% to 80%. Above 12 trading days it is the flat volatility of the averaging model. At or below, it sets the rough-Bergomi forward variance level (ξ₀ = σ²), not a Black-Scholes implied volatility, so the implied volatility of the resulting price varies across strikes — the short-dated surface below shows it.">?</button></label>
           <input class="param-val mono" id="val-sigma" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="25%" aria-label="sigma value, type to set exactly"></div>
         <input type="range" id="in-sigma" min="5" max="80" step="1" value="25" aria-label="Volatility in percent">
       </div>
@@ -150,7 +150,7 @@
       </div>
 
       <div class="solve-row">
-        <label for="in-target-price">Premium you see
+        <label for="in-target-price">Premium to match
           <button type="button" class="help" data-help="Type a premium and the pricer searches for the volatility that reproduces it, within the range the model was trained on. Above 12 trading days this contract is an average-price option, so this is the volatility input that reproduces your premium under this model, not a market-convention implied volatility.">?</button></label>
         <div class="solve-controls">
           <input class="param-val mono" id="in-target-price" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" placeholder="6.73" aria-label="Premium to solve for">
@@ -193,7 +193,7 @@
         <input type="text" id="in-ticker" class="ticker-input mono" placeholder="SPY" maxlength="10" aria-label="Ticker symbol">
         <button class="btn" id="btn-fetch-ticker">Load</button>
       </div>
-      <p class="rail-hint">Leave it blank to price a hypothetical $100 stock. Type a symbol to set spot to the last traded price, the strike at the money, volatility to one-year realised volatility and the rate to a short Treasury yield; the chip below names which instrument supplied it.</p>
+      <p class="rail-hint">Leave it blank to price a hypothetical $100 stock. Type a symbol to set spot to the last trade, or to the last close when the market is shut, the strike at the money, volatility to one-year realised volatility and the rate to a Treasury yield.</p>
       <div class="market-chip mono" id="market-chip"></div>
     </section>
 
@@ -226,18 +226,23 @@
       <div class="lede-body">
         <p>
           Set the contract on the left, or type a ticker to use a real one.
-          Everything reprices as you change it, and an independent simulation
-          checks the price on every change.
+          Everything reprices as you change it, and a fresh simulation of the
+          same model checks the network's price on every change.
           <button type="button" class="lede-more" id="btn-howto" aria-expanded="false" aria-controls="howto">What this tool does</button>
         </p>
         <div class="howto" id="howto" hidden>
           <p>
-            The <strong>Network price</strong> is what the pricer returns: one pass
-            through a five-model ensemble, which also gives the five Greeks as exact
-            derivatives. The <strong>Monte Carlo price</strong> beside it is an
-            independent simulation of the same contract, run fresh, with a 95%
-            interval. <strong>Agreement</strong> in the middle is how far apart they
-            are, so you can see how much to trust the number before you use it.
+            The <strong>Model price</strong> card is what the pricer returns: one
+            forward pass through a five-model ensemble, with the five Greeks taken as
+            exact derivatives of that same pass by automatic differentiation. The
+            <strong>Monte Carlo price</strong> beside it re-simulates the same
+            contract from scratch on a new seed, with a 95% interval, using the
+            reference engine the network was trained against: the control-variate
+            Asian engine that generated the training labels above 12 trading days,
+            and the rough-volatility engine the short-dated network was distilled
+            from at or below. <strong>Cross-check</strong>, beneath it, is how far
+            the two sit apart — how faithfully the network reproduces its own
+            reference, not a test of whether the assumptions are right.
           </p>
           <p>
             The contract is an
@@ -248,7 +253,11 @@
             contracts under different dynamics.
           </p>
           <p>
-            Nothing here is market data unless you load a ticker in the sidebar.
+            No price on this page is a market price, and none is quotable. Two
+            things are calibrated to real quotes: the short-dated model's
+            rough-volatility parameters and the Hedging tab's simulated market,
+            both fitted to SPY option quotes captured on 20 August 2026.
+            Everything else is hypothetical unless you load a ticker in the sidebar.
             The <strong>Hedging</strong> tab takes a short position in a 30-day call
             and hedges it under transaction costs, so you can see what a learned
             policy and the textbook rules each cost you in the tail.
@@ -259,7 +268,7 @@
           <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":0.02,"sigma":0.25,"rate":0.04,"type":"call","qty":10}'>
             <b>Same-week call</b><span>five days out, short-dated model</span></button>
           <button class="chip-btn" data-preset='{"tab":"pricing","spot":160,"strike":100,"T":1,"sigma":0.25,"rate":0.04,"type":"put","qty":10}'>
-            <b>Far out-of-the-money put</b><span>cheap tail protection, one year</span></button>
+            <b>Far out-of-the-money put</b><span>the near-zero corner, where the pricer is weakest</span></button>
           <button class="chip-btn" data-preset='{"tab":"pricing","spot":100,"strike":100,"T":2,"sigma":0.8,"rate":0.04,"type":"call","qty":10}'>
             <b>Two years at 80% volatility</b><span>the hardest corner of the range</span></button>
           <button class="chip-btn" data-preset='{"tab":"hedging","cost":100,"dyn":"rough","run":true}'>
@@ -273,10 +282,10 @@
       <div class="hero">
         <article class="panel hero-card hero-nn" id="card-nn">
           <header class="panel-tag">
-            <span class="tag tag-nn">Fair value<button type="button" class="help" data-help="One forward pass through the five-network ensemble returns this price and all five Greeks as exact derivatives, not finite differences.">?</button></span>
+            <span class="tag tag-nn">Model price<button type="button" class="help" data-help="The five-network ensemble's price for this contract, from one forward pass, with all five Greeks taken as exact derivatives of that pass by automatic differentiation rather than finite differences. It is a model output under the volatility and rate on the left, not a market quote; its measured error against simulation is below.">?</button></span>
           </header>
           <div class="price mono" id="nn-price">-</div>
-          <p class="card-sub" id="nn-sub">per contract</p>
+          <p class="card-sub" id="nn-sub">per share</p>
         </article>
 
         <article class="panel hero-card" id="card-position">
@@ -312,7 +321,7 @@
       <div class="greek-head">
         <h2 class="kicker greek-kicker">Risk</h2>
         <div class="segmented dense" id="greek-basis">
-          <button class="seg-btn active" data-value="unit">Per contract</button>
+          <button class="seg-btn active" data-value="unit">Per share</button>
           <button class="seg-btn" data-value="position">Whole position</button>
         </div>
       </div>
@@ -320,7 +329,7 @@
         <div class="greek"><span class="greek-sym">Δ</span>
           <span class="greek-name">Delta<button type="button" class="help" data-help="Change in the option's price for a $1 move in the underlying. A delta of 0.57 means the option gains about 57 cents when the stock gains a dollar.">?</button><span class="greek-unit">per $1 of spot</span></span><span class="greek-val mono" id="g-delta">-</span></div>
         <div class="greek"><span class="greek-sym">Γ</span>
-          <span class="greek-name">Gamma<button type="button" class="help" data-help="Change in delta for a $1 move in the underlying: how fast the hedge needs to be adjusted.">?</button><span class="greek-unit">per $1 of spot²</span></span><span class="greek-val mono" id="g-gamma">-</span></div>
+          <span class="greek-name">Gamma<button type="button" class="help" data-help="Change in delta for a $1 move in the underlying: how fast the hedge needs to be adjusted.">?</button><span class="greek-unit">delta change per $1 of spot</span></span><span class="greek-val mono" id="g-gamma">-</span></div>
         <div class="greek"><span class="greek-sym">ν</span>
           <span class="greek-name">Vega<button type="button" class="help" data-help="Change in the option's price for a one-point rise in volatility (from 25% to 26%, say).">?</button><span class="greek-unit">per volatility point</span></span><span class="greek-val mono" id="g-vega">-</span></div>
         <div class="greek"><span class="greek-sym">Θ</span>
@@ -362,7 +371,7 @@
             <div class="plot" id="plot-xai"><div class="shimmer"></div></div>
             <details class="panel-details">
               <summary>Method and checks</summary>
-              <p id="xai-stat">Integrated Gradients against an at-the-money baseline option. The four contributions sum to the price; the residual is the completeness error.</p>
+              <p id="xai-stat">Integrated Gradients against an at-the-money baseline option. The contributions plus the baseline price reproduce the quoted price; the residual is the discretisation error of the integral.</p>
             </details>
           </article>
         </div>
@@ -373,14 +382,14 @@
         <details class="group-details" id="group-accuracy">
           <summary>
             <span class="group-summary-title">How far to trust this number</span>
-            <span class="group-summary-sub" id="accuracy-teaser">Measured once on held-out contracts; does not change with the inputs.</span>
+            <span class="group-summary-sub" id="accuracy-teaser">A standing benchmark for the averaged-contract pricer, measured once on held-out contracts; it does not change with the inputs. The short-dated model's held-out error is on the methodology page.</span>
           </summary>
           <div class="grid-75">
             <article class="panel chart-panel">
               <header class="chart-head">
                 <div>
-                  <h3>Pricing accuracy, out of sample</h3>
-                  <p id="error-sub">Measured against high-precision simulation on contracts the model never saw.</p>
+                  <h3>Pricing accuracy for the averaged contract, out of sample</h3>
+                  <p id="error-sub">Measured against high-precision simulation on averaged contracts held out of training and drawn from the same parameter box, so this is the model's error inside that box. The short-dated model is measured separately, on the methodology page.</p>
                 </div>
                 <div class="chart-tools">
                   <div class="segmented dense" id="error-metric">
@@ -413,8 +422,8 @@
       <section class="group">
         <details class="group-details" id="group-domain">
           <summary>
-            <span class="group-summary-title">Browse every contract the pricer covers</span>
-            <span class="group-summary-sub">Every strike and expiry at the current volatility and rate. Click a point to price it.</span>
+            <span class="group-summary-title">Browse the averaged contract's range</span>
+            <span class="group-summary-sub">Price over strike across moneyness 0.55 to 1.95 and expiries from 0.06 to 2 years, at the current volatility and rate. The short-dated model's range is the surface below. Click a point to price it.</span>
           </summary>
 
           <article class="panel chart-panel">
@@ -435,7 +444,7 @@
             <header class="chart-head">
               <div>
                 <h3>Short-dated volatility surface</h3>
-                <p id="ivsurface-sub">The volatility smile for expiries up to 12 trading days, from a surface built so that no butterfly or calendar spread can be arbitraged. Depends on volatility and rate only, not on the contract above.</p>
+                <p id="ivsurface-sub">A model smile for expiries up to 12 trading days, from a surface trained with butterfly and calendar-spread penalties and re-checked by automatic differentiation at every point shown. It is arbitrage-free on this grid, not more accurate than the pricing model it is fitted to. Depends on volatility and rate only, not on the contract above.</p>
               </div>
             </header>
             <div class="hedge-stats" id="ivsurface-stats"></div>
@@ -539,7 +548,7 @@
           <div class="stream-stat"><span class="k">Vega</span><span class="v mono" id="ws-vega">--</span></div>
           <div class="stream-stat"><span class="k">Theta</span><span class="v mono" id="ws-theta">--</span></div>
           <div class="stream-stat"><span class="k">Rho</span><span class="v mono" id="ws-rho">--</span></div>
-          <div class="stream-stat"><span class="k">Time per tick</span><span class="v mono" id="ws-latency">--</span></div>
+          <div class="stream-stat"><span class="k">Pricing time</span><span class="v mono" id="ws-latency">--</span></div>
           <div class="stream-stat"><span class="k">Ticks</span><span class="v mono" id="ws-ticks">0</span></div>
         </div>
 

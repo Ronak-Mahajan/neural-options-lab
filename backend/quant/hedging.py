@@ -690,10 +690,20 @@ class HedgingEngine:
             realized_vol = float(np.std(np.log(probe[:, -1]))
                                  / math.sqrt(MATURITY))
 
-            # Tune the Whalley-Wilmott risk-aversion once, on the first seed.
-            # This is in-sample FOR THE BASELINE, i.e. deliberately generous to
-            # it: we want the strongest honest baseline the deep hedger must beat.
-            tune = self._spots(measure, sigma_c, rate_c, n_paths, seeds[0])
+            # Tune the Whalley-Wilmott risk aversion once, on a dedicated
+            # block drawn at seeds[0] + 5_000: disjoint from every evaluation
+            # seed, and the same offset scripts/deep_hedging_regimes.py fits
+            # its baselines on. The offset is shared, not the draw - the
+            # script tunes on 20,000 rows and probes on 40,000 where the
+            # endpoint uses n_paths and 20,000 - so the two agree on protocol
+            # and not on digits. The tuning is in-sample FOR THE
+            # BASELINE, i.e. deliberately generous to it: we want the
+            # strongest honest baseline the deep hedger must beat. Generous
+            # on its own block is a fair fight; generous on the block every
+            # hedger is scored on is not, and it is the baseline that stands
+            # to gain from any overlap.
+            tune = self._spots(measure, sigma_c, rate_c, n_paths,
+                               seeds[0] + 5_000)
             best_g, best_c = 1.0, math.inf
             for ra in (0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0):
                 pl, _, _ = self._run_book(

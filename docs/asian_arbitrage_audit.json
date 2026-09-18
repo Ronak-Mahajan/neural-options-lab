@@ -1,0 +1,3711 @@
+{
+  "protocol": {
+    "n_points": 120800,
+    "n_m": 151,
+    "m_min": 0.5,
+    "m_max": 2.0,
+    "n_T": 40,
+    "T_min": 0.05,
+    "T_max": 2.0,
+    "sigmas": [
+      0.05,
+      0.1,
+      0.2,
+      0.4,
+      0.8
+    ],
+    "rates": [
+      0.0,
+      0.02,
+      0.04,
+      0.1
+    ],
+    "n_monitoring_steps": 50,
+    "butterfly_width": 0.01,
+    "vega_floor": 0.02,
+    "vega_floor_measure": "dC/dsigma of the Curran reference, central difference at sigma +- 1e-3, per unit strike per unit vol",
+    "normalisation": "strike = 1, spot = m; prices per unit strike",
+    "zero_dte_cutoff": 0.047619047619047616,
+    "dtype": "float32 (the served path)"
+  },
+  "coverage": {
+    "resolved_fraction": 0.4256456953642384,
+    "resolved_points": 51418,
+    "min_reference_vega": -4.440892098500626e-13,
+    "max_reference_vega": 0.3304882381919283,
+    "median_reference_vega": 0.003328908663951407
+  },
+  "conditions": {
+    "monotone_dC_dK_le_0": {
+      "statement": "dC/dK <= 0",
+      "units": "price per unit strike, per unit strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 2690,
+        "violation_fraction": 0.0222682119205298,
+        "worst_value": -0.000254094076808542,
+        "worst_at": {
+          "m": 0.9299999999999999,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.1,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.021440397350993377,
+              "share_of_violations": 0.09628252788104089
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.015286975717439293,
+              "share_of_violations": 0.10297397769516729
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.011515820456217808,
+              "share_of_violations": 0.11635687732342008
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.02902869757174393,
+              "share_of_violations": 0.6843866171003717
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.07461111111111111,
+              "share_of_violations": 0.9985130111524163
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.026352097130242825,
+              "share_of_violations": 0.14200743494423793
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.05115894039735099,
+              "share_of_violations": 0.4594795539033457
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.044329470198675495,
+              "share_of_violations": 0.39814126394052046
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 1.7246136865342163e-05,
+              "share_of_violations": 0.0003717472118959108
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.055711920529801326,
+              "share_of_violations": 0.5003717472118959
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.044205298013245034,
+              "share_of_violations": 0.3970260223048327
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.009230132450331125,
+              "share_of_violations": 0.0828996282527881
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.0021937086092715234,
+              "share_of_violations": 0.01970260223048327
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.008520124480128288,
+        "worst_at": {
+          "m": 0.65,
+          "T": 2.0,
+          "sigma": 0.2,
+          "rate": 0.04,
+          "sigma_sqrt_T": 0.28284271247461906
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "slope_dC_dK_ge_-discount": {
+      "statement": "dC/dK >= -e^{-rT}",
+      "units": "price per unit strike, per unit strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 15515,
+        "violation_fraction": 0.12843543046357617,
+        "worst_value": -0.033593058586120605,
+        "worst_at": {
+          "m": 1.02,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.15240066225165563,
+              "share_of_violations": 0.11865936190783113
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.17019867549668874,
+              "share_of_violations": 0.19877537866580727
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.12961736571008095,
+              "share_of_violations": 0.22707057686110216
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.11143172500788395,
+              "share_of_violations": 0.45549468256525943
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.002638888888888889,
+              "share_of_violations": 0.0012246213341927166
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.20353947368421052,
+              "share_of_violations": 0.997035127296165
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.23144315673289184,
+              "share_of_violations": 0.2162423461166613
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.2276903973509934,
+              "share_of_violations": 0.3545601031260071
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.17980132450331127,
+              "share_of_violations": 0.27998710924911374
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.03992480684326711,
+              "share_of_violations": 0.14921044150821786
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.2433360927152318,
+              "share_of_violations": 0.378923622300999
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.20190397350993378,
+              "share_of_violations": 0.3144054141153722
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.15339403973509932,
+              "share_of_violations": 0.23886561392201094
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.038990066225165564,
+              "share_of_violations": 0.060715436674186274
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.004552980132450331,
+              "share_of_violations": 0.007089912987431518
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.006954193115234375,
+        "worst_at": {
+          "m": 1.21,
+          "T": 1.95,
+          "sigma": 0.1,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.1396424004376894
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "convexity_d2C_dK2_ge_0": {
+      "statement": "d2C/dK2 >= 0",
+      "units": "density, per unit strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 22510,
+        "violation_fraction": 0.18634105960264902,
+        "worst_value": -2.969789981842041,
+        "worst_at": {
+          "m": 1.03,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.30480132450331127,
+              "share_of_violations": 0.16357174589071524
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.2152317880794702,
+              "share_of_violations": 0.173256330519769
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.17869757174392936,
+              "share_of_violations": 0.2157707685473123
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.15879848628193,
+              "share_of_violations": 0.44740115504220346
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.03327777777777778,
+              "share_of_violations": 0.05322079075966237
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0043055555555555555,
+              "share_of_violations": 0.001377165704131497
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.27969736842105264,
+              "share_of_violations": 0.9443358507330075
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.40066225165562913,
+              "share_of_violations": 0.25801865837405596
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.31548013245033113,
+              "share_of_violations": 0.33860506441581517
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.25198675496688744,
+              "share_of_violations": 0.27045757441137275
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.05160044150110375,
+              "share_of_violations": 0.13291870279875612
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.3673841059602649,
+              "share_of_violations": 0.3943136383829409
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.29577814569536426,
+              "share_of_violations": 0.31745890715237673
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.20558774834437085,
+              "share_of_violations": 0.22065748556197246
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.052359271523178805,
+              "share_of_violations": 0.05619724566859174
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.010596026490066225,
+              "share_of_violations": 0.01137272323411817
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 31,
+        "violation_fraction": 0.0006029017075732234,
+        "worst_value": -0.12781870365142822,
+        "worst_at": {
+          "m": 2.0,
+          "T": 2.0,
+          "sigma": 0.4,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.5656854249492381
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0009356230947997465,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0011619190404797601,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0007278703921108241,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0019440612065721812,
+              "share_of_violations": 1.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        },
+        "violations": [
+          {
+            "m": 2.0,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.12781870365142822
+          },
+          {
+            "m": 2.0,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.11503434181213379
+          },
+          {
+            "m": 2.0,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.1034235954284668
+          },
+          {
+            "m": 2.0,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.09298789501190186
+          },
+          {
+            "m": 1.99,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.08520936965942383
+          },
+          {
+            "m": 2.0,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.08369123935699463
+          },
+          {
+            "m": 2.0,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.07545924186706543
+          },
+          {
+            "m": 1.99,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.07355737686157227
+          },
+          {
+            "m": 1.99,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.06320977210998535
+          },
+          {
+            "m": 2.0,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.06143307685852051
+          },
+          {
+            "m": 1.99,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.054161906242370605
+          },
+          {
+            "m": 2.0,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.052337050437927246
+          },
+          {
+            "m": 1.99,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.046362876892089844
+          },
+          {
+            "m": 2.0,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.04455065727233887
+          },
+          {
+            "m": 1.98,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.04453098773956299
+          },
+          {
+            "m": 1.99,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.0397263765335083
+          },
+          {
+            "m": 2.0,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.038071513175964355
+          },
+          {
+            "m": 1.98,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.034071922302246094
+          },
+          {
+            "m": 1.99,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.025662779808044434
+          },
+          {
+            "m": 1.98,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.025041937828063965
+          },
+          {
+            "m": 2.0,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.04,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.0220872163772583
+          },
+          {
+            "m": 1.99,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.01780569553375244
+          },
+          {
+            "m": 1.98,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.01742863655090332
+          },
+          {
+            "m": 2.0,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.04,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.015433311462402344
+          },
+          {
+            "m": 1.99,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.011368751525878906
+          },
+          {
+            "m": 1.98,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.011169910430908203
+          },
+          {
+            "m": 1.99,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.006335258483886719
+          },
+          {
+            "m": 1.98,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.006163477897644043
+          },
+          {
+            "m": 1.97,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.005907177925109863
+          },
+          {
+            "m": 1.99,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.0026503801345825195
+          },
+          {
+            "m": 1.98,
+            "T": 1.7,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.521536192416212,
+            "margin": -0.002266526222229004
+          }
+        ],
+        "violations_listed": 31
+      }
+    },
+    "butterfly_1pct_bps": {
+      "statement": "C(K(1-h)) - 2C(K) + C(K(1+h)) >= 0, h = 1%",
+      "units": "bps of strike",
+      "all": {
+        "n_points": 118400,
+        "n_violations": 20929,
+        "violation_fraction": 0.1767652027027027,
+        "worst_value": -2.6662275195121765,
+        "worst_at": {
+          "m": 1.03,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 11840,
+              "violation_fraction": 0.29307432432432434,
+              "share_of_violations": 0.16579865258731902
+            },
+            "0.25-0.5y": {
+              "n": 17760,
+              "violation_fraction": 0.20185810810810811,
+              "share_of_violations": 0.17129342061254718
+            },
+            "0.5-1y": {
+              "n": 26640,
+              "violation_fraction": 0.17087087087087088,
+              "share_of_violations": 0.21749725261598737
+            },
+            "1-2y": {
+              "n": 62160,
+              "violation_fraction": 0.14996782496782496,
+              "share_of_violations": 0.4454106741841464
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 35200,
+              "violation_fraction": 0.03389204545454545,
+              "share_of_violations": 0.057002245687801614
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.003611111111111111,
+              "share_of_violations": 0.0012422953796167996
+            },
+            "itm_m>1.05": {
+              "n": 74400,
+              "violation_fraction": 0.26463709677419356,
+              "share_of_violations": 0.9407520665105834
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14208,
+              "violation_fraction": 0.3915399774774775,
+              "share_of_violations": 0.2658034306464714
+            },
+            "0.05-0.10": {
+              "n": 23680,
+              "violation_fraction": 0.30401182432432433,
+              "share_of_violations": 0.34397247837928235
+            },
+            "0.10-0.20": {
+              "n": 23680,
+              "violation_fraction": 0.23724662162162163,
+              "share_of_violations": 0.26843136318027616
+            },
+            ">=0.20": {
+              "n": 56832,
+              "violation_fraction": 0.044851492117117114,
+              "share_of_violations": 0.12179272779397009
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 23680,
+              "violation_fraction": 0.35743243243243245,
+              "share_of_violations": 0.404414926656792
+            },
+            "0.10": {
+              "n": 23680,
+              "violation_fraction": 0.2827702702702703,
+              "share_of_violations": 0.3199388408428496
+            },
+            "0.20": {
+              "n": 23680,
+              "violation_fraction": 0.19307432432432434,
+              "share_of_violations": 0.21845286444646184
+            },
+            "0.40": {
+              "n": 23680,
+              "violation_fraction": 0.0417652027027027,
+              "share_of_violations": 0.04725500501696211
+            },
+            "0.80": {
+              "n": 23680,
+              "violation_fraction": 0.008783783783783784,
+              "share_of_violations": 0.009938363036934397
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 50995,
+        "n_violations": 8,
+        "violation_fraction": 0.0001568781253064026,
+        "worst_value": -0.04589557647705078,
+        "worst_at": {
+          "m": 1.98,
+          "T": 2.0,
+          "sigma": 0.4,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.5656854249492381
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11173,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 32815,
+              "violation_fraction": 0.0002437909492610087,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16262,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26417,
+              "violation_fraction": 0.0003028352954536851,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42167,
+              "violation_fraction": 0.00018972182038086655,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15880,
+              "violation_fraction": 0.0005037783375314861,
+              "share_of_violations": 1.0
+            },
+            "0.80": {
+              "n": 21421,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        },
+        "violations": [
+          {
+            "m": 1.98,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.04589557647705078
+          },
+          {
+            "m": 1.98,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.035762786865234375
+          },
+          {
+            "m": 1.98,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.026226043701171875
+          },
+          {
+            "m": 1.98,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.018477439880371094
+          },
+          {
+            "m": 1.98,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.01609325408935547
+          },
+          {
+            "m": 1.98,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.008344650268554688
+          },
+          {
+            "m": 1.97,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.005364418029785156
+          },
+          {
+            "m": 1.98,
+            "T": 1.7,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.521536192416212,
+            "margin": -0.0011920928955078125
+          }
+        ],
+        "violations_listed": 8
+      }
+    },
+    "asian_floor_bps": {
+      "statement": "C >= e^{-rT} (E[A] - K)+",
+      "units": "bps of strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 11930,
+        "violation_fraction": 0.09875827814569536,
+        "worst_value": -5.980732893211549,
+        "worst_at": {
+          "m": 2.0,
+          "T": 2.0,
+          "sigma": 0.05,
+          "rate": 0.04,
+          "sigma_sqrt_T": 0.07071067811865477
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.07417218543046358,
+              "share_of_violations": 0.07510477787091366
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.10524282560706402,
+              "share_of_violations": 0.15984911986588432
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.13734363502575422,
+              "share_of_violations": 0.3129086336965633
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.08505203405865658,
+              "share_of_violations": 0.4521374685666387
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0011111111111111111,
+              "share_of_violations": 0.0006705783738474435
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.15677631578947368,
+              "share_of_violations": 0.998742665549036
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.1483167770419426,
+              "share_of_violations": 0.18021793797150043
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.14701986754966886,
+              "share_of_violations": 0.29773679798826486
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.140273178807947,
+              "share_of_violations": 0.28407376362112324
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.0489617825607064,
+              "share_of_violations": 0.23797150041911147
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.15339403973509932,
+              "share_of_violations": 0.31064543168482817
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.1492549668874172,
+              "share_of_violations": 0.3022632020117351
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.13075331125827813,
+              "share_of_violations": 0.26479463537300924
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.052028145695364236,
+              "share_of_violations": 0.10536462699077954
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.008360927152317881,
+              "share_of_violations": 0.016932103939647947
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.8302539587035085,
+        "worst_at": {
+          "m": 1.0899999999999999,
+          "T": 1.65,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.06422616289332565
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "upper_bound_discounted_mean_bps": {
+      "statement": "C <= e^{-rT} E[A]",
+      "units": "bps of strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 4075.2137471897927,
+        "worst_at": {
+          "m": 0.5,
+          "T": 2.0,
+          "sigma": 0.8,
+          "rate": 0.1,
+          "sigma_sqrt_T": 1.1313708498984762
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 4075.2137471897927,
+        "worst_at": {
+          "m": 0.5,
+          "T": 2.0,
+          "sigma": 0.8,
+          "rate": 0.1,
+          "sigma_sqrt_T": 1.1313708498984762
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "upper_bound_spot_bps": {
+      "statement": "C <= S",
+      "units": "bps of strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 4534.413069486618,
+        "worst_at": {
+          "m": 0.5,
+          "T": 2.0,
+          "sigma": 0.8,
+          "rate": 0.1,
+          "sigma_sqrt_T": 1.1313708498984762
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 4534.413069486618,
+        "worst_at": {
+          "m": 0.5,
+          "T": 2.0,
+          "sigma": 0.8,
+          "rate": 0.1,
+          "sigma_sqrt_T": 1.1313708498984762
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "positivity_bps": {
+      "statement": "C >= 0",
+      "units": "bps of strike",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.13919473531132098,
+        "worst_at": {
+          "m": 0.5,
+          "T": 0.7,
+          "sigma": 0.2,
+          "rate": 0.04,
+          "sigma_sqrt_T": 0.16733200530681513
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 1.94057502085343,
+        "worst_at": {
+          "m": 0.9299999999999999,
+          "T": 0.95,
+          "sigma": 0.05,
+          "rate": 0.02,
+          "sigma_sqrt_T": 0.04873397172404482
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "gamma_ge_0": {
+      "statement": "d2C/dS2 >= 0",
+      "units": "per unit strike, per unit spot squared",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 22509,
+        "violation_fraction": 0.18633278145695364,
+        "worst_value": -2.7993109226226807,
+        "worst_at": {
+          "m": 1.03,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.30480132450331127,
+              "share_of_violations": 0.16357901283930873
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.2152317880794702,
+              "share_of_violations": 0.17326402772224445
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.1786607799852833,
+              "share_of_violations": 0.21573592785108178
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.15879848628193,
+              "share_of_violations": 0.44742103158736507
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.03327777777777778,
+              "share_of_violations": 0.053223155182371494
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0043055555555555555,
+              "share_of_violations": 0.0013772268870229686
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.2796842105263158,
+              "share_of_violations": 0.9443333777600071
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.40066225165562913,
+              "share_of_violations": 0.2580301212848194
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.3154387417218543,
+              "share_of_violations": 0.3385756808387756
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.25198675496688744,
+              "share_of_violations": 0.27046958994180104
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.05160044150110375,
+              "share_of_violations": 0.13292460793460395
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.3673841059602649,
+              "share_of_violations": 0.3943311564263184
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.2957367549668874,
+              "share_of_violations": 0.3174285841219068
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.20558774834437085,
+              "share_of_violations": 0.22066728864009952
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.052359271523178805,
+              "share_of_violations": 0.0561997423252921
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.010596026490066225,
+              "share_of_violations": 0.011373228486383224
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 31,
+        "violation_fraction": 0.0006029017075732234,
+        "worst_value": -0.03195442631840706,
+        "worst_at": {
+          "m": 2.0,
+          "T": 2.0,
+          "sigma": 0.4,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.5656854249492381
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0009356230947997465,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0011619190404797601,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0007278703921108241,
+              "share_of_violations": 1.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0019440612065721812,
+              "share_of_violations": 1.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        },
+        "violations": [
+          {
+            "m": 2.0,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.03195442631840706
+          },
+          {
+            "m": 2.0,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.02875860594213009
+          },
+          {
+            "m": 2.0,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.025855883955955505
+          },
+          {
+            "m": 2.0,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.02324695698916912
+          },
+          {
+            "m": 1.99,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.021517088636755943
+          },
+          {
+            "m": 2.0,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.02092282474040985
+          },
+          {
+            "m": 2.0,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.018864860758185387
+          },
+          {
+            "m": 1.99,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.01857462152838707
+          },
+          {
+            "m": 1.99,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.015961579978466034
+          },
+          {
+            "m": 2.0,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.01535836886614561
+          },
+          {
+            "m": 1.99,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.013676808215677738
+          },
+          {
+            "m": 2.0,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.01308424398303032
+          },
+          {
+            "m": 1.99,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.011707760393619537
+          },
+          {
+            "m": 1.98,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.01135884877294302
+          },
+          {
+            "m": 2.0,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.011137682944536209
+          },
+          {
+            "m": 1.99,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.010031602345407009
+          },
+          {
+            "m": 2.0,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.009517868049442768
+          },
+          {
+            "m": 1.98,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.00869082473218441
+          },
+          {
+            "m": 1.99,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.006480109412223101
+          },
+          {
+            "m": 1.98,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.006387673318386078
+          },
+          {
+            "m": 2.0,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.04,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.005521782208234072
+          },
+          {
+            "m": 1.99,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.004496342036873102
+          },
+          {
+            "m": 1.98,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.004445433150976896
+          },
+          {
+            "m": 2.0,
+            "T": 1.95,
+            "sigma": 0.4,
+            "rate": 0.04,
+            "sigma_sqrt_T": 0.5585696017507576,
+            "margin": -0.003858223557472229
+          },
+          {
+            "m": 1.99,
+            "T": 1.9,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5513619500836089,
+            "margin": -0.0028706404846161604
+          },
+          {
+            "m": 1.98,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.0028492112178355455
+          },
+          {
+            "m": 1.99,
+            "T": 1.8499999999999999,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5440588203494178,
+            "margin": -0.0015998693415895104
+          },
+          {
+            "m": 1.98,
+            "T": 1.75,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5291502622129182,
+            "margin": -0.0015722010284662247
+          },
+          {
+            "m": 1.97,
+            "T": 2.0,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.5656854249492381,
+            "margin": -0.0015221554785966873
+          },
+          {
+            "m": 1.99,
+            "T": 1.7999999999999998,
+            "sigma": 0.4,
+            "rate": 0.02,
+            "sigma_sqrt_T": 0.5366563145999496,
+            "margin": -0.0006693408940918744
+          },
+          {
+            "m": 1.98,
+            "T": 1.7,
+            "sigma": 0.4,
+            "rate": 0.0,
+            "sigma_sqrt_T": 0.521536192416212,
+            "margin": -0.0005780408973805606
+          }
+        ],
+        "violations_listed": 31
+      }
+    },
+    "vega_ge_0": {
+      "statement": "dC/dsigma >= 0",
+      "units": "per unit strike, per unit vol",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 33890,
+        "violation_fraction": 0.280546357615894,
+        "worst_value": -0.020247021690011024,
+        "worst_at": {
+          "m": 1.03,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.3975993377483444,
+              "share_of_violations": 0.14172322218943642
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.31219646799116996,
+              "share_of_violations": 0.16692239598701683
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.29701986754966886,
+              "share_of_violations": 0.238211861906167
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.2421475875118259,
+              "share_of_violations": 0.45314251991737975
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.28725,
+              "share_of_violations": 0.3051342578931838
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.01125,
+              "share_of_violations": 0.0023900855709648866
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.30782894736842104,
+              "share_of_violations": 0.6903216287990558
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.6618377483443708,
+              "share_of_violations": 0.28309235762761875
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.5685430463576159,
+              "share_of_violations": 0.4053113012688109
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.26527317880794704,
+              "share_of_violations": 0.18911183239893775
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.07158871412803532,
+              "share_of_violations": 0.12248450870463264
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.6968543046357616,
+              "share_of_violations": 0.4967837120094423
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.35442880794701986,
+              "share_of_violations": 0.252670404249041
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.2860513245033113,
+              "share_of_violations": 0.2039244614930658
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.05662251655629139,
+              "share_of_violations": 0.040365889642962526
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.008774834437086093,
+              "share_of_violations": 0.006255532605488345
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.012694276869297028,
+        "worst_at": {
+          "m": 1.1,
+          "T": 1.95,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.0698212002188447
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "delta_ge_0": {
+      "statement": "dC/dS >= 0",
+      "units": "dimensionless",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 110,
+        "violation_fraction": 0.0009105960264900663,
+        "worst_value": -0.0001849105319706723,
+        "worst_at": {
+          "m": 0.94,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.04,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.007367549668874172,
+              "share_of_violations": 0.8090909090909091
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.0011589403973509935,
+              "share_of_violations": 0.19090909090909092
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0029444444444444444,
+              "share_of_violations": 0.9636363636363636
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.007588300220750552,
+              "share_of_violations": 1.0
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.004552980132450331,
+              "share_of_violations": 1.0
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.009959480725228786,
+        "worst_at": {
+          "m": 0.91,
+          "T": 1.9,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.06892024376045111
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    },
+    "delta_le_forward": {
+      "statement": "dC/dS <= e^{-rT} E[A]/S",
+      "units": "dimensionless",
+      "all": {
+        "n_points": 120800,
+        "n_violations": 17025,
+        "violation_fraction": 0.14093543046357615,
+        "worst_value": -0.03303337097167969,
+        "worst_at": {
+          "m": 1.02,
+          "T": 0.05,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.011180339887498949
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 12080,
+              "violation_fraction": 0.17591059602649006,
+              "share_of_violations": 0.12481644640234948
+            },
+            "0.25-0.5y": {
+              "n": 18120,
+              "violation_fraction": 0.18664459161147903,
+              "share_of_violations": 0.19864904552129223
+            },
+            "0.5-1y": {
+              "n": 27180,
+              "violation_fraction": 0.1366813833701251,
+              "share_of_violations": 0.218208516886931
+            },
+            "1-2y": {
+              "n": 63420,
+              "violation_fraction": 0.12303689687795648,
+              "share_of_violations": 0.4583259911894273
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 36000,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 7200,
+              "violation_fraction": 0.0033333333333333335,
+              "share_of_violations": 0.0014096916299559472
+            },
+            "itm_m>1.05": {
+              "n": 76000,
+              "violation_fraction": 0.2233421052631579,
+              "share_of_violations": 0.9970044052863436
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 14496,
+              "violation_fraction": 0.2544150110375276,
+              "share_of_violations": 0.21662261380323056
+            },
+            "0.05-0.10": {
+              "n": 24160,
+              "violation_fraction": 0.2480546357615894,
+              "share_of_violations": 0.35201174743024966
+            },
+            "0.10-0.20": {
+              "n": 24160,
+              "violation_fraction": 0.20161423841059603,
+              "share_of_violations": 0.2861086637298091
+            },
+            ">=0.20": {
+              "n": 57984,
+              "violation_fraction": 0.04264969646799117,
+              "share_of_violations": 0.14525697503671073
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 24160,
+              "violation_fraction": 0.26432119205298016,
+              "share_of_violations": 0.37509544787077825
+            },
+            "0.10": {
+              "n": 24160,
+              "violation_fraction": 0.22528973509933775,
+              "share_of_violations": 0.31970631424375917
+            },
+            "0.20": {
+              "n": 24160,
+              "violation_fraction": 0.16804635761589404,
+              "share_of_violations": 0.2384728340675477
+            },
+            "0.40": {
+              "n": 24160,
+              "violation_fraction": 0.04213576158940397,
+              "share_of_violations": 0.059794419970631424
+            },
+            "0.80": {
+              "n": 24160,
+              "violation_fraction": 0.0048841059602649,
+              "share_of_violations": 0.0069309838472834066
+            }
+          }
+        }
+      },
+      "resolved": {
+        "n_points": 51418,
+        "n_violations": 0,
+        "violation_fraction": 0.0,
+        "worst_value": 0.0034471605154577922,
+        "worst_at": {
+          "m": 1.91,
+          "T": 2.0,
+          "sigma": 0.4,
+          "rate": 0.1,
+          "sigma_sqrt_T": 0.5656854249492381
+        },
+        "where": {
+          "by_T": {
+            "0.05-0.25y": {
+              "n": 1678,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.25-0.5y": {
+              "n": 5329,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.5-1y": {
+              "n": 11278,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "1-2y": {
+              "n": 33133,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_moneyness": {
+            "otm_m<0.95": {
+              "n": 16422,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "atm_|m-1|<=0.05": {
+              "n": 6888,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "itm_m>1.05": {
+              "n": 26680,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma_sqrt_T": {
+            "<0.05": {
+              "n": 739,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.05-0.10": {
+              "n": 2688,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10-0.20": {
+              "n": 5401,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            ">=0.20": {
+              "n": 42590,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          },
+          "by_sigma": {
+            "0.05": {
+              "n": 1940,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.10": {
+              "n": 3901,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.20": {
+              "n": 7853,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.40": {
+              "n": 15946,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            },
+            "0.80": {
+              "n": 21778,
+              "violation_fraction": 0.0,
+              "share_of_violations": 0.0
+            }
+          }
+        }
+      }
+    }
+  },
+  "cross_checks": {
+    "sign_agreement_convexity_vs_gamma": 0.9999917218543046,
+    "max_abs_gap_d2C_dK2_vs_m2_gamma": 1.2034988401410374e-05,
+    "max_relative_gap_d2C_dK2_vs_m2_gamma_where_abs_ge_1e-3": 0.0016512051392936365,
+    "max_abs_price_gap_autograd_vs_price_batch": 0.0
+  },
+  "timings_s": {
+    "price": 0.7229778000037186,
+    "autograd": 21.687077400041744,
+    "reference": 46.879405099956784
+  },
+  "reference": {
+    "reference": "curran_call (1994), exact threshold, 50 fixings",
+    "all": {
+      "n_points": 120800,
+      "rmse_bps": 2.981940060671463,
+      "mae_bps": 1.6992997024867698,
+      "bias_bps": 1.4277809676310682,
+      "p95_abs_bps": 7.084060352606943,
+      "max_abs_bps": 24.420006380205805,
+      "max_abs_at": {
+        "m": 1.74,
+        "T": 2.0,
+        "sigma": 0.8,
+        "rate": 0.0,
+        "sigma_sqrt_T": 1.1313708498984762
+      }
+    },
+    "resolved": {
+      "n_points": 51418,
+      "rmse_bps": 4.291702283100315,
+      "mae_bps": 2.7510948867636063,
+      "bias_bps": 2.6631576407479174,
+      "p95_abs_bps": 10.032372578324177,
+      "max_abs_bps": 24.420006380205805,
+      "max_abs_at": {
+        "m": 1.74,
+        "T": 2.0,
+        "sigma": 0.8,
+        "rate": 0.0,
+        "sigma_sqrt_T": 1.1313708498984762
+      }
+    },
+    "by_sigma": {
+      "0.05": {
+        "n_points": 24160,
+        "rmse_bps": 1.3240578644974084,
+        "mae_bps": 0.9145138345698951,
+        "bias_bps": 0.5971055200837814,
+        "p95_abs_bps": 2.4204193714143227,
+        "max_abs_bps": 9.074401855466707,
+        "max_abs_at": {
+          "m": 1.73,
+          "T": 2.0,
+          "sigma": 0.05,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.07071067811865477
+        }
+      },
+      "0.10": {
+        "n_points": 24160,
+        "rmse_bps": 1.3251957605218918,
+        "mae_bps": 0.916511091632029,
+        "bias_bps": 0.5860092483907918,
+        "p95_abs_bps": 2.445510033892789,
+        "max_abs_bps": 9.319376945339242,
+        "max_abs_at": {
+          "m": 1.73,
+          "T": 2.0,
+          "sigma": 0.1,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.14142135623730953
+        }
+      },
+      "0.20": {
+        "n_points": 24160,
+        "rmse_bps": 1.3414781495398054,
+        "mae_bps": 0.9284193754088508,
+        "bias_bps": 0.5865621328852312,
+        "p95_abs_bps": 2.4223869374248026,
+        "max_abs_bps": 9.513139346879473,
+        "max_abs_at": {
+          "m": 1.78,
+          "T": 2.0,
+          "sigma": 0.2,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.28284271247461906
+        }
+      },
+      "0.40": {
+        "n_points": 24160,
+        "rmse_bps": 1.6416264957523343,
+        "mae_bps": 1.172505568381785,
+        "bias_bps": 0.8309862542677819,
+        "p95_abs_bps": 2.8295043324172418,
+        "max_abs_bps": 12.217866998406324,
+        "max_abs_at": {
+          "m": 1.95,
+          "T": 2.0,
+          "sigma": 0.4,
+          "rate": 0.0,
+          "sigma_sqrt_T": 0.5656854249492381
+        }
+      },
+      "0.80": {
+        "n_points": 24160,
+        "rmse_bps": 6.037885260394999,
+        "mae_bps": 4.564548642441289,
+        "bias_bps": 4.5382416825277545,
+        "p95_abs_bps": 12.420301463916147,
+        "max_abs_bps": 24.420006380205805,
+        "max_abs_at": {
+          "m": 1.74,
+          "T": 2.0,
+          "sigma": 0.8,
+          "rate": 0.0,
+          "sigma_sqrt_T": 1.1313708498984762
+        }
+      }
+    }
+  },
+  "elapsed_s": 71.61409570003161,
+  "arbitration": [
+    {
+      "label": "corner m=0.5 T=0.05 sigma=0.05",
+      "m": 0.5,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.011180339887498949,
+      "network_bps": 0.26622858058544807,
+      "curran_bps": 0.0,
+      "asian_floor_bps": 0.0,
+      "european_floor_bps": 0.0,
+      "mc_price_bps": 0.0,
+      "mc_se_bps": 0.0,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 0.0,
+      "network_minus_mc_bps": 0.26622858058544807
+    },
+    {
+      "label": "corner m=0.5 T=0.05 sigma=0.8",
+      "m": 0.5,
+      "T": 0.05,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.17888543819998318,
+      "network_bps": 0.3137125531793572,
+      "curran_bps": 2.556015664064244e-08,
+      "asian_floor_bps": 0.0,
+      "european_floor_bps": 0.0,
+      "mc_price_bps": 0.0,
+      "mc_se_bps": 0.0,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 2.556015664064244e-08,
+      "network_minus_mc_bps": 0.3137125531793572
+    },
+    {
+      "label": "corner m=0.5 T=2.0 sigma=0.05",
+      "m": 0.5,
+      "T": 2.0,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.07071067811865477,
+      "network_bps": 0.29230564905446954,
+      "curran_bps": 1.4096738775659375e-48,
+      "asian_floor_bps": 0.0,
+      "european_floor_bps": 0.0,
+      "mc_price_bps": 0.0,
+      "mc_se_bps": 0.0,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 1.4096738775659375e-48,
+      "network_minus_mc_bps": 0.29230564905446954
+    },
+    {
+      "label": "corner m=0.5 T=2.0 sigma=0.8",
+      "m": 0.5,
+      "T": 2.0,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "sigma_sqrt_T": 1.1313708498984762,
+      "network_bps": 422.96309024095535,
+      "curran_bps": 419.0128812913479,
+      "asian_floor_bps": 0.0,
+      "european_floor_bps": 0.0,
+      "mc_price_bps": 424.09380995764616,
+      "mc_se_bps": 0.32429262718880564,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": -5.0809286662982345,
+      "network_minus_mc_bps": -1.1307197166908054
+    },
+    {
+      "label": "corner m=1.0 T=0.05 sigma=0.05",
+      "m": 1.0,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.011180339887498949,
+      "network_bps": 34.376068506389856,
+      "curran_bps": 31.511341243380606,
+      "asian_floor_bps": 10.18647812659992,
+      "european_floor_bps": 19.98001332666921,
+      "mc_price_bps": 31.511276494924104,
+      "mc_se_bps": 5.761279007112478e-05,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 6.474845650217276e-05,
+      "network_minus_mc_bps": 2.8647920114657524
+    },
+    {
+      "label": "corner m=1.0 T=0.05 sigma=0.8",
+      "m": 1.0,
+      "T": 0.05,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.17888543819998318,
+      "network_bps": 427.1557182073593,
+      "curran_bps": 422.40591229712555,
+      "asian_floor_bps": 10.18647812659992,
+      "european_floor_bps": 19.98001332666921,
+      "mc_price_bps": 422.4273053770722,
+      "mc_se_bps": 0.016852908837941407,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": -0.021393079946619764,
+      "network_minus_mc_bps": 4.728412830287141
+    },
+    {
+      "label": "corner m=1.0 T=2.0 sigma=0.05",
+      "m": 1.0,
+      "T": 2.0,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.07071067811865477,
+      "network_bps": 422.157347202301,
+      "curran_bps": 420.6204108467169,
+      "asian_floor_bps": 386.983653396178,
+      "european_floor_bps": 768.8365361336424,
+      "mc_price_bps": 420.6191763487451,
+      "mc_se_bps": 0.0030990165103133975,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 0.0012344979717795468,
+      "network_minus_mc_bps": 1.5381708535559255
+    },
+    {
+      "label": "corner m=1.0 T=2.0 sigma=0.8",
+      "m": 1.0,
+      "T": 2.0,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "sigma_sqrt_T": 1.1313708498984762,
+      "network_bps": 2629.300355911255,
+      "curran_bps": 2624.535983837273,
+      "asian_floor_bps": 386.983653396178,
+      "european_floor_bps": 768.8365361336424,
+      "mc_price_bps": 2633.0282490195873,
+      "mc_se_bps": 0.9427963314461506,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": -8.49226518231444,
+      "network_minus_mc_bps": -3.7278931083324096
+    },
+    {
+      "label": "corner m=2.0 T=0.05 sigma=0.05",
+      "m": 2.0,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.011180339887498949,
+      "network_bps": 9998.974800109863,
+      "curran_bps": 10000.392942926535,
+      "asian_floor_bps": 10000.39294292653,
+      "european_floor_bps": 10019.980013326669,
+      "mc_price_bps": 10000.392803566898,
+      "mc_se_bps": 8.257910570953558e-05,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 0.00013935963761468884,
+      "network_minus_mc_bps": -1.4180034570345015
+    },
+    {
+      "label": "corner m=2.0 T=0.05 sigma=0.8",
+      "m": 2.0,
+      "T": 0.05,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.17888543819998318,
+      "network_bps": 10000.271797180176,
+      "curran_bps": 10000.392942926615,
+      "asian_floor_bps": 10000.39294292653,
+      "european_floor_bps": 10019.980013326669,
+      "mc_price_bps": 10000.359613475044,
+      "mc_se_bps": 0.02199944086507724,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 0.033329451571262325,
+      "network_minus_mc_bps": -0.08781629486838938
+    },
+    {
+      "label": "corner m=2.0 T=2.0 sigma=0.05",
+      "m": 2.0,
+      "T": 2.0,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "sigma_sqrt_T": 0.07071067811865477,
+      "network_bps": 9999.150037765503,
+      "curran_bps": 10005.130770658721,
+      "asian_floor_bps": 10005.130770658714,
+      "european_floor_bps": 10768.836536133644,
+      "mc_price_bps": 10005.125758954435,
+      "mc_se_bps": 0.003457540269855181,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 0.0050117042865167605,
+      "network_minus_mc_bps": -5.975721188931857
+    },
+    {
+      "label": "corner m=2.0 T=2.0 sigma=0.8",
+      "m": 2.0,
+      "T": 2.0,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "sigma_sqrt_T": 1.1313708498984762,
+      "network_bps": 10447.43537902832,
+      "curran_bps": 10436.0054712387,
+      "asian_floor_bps": 10005.130770658714,
+      "european_floor_bps": 10768.836536133644,
+      "mc_price_bps": 10455.668698626403,
+      "mc_se_bps": 2.1365213983660425,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": -19.663227387703955,
+      "network_minus_mc_bps": -8.233319598082744
+    },
+    {
+      "label": "worst convexity_d2C_dK2_ge_0",
+      "m": 1.03,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.0,
+      "sigma_sqrt_T": 0.011180339887498949,
+      "network_bps": 302.999522536993,
+      "curran_bps": 300.00004086143673,
+      "asian_floor_bps": 300.0000000000003,
+      "european_floor_bps": 300.0000000000003,
+      "mc_price_bps": 299.9999689942921,
+      "mc_se_bps": 4.1141080235197173e-05,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 7.186714464069155e-05,
+      "network_minus_mc_bps": 2.999553542700937
+    },
+    {
+      "label": "worst slope_dC_dK_ge_-discount",
+      "m": 1.02,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.0,
+      "sigma_sqrt_T": 0.011180339887498949,
+      "network_bps": 201.00906491279602,
+      "curran_bps": 200.02283980011805,
+      "asian_floor_bps": 200.00000000000017,
+      "european_floor_bps": 200.00000000000017,
+      "mc_price_bps": 200.02273097377378,
+      "mc_se_bps": 2.5742211551068616e-05,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": 0.00010882634427389348,
+      "network_minus_mc_bps": 0.986333939022245
+    },
+    {
+      "label": "largest gap to the reference",
+      "m": 1.74,
+      "T": 2.0,
+      "sigma": 0.8,
+      "rate": 0.0,
+      "sigma_sqrt_T": 1.1313708498984762,
+      "network_bps": 8211.581707000732,
+      "curran_bps": 8187.161700620527,
+      "asian_floor_bps": 7400.0,
+      "european_floor_bps": 7400.0,
+      "mc_price_bps": 8206.991917690711,
+      "mc_se_bps": 1.8387488302628525,
+      "mc_n_paths": 200000,
+      "mc_n_seeds": 4,
+      "curran_minus_mc_bps": -19.830217070184517,
+      "network_minus_mc_bps": 4.589789310020933
+    }
+  ],
+  "vega_check": [
+    {
+      "label": "corner m=0.5 T=0.05 sigma=0.05",
+      "m": 0.5,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "mc_vega": 0.0,
+      "mc_vega_se": 0.0,
+      "curran_vega": 0.0,
+      "gap": 0.0
+    },
+    {
+      "label": "corner m=0.5 T=0.05 sigma=0.8",
+      "m": 0.5,
+      "T": 0.05,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "mc_vega": 0.0,
+      "mc_vega_se": 0.0,
+      "curran_vega": 1.3366408122703746e-10,
+      "gap": 1.3366408122703746e-10
+    },
+    {
+      "label": "corner m=0.5 T=2.0 sigma=0.05",
+      "m": 0.5,
+      "T": 2.0,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "mc_vega": 0.0,
+      "mc_vega_se": 0.0,
+      "curran_vega": 5.256788175262097e-48,
+      "gap": 5.256788175262097e-48
+    },
+    {
+      "label": "corner m=0.5 T=2.0 sigma=0.8",
+      "m": 0.5,
+      "T": 2.0,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "mc_vega": 0.13824739418081838,
+      "mc_vega_se": 8.075433768344793e-05,
+      "curran_vega": 0.136714617169003,
+      "gap": -0.001532777011815395
+    },
+    {
+      "label": "corner m=1.0 T=0.05 sigma=0.05",
+      "m": 1.0,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.04,
+      "mc_vega": 0.05157544999679796,
+      "mc_vega_se": 3.0266029717221885e-07,
+      "curran_vega": 0.051575343637693706,
+      "gap": -1.0635910425299544e-07
+    },
+    {
+      "label": "corner m=1.0 T=0.05 sigma=0.8",
+      "m": 1.0,
+      "T": 0.05,
+      "sigma": 0.8,
+      "rate": 0.04,
+      "mc_vega": 0.052081624666452074,
+      "mc_vega_se": 4.118437079933949e-06,
+      "curran_vega": 0.052072510075273915,
+      "gap": -9.114591178159548e-06
+    },
+    {
+      "label": "worst convexity_d2C_dK2_ge_0",
+      "m": 1.03,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.0,
+      "mc_vega": 1.6886873188855234e-06,
+      "mc_vega_se": 1.4634429747640473e-07,
+      "curran_vega": 1.9450819288557852e-06,
+      "gap": 2.5639460997026187e-07
+    },
+    {
+      "label": "worst slope_dC_dK_ge_-discount",
+      "m": 1.02,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.0,
+      "mc_vega": 0.0005400049737369628,
+      "mc_vega_se": 6.189566933586843e-07,
+      "curran_vega": 0.0005397542998109017,
+      "gap": -2.506739260610402e-07
+    },
+    {
+      "label": "largest gap to the reference",
+      "m": 1.74,
+      "T": 2.0,
+      "sigma": 0.8,
+      "rate": 0.0,
+      "mc_vega": 0.25553466574265715,
+      "mc_vega_se": 0.0008016088484300756,
+      "curran_vega": 0.24776275780302726,
+      "gap": -0.007771907939629896
+    }
+  ],
+  "butterfly_check": [
+    {
+      "label": "worst butterfly, full box",
+      "m": 1.03,
+      "T": 0.05,
+      "sigma": 0.05,
+      "rate": 0.0,
+      "network_butterfly_bps": -2.6663951575756073,
+      "mc_butterfly_bps": 0.025512869983503744,
+      "mc_butterfly_se_bps": 2.0240941835661083e-05,
+      "n_paths": 200000,
+      "n_seeds": 4
+    },
+    {
+      "label": "worst butterfly, resolved region",
+      "m": 1.98,
+      "T": 2.0,
+      "sigma": 0.4,
+      "rate": 0.0,
+      "network_butterfly_bps": -0.04470348358154297,
+      "mc_butterfly_bps": 0.183581619320472,
+      "mc_butterfly_se_bps": 0.0009209811140397106,
+      "n_paths": 200000,
+      "n_seeds": 4
+    },
+    {
+      "label": "worst convexity, resolved region",
+      "m": 2.0,
+      "T": 2.0,
+      "sigma": 0.4,
+      "rate": 0.0,
+      "network_butterfly_bps": -0.12934207916259766,
+      "mc_butterfly_bps": 0.16536409210038405,
+      "mc_butterfly_se_bps": 0.0029417788265803935,
+      "n_paths": 200000,
+      "n_seeds": 4
+    }
+  ],
+  "checkpoint": {
+    "path": "artifacts/model.pt",
+    "sha256": "2ca9e6ecc8979e70e8ede1ef807f7df6da21d0f60f25eb428c559058e762baeb",
+    "param_ranges": {
+      "moneyness": [
+        0.5,
+        2.0
+      ],
+      "maturity": [
+        0.05,
+        2.0
+      ],
+      "sigma": [
+        0.05,
+        0.8
+      ],
+      "rate": [
+        0.0,
+        0.1
+      ]
+    },
+    "meta": {
+      "arm": "baseline_softplus",
+      "width": 128,
+      "blocks": 4,
+      "n_members": 5,
+      "n_samples": 500000,
+      "mc_paths_per_label": 5000,
+      "epochs": 400,
+      "seed": 7,
+      "n_monitoring_steps": 50,
+      "output_scale": 0.3663994073867798,
+      "n_parameters": 133889
+    }
+  },
+  "generated": "2026-09-17T16:55:51-05:00",
+  "environment": {
+    "python": "3.12.14",
+    "torch": "2.11.0+cpu",
+    "numpy": "2.5.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "torch_threads": 8
+  },
+  "conditions_not_tested": {
+    "black_scholes_implied_vol_and_durrleman_g": "the arithmetic average is not lognormal, so a Black-Scholes implied vol read off this price is not a parameter of the model and g(k) is not a statement about its density",
+    "european_intrinsic_floor_max(S - K e^{-rT}, 0)": "strictly above the Asian floor e^{-rT}(E[A] - K)+ whenever r > 0, because averaging replaces the terminal forward with the mean of the forwards; applying it would report violations that are not",
+    "calendar_dC_dT_ge_0": "the 50 fixings are t_i = i T / n, so a longer maturity is a different averaging window rather than the same contract held longer; dC/dT carries no no-arbitrage sign for this contract"
+  },
+  "total_elapsed_s": 107.77204969996819
+}

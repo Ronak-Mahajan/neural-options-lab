@@ -186,17 +186,19 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <p>
   An Asian option is a contract whose payout depends on the average price of a stock over the
-  contract's life rather than only its final price, and there is no formula for its fair value.
+  contract's life rather than only its final price, and there is no exact formula for its fair
+  value.
   The standard way to price one is to simulate a large number of possible futures and average
-  the payout, which is accurate but slow: at a 100,000-path budget a single price takes roughly
-  100 milliseconds, and a trading desk needs thousands of prices and their risk sensitivities
-  refreshed continuously.
+  the payout, which is accurate but slow: the 200,000-path reference behind the held-out
+  results table below takes 357 milliseconds for a single price, and a trading desk needs
+  thousands of prices and their risk sensitivities refreshed continuously.
   This project trains a neural network on those simulated prices so that it learns the pricing
   function itself, and it then answers in about 714 microseconds, roughly 500 times faster, with
-  a measured error of 1.4 basis points of strike.
+  a measured error of 1.3 basis points of strike against those references.
   Because the network is a smooth function, its risk sensitivities (the Greeks) come out as
-  exact derivatives of the network instead of by nudging each input and re-pricing, which is
-  what makes the result usable for hedging.
+  exact derivatives of the network in the same call, instead of by nudging each input and
+  re-pricing; delta and vega are fitted to, and measured against, pathwise Monte Carlo
+  derivatives, and section 3 gives their error.
   The dashboard shows the network's answer next to a fresh simulation with its confidence
   interval so you can check it yourself.
 </p>
@@ -237,11 +239,17 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <h3>Greeks by automatic differentiation</h3>
 <p>
   All five Greeks are exact derivatives of the network obtained by automatic differentiation,
-  not finite differences, and the tests check them against finite-difference perturbations.
+  not finite differences. The test suite checks four of them: delta, vega and theta against
+  finite-difference perturbations of the network, and rho against the closed-form parity
+  derivative at three contracts, to 1e-6. Gamma is the same autograd derivative and carries no
+  independently measured accuracy anywhere in this project.
   They are quoted per share of the underlying: delta per $1 of spot, gamma per $1 squared,
   vega and rho per point of volatility and of rate (1 % = 1 point), and theta per trading day,
   252 to a year. Every maturity on the site is in the same trading days, so decay per day
-  times days to expiry is the premium of the contract as quoted.
+  times days to expiry is the premium of the contract as quoted. Theta is the derivative with
+  respect to maturity, and an Asian's 50 fixing dates are spread over its life, so shortening
+  the maturity moves the averaging window as well as the time left: it is a tenor sensitivity,
+  not calendar decay on a fixed schedule.
   A price alone costs about 714 µs at p50. Price plus all five Greeks costs 8.4 ms at p50
   (9.3 ms p95, 9.8 ms p99), because gamma needs a second backward pass through each of the five
   ensemble members. Batch throughput is 487,843 prices/s at a batch of 10,000. Serving stays on
@@ -378,10 +386,13 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   profit-and-loss distribution against a vol-matched Black-Scholes delta hedge and a cost-aware
   Whalley-Wilmott no-trade band on the same paths. On Black-Scholes dynamics the learned policy
   does not beat either baseline on tail risk; under rough volatility with transaction costs it
-  beats the delta hedge, which is the experiment below. Replayed over eight years of real SPY
-  and BTC daily history with only ex-ante information, the served policy keeps its cost
-  efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY windows, trading about half as
-  much as delta) but not its tail advantage; the paired tables are in
+  reaches a lower tail loss than the delta hedge, mostly by trading less, which is the
+  experiment below. Replayed over eight years of real SPY
+  and BTC daily history with only ex-ante information, the default <code>hedger.pt</code>
+  checkpoint &mdash; neither of the two the dashboard serves, and byte-identical to the
+  retired legacy-measure checkpoint &mdash; keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY
+  windows, trading about half as much as delta) but not its tail advantage. Neither served
+  policy has been replayed on history; the paired tables and that provenance are in
   <code>docs/hedging_real_paths.md</code>.
 </p>
 
@@ -400,7 +411,11 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   (452 &plusmn; 8 versus 498 &plusmn; 10), reaching half the delta hedge's tail loss at 200 bp.
   It does so by holding about 0.23 less than the Black-Scholes delta, the under-hedge that
   minimum-variance theory predicts when spot and volatility are negatively correlated, and by
-  trading a third of the delta hedge's turnover. The same policy evaluated on Black-Scholes paths
+  trading a third of the delta hedge's turnover. Most of that gap is the smaller commission
+  bill rather than a better-shaped tail: CVaR<sub>95</sub> splits exactly into the mean loss
+  and the tail about that mean, and at 50 bp of cost 78.5 of the 88.5 bp advantage over the
+  delta hedge is mean and 10.0 bp is tail shape &mdash; on demeaned tail alone the
+  Whalley-Wilmott band is ahead below 200 bp. The same policy evaluated on Black-Scholes paths
   loses, as it should: the edge is specific to the dynamics it was trained on.
 </p>
 <figure class="fig">
@@ -433,9 +448,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <h2 id="results">3. Results</h2>
 
 <p>
-  Everything here is measured, not asserted. The evaluation script prices an independent test
-  set against high-precision Monte Carlo references; the model is never scored against its own
-  noisy training labels, because that overstates the error (by 2.4x on the 0DTE model).
+  Everything here is measured, not asserted. The evaluation script prices a held-out test set
+  against high-precision Monte Carlo references; the model is never scored against its own
+  noisy training labels, because that overstates the error (by 2.4x on the 0DTE model). The
+  test set is a fresh Latin-hypercube draw from the same parameter box as the training set and
+  is labelled by the same simulator, so these figures are interpolation error inside the
+  trained box, not evidence of generalisation beyond it.
 </p>
 
 <div class="tbl-wrap">
@@ -443,16 +461,16 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <caption>Main pricer, 5-member ensemble, 600 test points against 200,000-path references</caption>
   <thead><tr><th>Quantity</th><th class="n">Error (RMSE)</th></tr></thead>
   <tbody>
-    <tr><td>Price</td><td class="n">1.4 bps of strike</td></tr>
-    <tr><td>Delta</td><td class="n">7.1e-4</td></tr>
-    <tr><td>Vega</td><td class="n">13e-4</td></tr>
+    <tr><td>Price</td><td class="n">1.3 bps of strike</td></tr>
+    <tr><td>Delta</td><td class="n">7.3e-4, per $1 of spot</td></tr>
+    <tr><td>Vega</td><td class="n">1.3e-3 of strike, per 1.00 of &sigma;</td></tr>
   </tbody>
 </table>
 </div>
 
 <div class="tbl-wrap">
 <table>
-  <caption>Against the alternatives: 300 points versus 200,000-path references</caption>
+  <caption>Against Levy (1992) moment matching: 300 points over the full trained box, versus 200,000-path references</caption>
   <thead><tr><th>Method</th><th class="n">RMSE</th><th class="n">Bias</th><th class="n">p95 abs err</th><th class="n">Latency</th></tr></thead>
   <tbody>
     <tr class="hi"><td>Neural ensemble</td><td class="n">1.329 bps</td><td class="n">+0.548</td><td class="n">2.376</td><td class="n">714 µs p50</td></tr>
@@ -462,14 +480,48 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 </table>
 </div>
 <p>
-  33x more accurate than the closed form at 13x its cost, and 500x faster than Monte Carlo.
-  The one regime where Levy still wins is where the true price is essentially zero (0.082
-  versus 0.310 bps), a consequence of the Softplus output floor at prices near zero.
+  Against Levy the ensemble is 33x more accurate at 13x its cost, and 500x faster than the
+  200,000-path reference in the row above. That 33x is an RMSE ratio over the full trained
+  box, where volatility runs to 80%. Levy's error is a bias that grows with maturity
+  (0.15 bps at 0.10 years to 7.89 bps at 2.00 years on the grid below), so the ratio depends
+  on where the box is sampled: at a more typical &sigma; = 0.25 the margin narrows to about
+  5x, 0.72 against 3.65 bps of mean absolute error. The one regime where Levy
+  still wins is where the true price is essentially zero (0.082 versus 0.310 bps), a
+  consequence of the Softplus output floor at prices near zero.
+</p>
+
+<p>
+  Levy is not the only closed form for an arithmetic Asian, and against the better one the
+  network loses on price. Curran's (1994) conditioning approximation is a rigorous lower
+  bound on the arithmetic-average price, and on a 36-cell grid at &sigma; = 0.25 it is 6.9x
+  more accurate than the ensemble at about an eighth of the latency.
 </p>
 
 <div class="tbl-wrap">
 <table>
-  <caption>Latency, best of 200 calls, CPU serving</caption>
+  <caption>Against Curran (1994): 36 cells, moneyness 0.70&ndash;1.30 &times; maturity 0.10&ndash;2.00 y at &sigma; = 0.25, r = 0.04, versus 400,000-path control-variate references (reference standard error &le; 0.207 bps). Errors are in basis points of strike; measured by <code>scripts/benchmark_approximations.py</code>. These latencies come from one run on one machine and are comparable with each other, not with the table above.</caption>
+  <thead><tr><th>Method</th><th class="n">Mean abs err</th><th class="n">Max abs err</th><th class="n">Bias</th><th class="n">Latency</th></tr></thead>
+  <tbody>
+    <tr class="hi"><td>Neural ensemble</td><td class="n">0.719 bps</td><td class="n">2.045</td><td class="n">+0.712</td><td class="n">633 µs</td></tr>
+    <tr><td>Curran (1994), exact threshold</td><td class="n">0.104 bps</td><td class="n">0.345</td><td class="n">&minus;0.104</td><td class="n">75 µs</td></tr>
+    <tr><td>Levy (1992) moment matching</td><td class="n">3.654 bps</td><td class="n">13.282</td><td class="n">+2.028</td><td class="n">55 µs</td></tr>
+    <tr><td>Monte Carlo, 400k paths</td><td class="n">(reference)</td><td class="n">SE &le; 0.207</td><td class="n">n/a</td><td class="n">479.94 ms</td></tr>
+  </tbody>
+</table>
+</div>
+<p>
+  So the case for the surrogate on a Black-Scholes Asian is not price accuracy. It is the
+  rest of the package: all five Greeks by automatic differentiation in the same call, batch
+  throughput of 487,843 prices/s, and a training recipe that needs no geometric-conditioning
+  trick and therefore carries over to dynamics where no such closed form exists, which is
+  exactly how the short-dated rough Bergomi ensemble is built. Curran is a
+  geometric-Brownian-motion result on a fixed averaging schedule and does not extend to
+  rough volatility.
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <caption>Latency, best of 200 calls, CPU serving on the development workstation; the hosted demo is a small shared instance and runs several times slower</caption>
   <thead><tr><th>Operation</th><th class="n">p50</th><th class="n">p95</th><th class="n">p99</th></tr></thead>
   <tbody>
     <tr><td>Single price</td><td class="n">714 µs</td><td class="n">&nbsp;</td><td class="n">&nbsp;</td></tr>
@@ -559,8 +611,9 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   market is complete and the classical baselines hold: across a 12-cell sweep of training and
   evaluation measures on those paths, the learned policy loses to a vol-matched delta hedge in
   7 cells and to the Whalley-Wilmott band in 11. Even under rough volatility the band remains
-  the stronger baseline until costs reach 100 bp. The dashboard reports whichever policy wins
-  the run in front of you.
+  the stronger baseline until costs reach 100 bp. The dashboard runs all three hedgers on the
+  same paths and ranks them by tail loss for the run in front of you, and it says so when the
+  top two sit inside their combined bootstrap standard errors.
 </p>
 
 <div class="tbl-wrap">
@@ -598,9 +651,11 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <li><a href="/">The live dashboard</a>: Pricing Lab, Deep Hedging and the AI Risk Analyst, all computed live.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">Source code on GitHub</a>: the README, the trained checkpoints, and the evaluation scripts.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/deep_hedging_regimes.md" rel="noopener">docs/deep_hedging_regimes.md</a>: the deep hedging experiment under rough volatility, jumps and costs, every cell with standard errors.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/approximation_benchmark.md" rel="noopener">docs/approximation_benchmark.md</a>: the surrogate against the Levy (1992) and Curran (1994) closed forms, cell by cell, with the protocol and the reference standard errors.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/atm_skew_term_structure.md" rel="noopener">docs/atm_skew_term_structure.md</a>: the skew term-structure measurement, model and market.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/joint_skew_refit.md" rel="noopener">docs/joint_skew_refit.md</a>: the joint (H, &eta;) refit against smiles and skew term structure, with the Pareto front and Monte Carlo validation.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/no_arbitrage_surface.md" rel="noopener">docs/no_arbitrage_surface.md</a>: the static-arbitrage audit and the constrained implied-vol surface.</li>
+  <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/asian_arbitrage_audit.md" rel="noopener">docs/asian_arbitrage_audit.md</a>: the static-arbitrage audit of the Asian pricer, in price space, over its own trained box.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/heston_reference.md" rel="noopener">docs/heston_reference.md</a>: the Heston COS pricer, its verification, calibration and skew term structure.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_findings.md" rel="noopener">docs/hedging_findings.md</a>: the Black-Scholes deep hedging evaluation.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/hedging_real_paths.md" rel="noopener">docs/hedging_real_paths.md</a>: the same hedgers replayed over real SPY and BTC price history.</li>
