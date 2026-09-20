@@ -189,12 +189,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   contract's life rather than only its final price, and there is no exact formula for its fair
   value.
   The standard way to price one is to simulate a large number of possible futures and average
-  the payout, which is accurate but slow: the 200,000-path reference behind the held-out
-  results table below takes 357 milliseconds for a single price, and a trading desk needs
+  the payout, which is accurate but slow: the 400,000-path reference behind the benchmark
+  table below takes 480 milliseconds for a single price, and a trading desk needs
   thousands of prices and their risk sensitivities refreshed continuously.
   This project trains a neural network on those simulated prices so that it learns the pricing
-  function itself, and it then answers in about 714 microseconds, roughly 500 times faster, with
-  a measured error of 1.3 basis points of strike against those references.
+  function itself, and it then answers in about 633 microseconds, roughly 750 times faster, with
+  a measured error of 1.3 basis points of strike against 200,000-path references.
   Because the network is a smooth function, its risk sensitivities (the Greeks) come out as
   exact derivatives of the network in the same call, instead of by nudging each input and
   re-pricing; delta and vega are fitted to, and measured against, pathwise Monte Carlo
@@ -259,11 +259,10 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   respect to maturity, and an Asian's 50 fixing dates are spread over its life, so shortening
   the maturity moves the averaging window as well as the time left: it is a tenor sensitivity,
   not calendar decay on a fixed schedule.
-  A price alone costs about 714 µs at p50. Price plus all five Greeks costs 8.4 ms at p50
-  (9.3 ms p95, 9.8 ms p99), because gamma needs a second backward pass through each of the five
-  ensemble members. Batch throughput is 487,843 prices/s at a batch of 10,000. Serving stays on
-  the CPU: at a batch of one the GPU is slower (1,813 µs versus 1,336 µs), being
-  kernel-launch bound.
+  A price alone costs about 633 µs in the benchmark below. Price plus all five Greeks costs
+  roughly twelve times that, because gamma needs a second backward pass through each of the five
+  ensemble members. Serving is CPU-only in every code path here, and the dashboard reports the
+  latency of each request it actually served.
 </p>
 
 <h3>Monte Carlo: antithetic sampling and a geometric control variate</h3>
@@ -479,19 +478,18 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <div class="tbl-wrap">
 <table>
-  <caption>Against Levy (1992) moment matching: 300 points over the full trained box, versus 200,000-path references</caption>
-  <thead><tr><th>Method</th><th class="n">RMSE</th><th class="n">Bias</th><th class="n">p95 abs err</th><th class="n">Latency</th></tr></thead>
+  <caption>Against Levy (1992) moment matching: 300 points over the full trained box, versus 200,000-path references. Accuracy only; every timing on this page comes from the single re-runnable benchmark in the table below.</caption>
+  <thead><tr><th>Method</th><th class="n">RMSE</th><th class="n">Bias</th><th class="n">p95 abs err</th></tr></thead>
   <tbody>
-    <tr class="hi"><td>Neural ensemble</td><td class="n">1.329 bps</td><td class="n">+0.548</td><td class="n">2.376</td><td class="n">714 µs p50</td></tr>
-    <tr><td>Levy (1992) moment matching</td><td class="n">44.344 bps</td><td class="n">+19.813</td><td class="n">103.300</td><td class="n">56 µs</td></tr>
-    <tr><td>Monte Carlo, 200k paths</td><td class="n">(reference)</td><td class="n">n/a</td><td class="n">n/a</td><td class="n">357,000 µs</td></tr>
+    <tr class="hi"><td>Neural ensemble</td><td class="n">1.329 bps</td><td class="n">+0.548</td><td class="n">2.376</td></tr>
+    <tr><td>Levy (1992) moment matching</td><td class="n">44.344 bps</td><td class="n">+19.813</td><td class="n">103.300</td></tr>
+    <tr><td>Monte Carlo, 200k paths</td><td class="n">(reference)</td><td class="n">n/a</td><td class="n">n/a</td></tr>
   </tbody>
 </table>
 </div>
 <p>
-  Against Levy the ensemble is 33x more accurate at 13x its cost, and 500x faster than the
-  200,000-path reference in the row above. That 33x is an RMSE ratio over the full trained
-  box, where volatility runs to 80%. Levy's error is a bias that grows with maturity
+  Against Levy the ensemble is 33x more accurate over the full trained box. That 33x is an
+  RMSE ratio over a box where volatility runs to 80%. Levy's error is a bias that grows with maturity
   (0.15 bps at 0.10 years to 7.89 bps at 2.00 years on the grid below), so the ratio depends
   on where the box is sampled: at a more typical &sigma; = 0.25 the margin narrows to about
   5x, 0.72 against 3.65 bps of mean absolute error. The one regime where Levy
@@ -521,7 +519,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <p>
   So the case for the surrogate on a Black-Scholes Asian is not price accuracy. It is the
   rest of the package: all five Greeks by automatic differentiation in the same call, batch
-  throughput of 487,843 prices/s, and a training recipe that needs no geometric-conditioning
+  throughput the dashboard measures live on whatever machine is serving, and a training recipe that needs no geometric-conditioning
   trick and therefore carries over to dynamics where no such closed form exists, which is
   exactly how the short-dated rough Bergomi ensemble is built. Curran is a
   geometric-Brownian-motion result on a fixed averaging schedule and does not extend to
@@ -530,12 +528,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <div class="tbl-wrap">
 <table>
-  <caption>Latency, best of 200 calls, CPU serving on the development workstation; the hosted demo is a small shared instance and runs several times slower</caption>
-  <thead><tr><th>Operation</th><th class="n">p50</th><th class="n">p95</th><th class="n">p99</th></tr></thead>
+  <caption>Serving cost, from the benchmark above and from the ratio between its rows. Absolute times belong to the machine that ran it; the hosted demo is a small shared instance and runs several times slower, and the dashboard reports its own latency live on every request.</caption>
+  <thead><tr><th>Operation</th><th class="n">Cost</th></tr></thead>
   <tbody>
-    <tr><td>Single price</td><td class="n">714 µs</td><td class="n">&nbsp;</td><td class="n">&nbsp;</td></tr>
-    <tr><td>Single price plus all five Greeks</td><td class="n">8.4 ms</td><td class="n">9.3 ms</td><td class="n">9.8 ms</td></tr>
-    <tr><td>Batch of 10,000 prices</td><td class="n" colspan="3">487,843 prices/s</td></tr>
+    <tr><td>Single price</td><td class="n">633 µs</td></tr>
+    <tr><td>Single price plus all five Greeks</td><td class="n">about 12x a price-only call</td></tr>
+    <tr><td>400,000-path Monte Carlo reference, one price</td><td class="n">479.94 ms</td></tr>
   </tbody>
 </table>
 </div>
@@ -664,6 +662,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <li>The rough Bergomi model has constant parameters: &eta;, &rho; and H are fitted jointly to one smile and none of them varies with maturity, so one fit covers the short-dated range and longer expiries would need their own. The served short-dated checkpoint was trained on a single calibration to SPY quotes captured on 20 August 2026 and is not refit as the market moves. Fitting H against the skew term structure as well moves it (see the joint refit above), but the served model was not retrained on that result.</li>
   <li>The deep hedger's advantage is regime-specific. On Black-Scholes paths the classical baselines win; under rough volatility with transaction costs it beats the delta hedge, and the Whalley-Wilmott band from 100 bp; on eight years of real SPY and BTC daily history it keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY windows) but not its tail advantage. The GAN market simulator used in early training is not a reliable evaluation measure, so no result is reported on it.</li>
   <li>The served pricer favours price accuracy: its delta and vega are 5.9% and 1.2% less accurate than an alternative head that prices slightly worse. A service hedging off these Greeks should weigh that differently from a service pricing with them.</li>
+  <li>The second-order Greeks are not hedging-grade. An autograd audit of the served Asian ensemble over 120,800 points of its own trained box finds gamma negative on 18.6% of it and vega negative on 28.1%, concentrated where the average is nearly deterministic and the true price is a hinge with no curvature to reproduce; inside the region where a reference vega resolves at all, 0.06% of convexity checks fail and every other condition is clean. Gamma's held-out error against the conditional-density reference is measured above; no hedging experiment in this project runs on the surrogate's own Greeks, since the hedging comparisons use a Black-Scholes delta throughout.</li>
   <li>The absolute price RMSE moves with the test draw (1.301 to 1.488 bps across four independent draws); only paired comparisons on identical points and references are treated as meaningful.</li>
   <li>Market data for the ticker feature comes from yfinance, which is retail-grade and has stale or missing quotes. The Deribit chain is a committed snapshot, not a live feed.</li>
   <li>The live demo runs on a small always-on instance; the Monte Carlo engines simulate in fixed-size blocks of paths so the whole service runs within 512 MB of memory.</li>
