@@ -103,25 +103,6 @@ td:first-child { color: var(--ink); min-width: 14ch; }
 tr:last-child td { border-bottom: none; }
 tr.hi td { color: var(--ink-hi); }
 
-/* definition-list cards */
-.pm {
-  background: var(--surface); border-radius: var(--r-panel);
-  padding: 18px 20px 16px; margin: 18px 0;
-}
-.pm h3 { margin: 0 0 4px; }
-.pm .when { font-size: 12px; color: var(--ink-low); margin-bottom: 4px; }
-.pm dl { margin: 0; }
-.pm dt {
-  font-family: var(--font-display); font-size: 11px; font-weight: 600;
-  letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-low);
-  margin-top: 14px;
-}
-.pm dt.was { color: var(--rose); }
-.pm dt.fix { color: var(--mint); }
-.pm dd { margin: 4px 0 0; }
-.pm dd p:last-child { margin-bottom: 0; }
-.pm ol, .pm ul { margin-bottom: 0; }
-
 .foot {
   margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   font-size: 11.5px; line-height: 1.7; color: var(--ink-low);
@@ -245,12 +226,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   against a conditional-Monte-Carlo reference: the arithmetic average is linear in the spot, so
   gamma is the discounted density of the scaled average at the strike, and conditioning on the
   first increment gives that density in closed form with no kernel and no bandwidth (it
-  reproduces Black&ndash;Scholes gamma to machine precision when the contract has one fixing).
+  reproduces Black-Scholes gamma to machine precision when the contract has one fixing).
   The ensemble's gamma error is 140 &times; 10<sup>&minus;4</sup> RMSE per unit of (S/K)<sup>2</sup>,
   of which the reference's own Monte Carlo noise accounts for 51 &times; 10<sup>&minus;4</sup> RMS;
-  where gamma is large (Black&ndash;Scholes-scale gamma above 0.5, 228 contracts) the median
+  where gamma is large (Black-Scholes-scale gamma above 0.5, 228 contracts) the median
   relative error is 0.6 %. The error concentrates at small &sigma;&radic;T, the same hinge region the
-  arbitrage audit identifies: 340&ndash;420 &times; 10<sup>&minus;4</sup> RMSE below &sigma;&radic;T = 0.1
+  arbitrage audit identifies: 340-420 &times; 10<sup>&minus;4</sup> RMSE below &sigma;&radic;T = 0.1
   against 75 above 0.2.
   They are quoted per share of the underlying: delta per $1 of spot, gamma per $1 squared,
   vega and rho per point of volatility and of rate (1 % = 1 point), and theta per trading day,
@@ -324,7 +305,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   over (H, &eta;) with the remaining parameters optimised at every cell, moves the optimum to
   H = 0.31, &rho; = &minus;0.50 and a forward vol of 12.5 % (bootstrap: H 0.308 &plusmn; 0.011) and
   puts the Monte Carlo skew exponent at &minus;0.264 &plusmn; 0.007, within half a market standard
-  error of &minus;0.249, for a cost of 0.45 vol points of smile fit (1.31 &rarr; 1.76). A solution
+  error of &minus;0.249, for a cost of 0.45 vol points of smile fit (1.31 to 1.76). A solution
   with &eta; off its bound reaches the same exponent for 0.15 vol points more. The served short-dated
   model was trained on an earlier accepted fit (H = 0.255) and is unchanged; the refit is recorded as
   an analysis artifact.
@@ -397,8 +378,8 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   reaches a lower tail loss than the delta hedge, mostly by trading less, which is the
   experiment below. Replayed over eight years of real SPY
   and BTC daily history with only ex-ante information, the default <code>hedger.pt</code>
-  checkpoint &mdash; neither of the two the dashboard serves, and byte-identical to the
-  retired legacy-measure checkpoint &mdash; keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY
+  checkpoint (neither of the two the dashboard serves, and byte-identical to the
+  retired legacy-measure checkpoint) keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY
   windows, trading about half as much as delta) but not its tail advantage. Neither served
   policy has been replayed on history; the paired tables and that provenance are in
   <code>docs/hedging_real_paths.md</code>.
@@ -422,7 +403,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   trading a third of the delta hedge's turnover. Most of that gap is the smaller commission
   bill rather than a better-shaped tail: CVaR<sub>95</sub> splits exactly into the mean loss
   and the tail about that mean, and at 50 bp of cost 78.5 of the 88.5 bp advantage over the
-  delta hedge is mean and 10.0 bp is tail shape &mdash; on demeaned tail alone the
+  delta hedge is mean and 10.0 bp is tail shape. On demeaned tail alone the
   Whalley-Wilmott band is ahead below 200 bp. The same policy evaluated on Black-Scholes paths
   loses, as it should: the edge is specific to the dynamics it was trained on.
 </p>
@@ -506,7 +487,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <div class="tbl-wrap">
 <table>
-  <caption>Against Curran (1994): 36 cells, moneyness 0.70&ndash;1.30 &times; maturity 0.10&ndash;2.00 y at &sigma; = 0.25, r = 0.04, versus 400,000-path control-variate references (reference standard error &le; 0.207 bps). Errors are in basis points of strike; measured by <code>scripts/benchmark_approximations.py</code>. These latencies come from one run on one machine and are comparable with each other, not with the table above.</caption>
+  <caption>Against Curran (1994): 36 cells, moneyness 0.70-1.30 &times; maturity 0.10-2.00 y at &sigma; = 0.25, r = 0.04, versus 400,000-path control-variate references (reference standard error &le; 0.207 bps). Errors are in basis points of strike; measured by <code>scripts/benchmark_approximations.py</code>. These latencies come from one run on one machine and are comparable with each other, not with the table above.</caption>
   <thead><tr><th>Method</th><th class="n">Mean abs err</th><th class="n">Max abs err</th><th class="n">Bias</th><th class="n">Latency</th></tr></thead>
   <tbody>
     <tr class="hi"><td>Neural ensemble</td><td class="n">0.719 bps</td><td class="n">2.045</td><td class="n">+0.712</td><td class="n">633 µs</td></tr>
@@ -519,9 +500,10 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <p>
   So the case for the surrogate on a Black-Scholes Asian is not price accuracy. It is the
   rest of the package: all five Greeks by automatic differentiation in the same call, batch
-  throughput the dashboard measures live on whatever machine is serving, and a training recipe that needs no geometric-conditioning
-  trick and therefore carries over to dynamics where no such closed form exists, which is
-  exactly how the short-dated rough Bergomi ensemble is built. Curran is a
+  throughput that the dashboard measures live on whichever machine is serving, and a training
+  recipe that needs no geometric-conditioning trick and therefore carries over to dynamics
+  where no such closed form exists, which is exactly how the short-dated rough Bergomi
+  ensemble is built. Curran is a
   geometric-Brownian-motion result on a fixed averaging schedule and does not extend to
   rough volatility.
 </p>
@@ -608,7 +590,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <caption>Static-arbitrage audit of the 0DTE regime, 134,100 grid points over the trained box, both conditions by automatic differentiation</caption>
   <thead><tr><th>Surface</th><th class="n">Butterfly g &lt; 0</th><th class="n">Calendar &part;w/&part;T &lt; 0</th><th class="n">Price below intrinsic</th><th class="n">IV RMSE vs ensemble</th></tr></thead>
   <tbody>
-    <tr><td>0DTE pricing ensemble (prices)</td><td class="n">4.9%</td><td class="n">10.5%</td><td class="n">6.8%</td><td class="n">&mdash;</td></tr>
+    <tr><td>0DTE pricing ensemble (prices)</td><td class="n">4.9%</td><td class="n">10.5%</td><td class="n">6.8%</td><td class="n">n/a</td></tr>
     <tr><td>Constrained implied-vol surface (served)</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0.22 vol pts</td></tr>
   </tbody>
 </table>
@@ -626,12 +608,12 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   Because they share paths, the dashboard compares them the way the table above does: paired.
   One bootstrap resample of the paths is drawn per replicate and every hedger is scored on it,
   so the common path risk cancels inside each replicate and what is left is the sampling error
-  of the comparison itself. Combining two separate error bars instead &mdash; hypot(SE<sub>a</sub>,
-  SE<sub>b</sub>) &mdash; would assume the hedgers were independent, and they are the opposite
+  of the comparison itself. Combining two separate error bars instead, hypot(SE<sub>a</sub>,
+  SE<sub>b</sub>), would assume the hedgers were independent, and they are the opposite
   of independent: a path that is bad for one is usually bad for all three. On the served run at
-  50 bp the paired errors are 20&ndash;58 % smaller than the unpaired formula claims, which
+  50 bp the paired errors are 20-58 % smaller than the unpaired formula claims, which
   changes what the page is entitled to say. The learned policy beats the vol-matched delta
-  hedge by $0.94 &plusmn; 0.11 and the Ruf&ndash;Wang linear hedge by $0.14 &plusmn; 0.06, both
+  hedge by $0.94 &plusmn; 0.11 and the Ruf-Wang linear hedge by $0.14 &plusmn; 0.06, both
   intervals clear of zero. Against the Whalley-Wilmott band it is $0.10 &plusmn; 0.08 behind,
   an interval that still contains zero: the band leads on the point estimate and wins about
   89 % of resamples, and that is as far as 15,000 paths will carry it. Both the Hedging tab and

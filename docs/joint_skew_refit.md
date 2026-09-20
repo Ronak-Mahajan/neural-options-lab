@@ -3,15 +3,15 @@
 **Summary.** The latest SPY smile calibration, `artifacts/rough_calibration.json` (η 3.94 at its
 bound, ρ −0.54, H 0.26; marked not accepted by its own quality gate), fits single-day
 smiles well but its at-the-money skew steepens into expiry with exponent −0.33 (Monte Carlo,
-1–45 trading days), 2.5 market standard errors away from the market's −0.249 ± 0.033. Adding the
+1-45 trading days), 2.5 market standard errors away from the market's −0.249 ± 0.033. Adding the
 skew term structure to the calibration objective moves the optimum to **H 0.31, ρ −0.50,
 √ξ 12.5 %** (η at the calibrator's 4.0 bound) and puts the Monte Carlo exponent at
 **−0.264 ± 0.007**, within half a market standard error, for a cost of **0.45 vol points** of
-smile RMSE (1.31 → 1.76, pricing-map RMSE, mean of three captures). An interior-η solution
+smile RMSE (1.31 to 1.76, pricing-map RMSE, mean of three captures). An interior-η solution
 (η 3.39, H 0.30) reaches the same exponent (−0.263 ± 0.004) for about 0.15 vol points more.
 That 4.0 is the optimiser's bound, not the map's: the committed pricing map is trained over
 `η ∈ [0.5, 8.0]`, and with η free to 8 on that same map the knee lands interior on all three
-captures (η 4.74, 5.87, 7.00; H 0.33–0.38) for 0.08–0.19 vol points less smile RMSE and an
+captures (η 4.74, 5.87, 7.00; H 0.33-0.38) for 0.08-0.19 vol points less smile RMSE and an
 exponent still inside one market standard error, so **H 0.31 is the value the calibrator's box
 selects** (§3.5). The recommended parameters are written to
 `artifacts/rough_calibration_skewjoint.json` as an analysis artifact; the calibration files and
@@ -20,8 +20,8 @@ the quality gate accepted (20 August 2026: η 3.66, ρ −0.63, H 0.255), not on
 compared against below.
 
 Everything below was produced by `scripts/joint_skew_refit.py` (staged and resumable: 680 s of
-wall-clock on 16 CPU threads for §§3.1–3.4 and a further 640 s for §3.5, no GPU; every stage
-checkpoints to JSON). Every number below is in `docs/joint_skew_refit.json`: §§3.1–3.4 in the
+wall-clock on 16 CPU threads for §§3.1-3.4 and a further 640 s for §3.5, no GPU; every stage
+checkpoints to JSON). Every number below is in `docs/joint_skew_refit.json`: §§3.1-3.4 in the
 blocks named after their stages, §3.5 under `eta_extension`, which is the `eta-extend` stage's own
 checkpoint copied in verbatim by `python -m scripts.joint_skew_refit report`. The figure is
 `docs/joint_skew_refit.png`; tests are `tests/test_joint_skew_refit.py` (13 tests).
@@ -47,7 +47,7 @@ market's skew term structure, and what it costs.
 - **Smile objective**: `MapCalibrator.loss` from `backend/quant/calibrate_map.py` (vega-weighted
   Huber in implied-vol space, evaluated by the neural pricing map `artifacts/pricing_map.pt`), on
   three trading-hour captures: `spy_20260820T171756Z`, `spy_20260821T150017Z`,
-  `spy_20260821T194519Z` (585–646 quotes each, seven expiries from 2.2 to 10.4 trading-day
+  `spy_20260821T194519Z` (585-646 quotes each, seven expiries from 2.2 to 10.4 trading-day
   equivalents).
 - **Skew objective**: for each capture and expiry, the market ATM skew `ψ_mkt(τ)` and its standard
   error from `market_skew_from_quotes` (local quadratic in `k` near the money), and the model's
@@ -63,21 +63,21 @@ market's skew term structure, and what it costs.
   optimised on the smile objective (Powell, warm-started across the grid), recording smile RMSE,
   model exponent over the capture expiries and skew χ² per expiry.
 - **`η` above the calibration bound**: the 4.0 ceiling is `BOUNDS["eta"]` in
-  `backend/quant/calibrate.py`, not a limit of the map — `artifacts/pricing_map.pt` records the
+  `backend/quant/calibrate.py`, not a limit of the map: `artifacts/pricing_map.pt` records the
   training box `η ∈ [0.5, 8.0]` in its own metadata (`scripts/gen_pricing_map.py`'s `BOX`), and the
   same map is fitted with `η` free to 8 on the BTC path (`calibrate_map.ETA_MAX`). The profile
   strip (`H` grid × `η ∈ [4, 8]` in steps of 0.5) and the four-parameter fits are therefore
   repeated with `η` free to 8, beside the same fits capped at 4, on the same captures, the same
   map and the same seed: `python -m scripts.joint_skew_refit eta-extend`. Because the map carries
   no licence above `η = 4`, both ends of each pair are then priced by the Monte Carlo engine on
-  `spy_20260821T150017Z` — the skew curve on its seven expiries at 4 × 200k paths, and a
+  `spy_20260821T150017Z`: the skew curve on its seven expiries at 4 × 200k paths, and a
   400,000-path repricing of all 585 of its quotes. §3.5.
 - **Joint fits**: a full four-parameter optimisation (differential evolution + Powell, as
   `MapCalibrator`) for `λ ∈ {0, 0.01, 0.03, 0.1, 0.3, 1, 3, 10}`, per capture and averaged; the
   Pareto front of smile RMSE against `|b_model − b_mkt|` picks the knee.
 - **Uncertainty**: 24 bootstrap refits (quotes resampled by expiry) at the recommended `λ`.
 - **Monte Carlo validation**: the calibration-file, pure-smile, joint and interior-η parameters on the
-  standard maturity ladder (1–126 trading days, 4 × 200k paths, common random numbers across the
+  standard maturity ladder (1-126 trading days, 4 × 200k paths, common random numbers across the
   strike stencil) for the exponent over `T ≤ 45` days, and a 400,000-path repricing of one capture's
   585 quotes for the smile RMSE with the true engine.
 
@@ -86,7 +86,7 @@ market's skew term structure, and what it costs.
 ### 3.1 Profile
 
 Smile RMSE is flattest along a ridge from `(H 0.2, η 4)` down toward `(H 0.35, η 2)`; the market
-exponent contour `b = −0.249` runs almost vertically at `H ≈ 0.30–0.32` for every `η ≥ 1.5`. The
+exponent contour `b = −0.249` runs almost vertically at `H ≈ 0.30-0.32` for every `η ≥ 1.5`. The
 two do not cross at the smile optimum, which is why the pure-smile calibration cannot reproduce the
 term structure: the model's exponent on the capture expiries is `−0.41` there.
 
@@ -99,7 +99,7 @@ term structure: the model's exponent on the capture expiries is `−0.41` there.
 | 0.03 | 1.682 | −0.295 | 6.7 | 4.00 | −0.481 | 0.283 | 0.124 |
 | **0.1 (knee)** | **1.755** | **−0.268** | **4.8** | 4.00 | −0.502 | 0.299 | 0.125 |
 | 0.3 | 1.82 | −0.26 | 4.4 | interior on two captures | | | |
-| 1 – 10 | 2.1 – 2.5 | −0.26 to −0.27 | 3.3 – 3.6 | interior on two or three | | | |
+| 1-10 | 2.1-2.5 | −0.26 to −0.27 | 3.3-3.6 | interior on two or three | | | |
 
 The calibration file on the same captures: smile RMSE 1.745 ± 0.113, exponent −0.324 ± 0.005,
 χ² 266 ± 157 per expiry. The knee at `λ = 0.1` sits inside one market standard error of the
@@ -118,9 +118,9 @@ against the pure-smile optimum.
 | smile RMSE, MC 400k paths (vol pts) | 2.12 | | 1.91 | 1.53 |
 | skew χ² / expiry, map / MC | 7.9 / 8.9 | 8.4 ± 2.6 | 301 / 330 | 960 / 1058 |
 | exponent, capture expiries, map / MC | −0.251 / −0.233 ± 0.008 | −0.253 ± 0.018 | −0.322 / −0.297 ± 0.007 | −0.400 / −0.355 ± 0.005 |
-| **exponent, ladder 1–45 d, MC** | **−0.264 ± 0.007** | | −0.330 ± 0.005 | −0.369 ± 0.009 |
+| **exponent, ladder 1-45 d, MC** | **−0.264 ± 0.007** | | −0.330 ± 0.005 | −0.369 ± 0.009 |
 
-Market: exponent −0.249 ± 0.033 (56 rows over eight captures, 2–10 trading days); on this
+Market: exponent −0.249 ± 0.033 (56 rows over eight captures, 2-10 trading days); on this
 capture's own seven expiries −0.245 ± 0.035. The joint parameters are 0.5 SE from the pooled
 market exponent; the calibration file is 2.5 SE away and the pure-smile optimum 3.6 SE. That
 ± 0.033 is the fit error of one regime's pooled rows: the per-capture exponent itself moves with
@@ -130,16 +130,16 @@ parameter sets against one market estimate rather than measure how far each sits
 Interior-η alternative (`λ = 0.3`, `η 3.39, ρ −0.551, H 0.295, √ξ 0.1265` on this capture):
 ladder exponent −0.263 ± 0.004, skew χ² 6.9 map / 8.2 MC per expiry, map smile RMSE 1.93
 (MC 2.26). It reproduces the term structure equally well with `η` off its bound, for a further
-0.15 vol points of smile fit on the three-capture mean (1.755 → 1.910).
+0.15 vol points of smile fit on the three-capture mean (1.755 to 1.910).
 
 ### 3.4 The pricing map versus the true engine
 
 Repricing the 585 quotes of one capture with 400,000 paths, the map's smile RMSE is below the Monte
-Carlo one by 0.25–0.35 vol points for every parameter set (calibration file 1.65 vs 1.91, joint 1.79 vs 2.12,
+Carlo one by 0.25-0.35 vol points for every parameter set (calibration file 1.65 vs 1.91, joint 1.79 vs 2.12,
 pure 1.35 vs 1.53, interior 1.93 vs 2.26); about 0.65 vol points of the Monte Carlo figure is its own
 noise floor at this path count, so the map is neither systematically optimistic nor pessimistic
 about the *ranking*, which the Monte Carlo reproduces. The map's skews agree with Monte Carlo to
-1–3 % on the capture expiries for all four parameter sets; the map exponents are 0.02–0.04 steeper
+1-3 % on the capture expiries for all four parameter sets; the map exponents are 0.02-0.04 steeper
 than the Monte Carlo ones, a bias that is the same for every set and does not change the conclusion.
 
 ### 3.5 `η` above the calibration bound
@@ -165,14 +165,14 @@ any other. The strip runs `η` from 4 to 8 in steps of 0.5; the integer columns 
 | 8.0 | 0.414 | 1.340 | −0.209 | 834 |
 
 Across the whole strip the smile RMSE moves by 0.03 vol points, 1.355 at the bound to 1.326 at
-`η 7.5` — a tenth of the map's own offset from the true engine (§3.4) — while `H` doubles and the
+`η 7.5`, a tenth of the map's own offset from the true engine (§3.4), while `H` doubles and the
 exponent travels from −0.430 to −0.209, straight through the market's −0.249. So the pure-smile fit
 runs to whichever ceiling it is given: `η 4.000, H 0.212` capped, `η 8.000, H 0.400` free, for
-0.02 vol points of map smile RMSE (1.348 → 1.326); on `spy_20260821T194519Z` the same,
-`η 4.000, H 0.195` against `η 8.000, H 0.386` (1.467 → 1.450); on `spy_20260820T171756Z` the
+0.02 vol points of map smile RMSE (1.348 to 1.326); on `spy_20260821T194519Z` the same,
+`η 4.000, H 0.195` against `η 8.000, H 0.386` (1.467 to 1.450); on `spy_20260820T171756Z` the
 smile optimum is interior at `η 3.70` either way.
 What the ridge does not buy is the *level* of the skew: at `η 8, H 0.400` the model's `ψ` is still
-24–41 % steeper than the market's at every expiry and its skew χ² is 853 per expiry, against 960
+24-41 % steeper than the market's at every expiry and its skew χ² is 853 per expiry, against 960
 at the bound. The exponent can be had from `η` alone; the term structure cannot.
 
 **The true engine does not pay for the extra `η`.** Repricing all 585 quotes of
@@ -182,12 +182,12 @@ the 301 quotes inside `z = |k| / (σ_ATM √τ) < 2`, where the Monte Carlo inve
 both path seeds separate the two cleanly. The map's 0.02 vol points of gain is an order of
 magnitude inside its own offset from the engine (§3.4): the ridge is flat in `η`, and what tilt
 the engine does see runs the other way. The map is licensed to be read along it: at both extended
-optima its `ψ` matches the Monte Carlo one to 1.0–1.2 % relative RMS on the capture expiries —
-closer than the 1.9 % the profile is licensed by (§2) — with exponents −0.235 against
+optima its `ψ` matches the Monte Carlo one to 1.0-1.2 % relative RMS on the capture expiries,
+closer than the 1.9 % the profile is licensed by (§2), with exponents −0.235 against
 −0.230 ± 0.008 at `η 8, H 0.400`, and −0.241 against −0.229 ± 0.008 at `η 4.744, H 0.334`.
 
 **The knee moves off the bound.** At `λ = 0.1`, where the ceiling does bind, freeing `η` lowers the
-joint objective on all three captures — the smile term gains more than the skew term gives back:
+joint objective on all three captures, because the smile term gains more than the skew term gives back:
 
 | capture | η | H | smile RMSE | b (capture expiries) | χ² / expiry | J |
 |---|---|---|---|---|---|---|
@@ -198,13 +198,13 @@ joint objective on all three captures — the smile term gains more than the ske
 | 08-21 19:45, capped | 4.000 | 0.302 | 1.912 | −0.266 | 3.3 | 1.877 |
 | 08-21 19:45, free | 5.872 | 0.360 | 1.737 | −0.246 | 4.8 | 1.794 |
 
-`η` lands interior on every capture (4.74, 5.87, 7.00) and 0.08–0.19 vol points of smile RMSE are
-recovered, for a skew χ² 0.7–1.5 larger; the exponent stays within one market standard error of
+`η` lands interior on every capture (4.74, 5.87, 7.00) and 0.08-0.19 vol points of smile RMSE are
+recovered, for a skew χ² 0.7-1.5 larger; the exponent stays within one market standard error of
 −0.249 throughout (−0.263, −0.242, −0.246 against ± 0.033). Here the Monte Carlo agrees with the
 map: on `spy_20260821T150017Z` the 400,000-path repricing falls from 2.12 vol points at the bound
-to 2.01 with `η` free, and from 1.64 to 1.60 inside `z < 2`. The direction of §3.3 survives — the
-term structure still wants a larger `H` than the smiles alone — but how far `H` travels is set by
-the ceiling: 0.31 with `η` capped at 4, 0.33–0.38 with `η` free to 8. `H 0.310` is therefore a
+to 2.01 with `η` free, and from 1.64 to 1.60 inside `z < 2`. The direction of §3.3 survives, and the
+term structure still wants a larger `H` than the smiles alone, but how far `H` travels is set by
+the ceiling: 0.31 with `η` capped at 4, 0.33-0.38 with `η` free to 8. `H 0.310` is therefore a
 statement about the calibrator's box as much as about the data.
 
 ## 4. What it means for the served models
@@ -219,7 +219,7 @@ statement about the calibrator's box as much as about the data.
   resamples is the spread of one afternoon's quote sample, not of the market, so it does not
   license a sigma count: the per-capture exponent itself moves with sd 0.040 over the eight
   captures (`docs/atm_skew_term_structure.md`), and the market target −0.249 ± 0.033 is
-  `H = b + ½ = 0.251 ± 0.033`, an interval spanning 0.18–0.32 at two standard errors — wide
+  `H = b + ½ = 0.251 ± 0.033`, an interval spanning 0.18-0.32 at two standard errors, wide
   enough to contain 0.255, 0.261 and 0.310 alike. What the comparison supports is a direction and
   a price: fitting the term structure as well as the smiles moves `H` up by about 0.05 and costs
   about 0.45 vol points of smile RMSE, on two trading days of one regime.
@@ -228,24 +228,24 @@ statement about the calibrator's box as much as about the data.
 
 ## 5. Caveats
 
-- The market skew is measured over 2–10 trading days and the model exponent over 1–45; the model's
-  local exponent drifts (−0.22 over 1–5 d to −0.32 over 12–45 d for the joint parameters), so the
+- The market skew is measured over 2-10 trading days and the model exponent over 1-45; the model's
+  local exponent drifts (−0.22 over 1-5 d to −0.32 over 12-45 d for the joint parameters), so the
   window matters and is stated with every number.
 - The profile and the joint fits use the pricing map, licensed against Monte Carlo over
   `1.45 ≤ η ≤ 4`; nothing below that is claimed. Above 4 the licence is §3.5's own Monte Carlo
-  check at the two extended optima, where the map's `ψ` matches to 1.0–1.2 % relative RMS — two
+  check at the two extended optima, where the map's `ψ` matches to 1.0-1.2 % relative RMS: two
   points on one capture, not a grid.
 - The recommended `η` is at 4.0 because `BOUNDS["eta"]` in `backend/quant/calibrate.py` stops the
   optimiser there, not because the objective has a minimum there. The committed map's own box runs
-  to `η = 8`, and with `η` free to it the knee moves interior — `η 4.74, H 0.334` on
-  `spy_20260821T150017Z`, `η 5.87` and `η 7.00` on the other two — for 0.08–0.19 vol points less
-  smile RMSE and a skew χ² 0.7–1.5 larger (§3.5). The 400,000-path repricing that confirms the
+  to `η = 8`, and with `η` free to it the knee moves interior (`η 4.74, H 0.334` on
+  `spy_20260821T150017Z`, `η 5.87` and `η 7.00` on the other two) for 0.08-0.19 vol points less
+  smile RMSE and a skew χ² 0.7-1.5 larger (§3.5). The 400,000-path repricing that confirms the
   smile gain was run on `spy_20260821T150017Z` only. At `λ = 0` the ceiling does not bind in the
   same way: the pure-smile ridge is flat in `η` and the true engine ranks `η 8` behind `η 4`. The
   parameters recommended here stay inside the calibrator's box because that is what the served
   pipeline can adopt; `H 0.310` is the value that box selects, and a fit allowed more vol-of-vol
   answers with more `H`.
-- The smile RMSE quoted from the map is 0.25–0.35 vol points below the Monte Carlo value with the
+- The smile RMSE quoted from the map is 0.25-0.35 vol points below the Monte Carlo value with the
   true engine at every parameter set.
 
 ## 6. What would falsify this

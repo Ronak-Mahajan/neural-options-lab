@@ -247,7 +247,7 @@ function renderPosition() {
       : (state.qty < 0 ? "short " : "") + Math.abs(state.qty).toLocaleString() +
         (Math.abs(state.qty) === 1 ? " contract × " : " contracts × ") +
         state.mult.toLocaleString() + " shares × $" +
-        lastNNPrice.toFixed(4) + (state.qty < 0 ? " — premium received" : "");
+        lastNNPrice.toFixed(4) + (state.qty < 0 ? ", premium received" : "");
   }
   if (hint) {
     hint.textContent = state.qty < 0
@@ -361,7 +361,7 @@ function renderContractLine() {
   const pill = $("contract-pill");
   // Loading a ticker makes the inputs real; the contract stays hypothetical,
   // and the pill is the one word that says so.
-  pill.textContent = marketData ? marketData.ticker + " · hypothetical" : "Example";
+  pill.textContent = marketData ? marketData.ticker + ", hypothetical" : "Example";
   pill.classList.toggle("live", !!marketData);
   $("contract-text").textContent = contractSentence();
   const scope = $("contract-scope");
@@ -390,9 +390,9 @@ function refreshReadouts() {
     (Math.abs(sigPct - Math.round(sigPct)) < 0.05 ? Math.round(sigPct)
                                                   : sigPct.toFixed(1)) + "%");
   setReadout("val-rate", (state.rate * 100).toFixed(2).replace(/0$/, "") + "%");
-  $("rail-summary").textContent = (marketData ? marketData.ticker + " · " : "") +
+  $("rail-summary").textContent = (marketData ? marketData.ticker + ", " : "") +
     maturityWords() + " " + moneynessWords() + " " + state.optionType +
-    " · σ " + $("val-sigma").value + " · r " + $("val-rate").value;
+    ", σ " + $("val-sigma").value + ", r " + $("val-rate").value;
 
   renderContractLine();
 
@@ -410,7 +410,7 @@ function refreshReadouts() {
       + "variate. Greeks are exact derivatives of the network.";
 
   const m = state.spot / state.strike;
-  $("moneyness-val").textContent = m.toFixed(2) + (is0dte() ? " · short-dated" : "");
+  $("moneyness-val").textContent = m.toFixed(2) + (is0dte() ? ", short-dated" : "");
   const [lo, hi] = is0dte() ? [0.85, 1.15] : [0.5, 2.0];
   const outside = m < lo || m > hi;
   $("domain-warning").textContent = "Spot over strike is " + m.toFixed(2) +
@@ -471,8 +471,8 @@ async function updatePrice() {
     lastCheck = { price: d.mc.price, n_paths: d.mc.n_paths,
                   half: (d.mc.ci_high - d.mc.ci_low) / 2 };
     $("mc-ci").textContent = "±$" +
-      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + " at 95% · " +
-      d.mc.n_paths.toLocaleString() + " paths, fresh seed each run";
+      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + " at 95%, from " +
+      d.mc.n_paths.toLocaleString() + " paths with a fresh seed each run";
 
     // The headline is how closely the network matches the simulation. The
     // old speedup ratio was two single-shot wall-clocks on a shared host,
@@ -497,21 +497,21 @@ async function updatePrice() {
     const rel = diff / Math.max(Math.abs(d.nn.price), 1e-9);
     const agr = $("agreement");
     if (rel > 0.02) {
-      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · " +
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation, " +
         (rel * 100).toFixed(0) + "% of the price. Near zero the network's " +
         "Softplus output floor dominates, so read this check in dollars " +
         "rather than in basis points of strike.";
       agr.className = "card-sub agreement-neutral";
     } else if (inCI) {
       agr.textContent = "$" + diff.toFixed(4) +
-        " from the simulation · inside its 95% error bar";
+        " from the simulation, inside its 95% error bar";
       agr.className = "card-sub agreement-ok";
     } else if (bpsK <= tol) {
-      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation, wider " +
         "than the error bar, inside " + measured;
       agr.className = "card-sub agreement-neutral";
     } else {
-      agr.textContent = "$" + diff.toFixed(4) + " from the simulation · wider " +
+      agr.textContent = "$" + diff.toFixed(4) + " from the simulation, wider " +
         "than the error bar and wider than " + measured + ". Treat this price " +
         "as indicative, or raise the cross-check precision in the sidebar.";
       agr.className = "card-sub agreement-warn";
@@ -586,7 +586,7 @@ async function updateConvergence() {
         line: { color: COLORS.mc, width: 2.5, shape: "spline" },
         marker: { size: 7, color: COLORS.mc },
         customdata: d.mc_points.map((p) => fmtMs(p.latency_ms)),
-        hovertemplate: "%{x:,} paths → $%{y:.4f}<br>%{customdata}<extra></extra>",
+        hovertemplate: "%{x:,} paths, $%{y:.4f}<br>%{customdata}<extra></extra>",
       },
       {
         x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
@@ -638,7 +638,7 @@ async function updateIVSurface() {
         okB && okC ? "good" : "") +
       hedgeStatChip("Distance from the pricing model",
         (d.fit && d.fit.iv_rmse_volpts_resolved != null
-          ? d.fit.iv_rmse_volpts_resolved.toFixed(2) + " vol points" : "—"));
+          ? d.fit.iv_rmse_volpts_resolved.toFixed(2) + " vol points" : "n/a"));
     $("ivsurface-stat").textContent =
       "Checked at " + d.n_points.toLocaleString() + " points across the grid, " +
       "in " + fmtMs(d.latency_ms) + ". Butterfly minimum " + d.g_min.toFixed(3) +
@@ -653,7 +653,7 @@ async function updateIVSurface() {
       showscale: false,
       contours: { z: { show: true, usecolormap: true, width: 1,
                        highlightcolor: "#fff" } },
-      hovertemplate: "k %{x:.3f} · %{y:.1f}d → IV %{z:.2f}%<extra></extra>",
+      hovertemplate: "k %{x:.3f}, %{y:.1f}d, IV %{z:.2f}%<extra></extra>",
     }], {
       ...PLOT_BASE, showlegend: false,
       margin: { l: 0, r: 0, t: 6, b: 0 },
@@ -733,7 +733,7 @@ async function updateSurface() {
       showscale: false,
       contours: { z: { show: true, usecolormap: true,
                        highlightcolor: "#fff", project: { z: true } } },
-      hovertemplate: "S/K %{x:.2f} · T %{y:.2f}y<br>price/K %{z:.4f}"
+      hovertemplate: "S/K %{x:.2f}, T %{y:.2f}y<br>price/K %{z:.4f}"
         + "<br><i>click to price this contract</i><extra></extra>",
       lighting: { specular: 0.4, roughness: 0.6 },
     }], {
@@ -821,8 +821,8 @@ function renderErrorDistribution() {
     ? "A systematic bias of " + (bias >= 0 ? "+" : "−") +
       Math.abs(bias).toFixed(1) + " " + meta.unit + " runs through it" +
       (errorMetric === "price"
-        ? " — the ensemble prices " + (bias >= 0 ? "rich" : "cheap") +
-          " against the simulation" : "") +
+        ? " (the ensemble prices " + (bias >= 0 ? "rich" : "cheap") +
+          " against the simulation)" : "") +
       ", with about " + scatter.toFixed(1) + " " + meta.unit +
       " of scatter around that bias."
     : "The mean error is " + (bias >= 0 ? "+" : "−") +
@@ -851,7 +851,7 @@ function renderErrorDistribution() {
   const traces = [
     {
       type: "histogram", x: single,
-      name: "one network · typical error " +
+      name: "one network, typical error " +
         d.single[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit,
       marker: { color: "rgba(143,123,255,0.5)",
                 line: { color: COLORS.violet, width: 1 } },
@@ -859,7 +859,7 @@ function renderErrorDistribution() {
     },
     {
       type: "histogram", x: ens,
-      name: "five averaged · typical error " +
+      name: "five averaged, typical error " +
         d.ensemble[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit,
       marker: { color: "rgba(90,140,200,0.45)",
                  line: { color: COLORS.nn, width: 1 } },
@@ -931,12 +931,12 @@ function crossCheckTolBps() {
 // this strike - the four decimals above are finer than that band.
 function nnSubText() {
   const base = is0dte()
-    ? "per share · standard European contract, short-dated rough-volatility model"
-    : "per share · average-price contract";
+    ? "per share, standard European contract, short-dated rough-volatility model"
+    : "per share, average-price contract";
   const bps = activeModelRmseBps();
   if (bps == null) return base;
   const band = bps * state.strike / 1e4;
-  return base + " · typical model error ±$" +
+  return base + ", typical model error ±$" +
     (band >= 0.1 ? band.toFixed(2) : band.toFixed(3)) + " at this strike";
 }
 
@@ -1603,7 +1603,7 @@ async function fetchTicker() {
   if (!t) return;
   const btn = $("btn-fetch-ticker");
   const chip = $("market-chip");
-  btn.textContent = "…"; btn.disabled = true;
+  btn.textContent = "..."; btn.disabled = true;
   try {
     const d = await api("/api/market/" + encodeURIComponent(t));
     marketData = d;
@@ -1628,8 +1628,8 @@ async function fetchTicker() {
     chip.innerHTML =
       "<b>" + d.ticker + "</b> $" + d.spot.toLocaleString(undefined,
         { maximumFractionDigits: 2 }) +
-      " · one-year realised volatility " + (d.sigma_raw * 100).toFixed(1) +
-      "% · " + rateName + " " + (d.rate_raw * 100).toFixed(2) +
+      ", one-year realised volatility " + (d.sigma_raw * 100).toFixed(1) +
+      "%, " + rateName + " " + (d.rate_raw * 100).toFixed(2) +
       "%, used as the model's continuously compounded rate" +
       "<br>as of " + d.as_of.slice(0, 16).replace("T", " ") + " " +
       (d.as_of_tz || "UTC") + ", the time the server fetched it" +
@@ -1797,7 +1797,7 @@ function pairedSeparationMap(hedge) {
 
 async function runHedge() {
   const btn = $("btn-hedge");
-  btn.textContent = "Simulating…";
+  btn.textContent = "Simulating...";
   btn.disabled = true;
   // The simulation takes seconds (tens of seconds on a small host); without
   // this the panel is a blank void with only the button label as feedback.
@@ -1832,13 +1832,13 @@ async function runHedge() {
     // different winners is how a reader ends up unable to tell who won.
     const pm = (se) => se ? " ± " + (se * K).toFixed(2) : "";
     $("hedge-stats").innerHTML =
-      hedgeStatChip("Worst-5% loss · learned policy",
+      hedgeStatChip("Worst-5% loss, learned policy",
         $$(-d.deep.cvar95) + pm(d.deep.cvar95_se),
         d.deep.cvar95 === best ? "good" : "") +
-      hedgeStatChip("Worst-5% loss · delta hedge",
+      hedgeStatChip("Worst-5% loss, delta hedge",
         $$(-d.delta.cvar95) + pm(d.delta.cvar95_se),
         d.delta.cvar95 === best ? "good" : "") +
-      (ww ? hedgeStatChip("Worst-5% loss · Whalley-Wilmott band",
+      (ww ? hedgeStatChip("Worst-5% loss, Whalley-Wilmott band",
         $$(-ww.cvar95) + pm(ww.cvar95_se), ww.cvar95 === best ? "good" : "") : "") +
       // A worst-5% loss is the mean loss plus the tail about that mean, and on
       // these runs most of the gap between the hedgers is the mean half - the
@@ -1898,7 +1898,7 @@ async function runHedge() {
         $$(-names[0][1]) + pm(names[0][2]) + ", against " + $$(-names[1][1]) +
         pm(names[1][2]) + " for " + names[1][0] +
         (names[2] ? " and " + $$(-names[2][1]) + pm(names[2][2]) + " for " +
-          names[2][0] : "") + " — " + gapPhrase(names[0], names[1]) + ". "
+          names[2][0] : "") + ". The gap is " + gapPhrase(names[0], names[1]) + ". "
       : opening + names[0][0] + " and " + names[1][0] + " are level on " +
         "worst-5% loss, " + $$(-names[0][1]) + pm(names[0][2]) + " and " +
         $$(-names[1][1]) + pm(names[1][2]) + ": " +
@@ -1966,21 +1966,21 @@ async function runHedge() {
     Plotly.react("plot-hedge", [
       {
         type: "histogram", x: d.delta.pnl.map((v) => v * K),
-        name: "delta hedge · worst-5% loss " + $$(-d.delta.cvar95),
+        name: "delta hedge, worst-5% loss " + $$(-d.delta.cvar95),
         marker: { color: "rgba(196,131,92,0.45)",
                   line: { color: COLORS.mc, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
       },
       {
         type: "histogram", x: d.deep.pnl.map((v) => v * K),
-        name: "learned policy · worst-5% loss " + $$(-d.deep.cvar95),
+        name: "learned policy, worst-5% loss " + $$(-d.deep.cvar95),
         marker: { color: "rgba(90,140,200,0.45)",
                   line: { color: COLORS.nn, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
       },
       ...(ww && ww.pnl ? [{
         type: "histogram", x: ww.pnl.map((v) => v * K),
-        name: "Whalley-Wilmott band · worst-5% loss " + $$(-ww.cvar95),
+        name: "Whalley-Wilmott band, worst-5% loss " + $$(-ww.cvar95),
         marker: { color: "rgba(136,145,163,0.35)",
                   line: { color: COLORS.violet, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
@@ -2042,21 +2042,21 @@ $("btn-hedge").addEventListener("click", runHedge);
 // ───────────────────────────────────────────────────────────── LLM ──
 $("btn-risk").addEventListener("click", async () => {
   const btn = $("btn-risk");
-  btn.textContent = "Writing…";
+  btn.textContent = "Writing...";
   let step = 0;
   btn.disabled = true;
   const out = $("ai-report");
   try {
     // Auto-gather any missing inputs instead of bouncing the user around.
     if (!lastAttributions) {
-      out.textContent = "Working out what drives the price… (1 of 3)";
+      out.textContent = "Working out what drives the price... (1 of 3)";
       await updateXAI();
     }
     if (!lastHedge) {
-      out.textContent = "Running the hedging simulation… (2 of 3)";
+      out.textContent = "Running the hedging simulation... (2 of 3)";
       await runHedge();
     }
-    out.textContent = "Writing the summary… (3 of 3)";
+    out.textContent = "Writing the summary... (3 of 3)";
     if (lastNNPrice == null || !lastAttributions || !lastHedge)
       throw new Error("pricing/hedging inputs unavailable; is the backend up?");
 
@@ -2145,7 +2145,7 @@ function wsConnect() {
     btn.classList.add("btn-stream-active");
     $("stream-empty")?.remove();
     $("stream-stats").classList.remove("idle");
-    $("stream-sub").textContent = "Connected. Starting the feed…";
+    $("stream-sub").textContent = "Connected. Starting the feed...";
 
     ws.send(JSON.stringify({
       spot: state.spot, strike: state.strike, sigma: state.sigma,

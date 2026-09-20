@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Neural Options Lab — price options, size the risk, hedge it</title>
+<title>Neural Options Lab: price options and hedge the position</title>
 <meta name="description" content="Price Asian and short-dated options in milliseconds, with all five Greeks, a position size, and a fresh Monte Carlo check on every number. Then hedge the position under transaction costs.">
 <meta name="theme-color" content="#1c1c1e">
 <meta property="og:type" content="website">
@@ -53,8 +53,8 @@
       </button>
       <div class="model-card" id="model-card" hidden>
         <h3>Served models</h3>
-        <dl id="model-card-body"><dt>Status</dt><dd>Loading…</dd></dl>
-        <a class="model-card-link" href="/methodology">How these were built and tested →</a>
+        <dl id="model-card-body"><dt>Status</dt><dd>Loading...</dd></dl>
+        <a class="model-card-link" href="/methodology">How these were built and tested</a>
       </div>
     </div>
     <nav class="meta-links" aria-label="Project links">
@@ -85,14 +85,14 @@
 
       <div class="param">
         <div class="param-head"><label for="in-spot">Spot <i class="sym">S₀</i>
-          <button type="button" class="help" data-help="Today's price of the underlying stock. Only the ratio of spot to strike affects the price, so the level itself does not matter. That ratio has to stay inside the model's range — 0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below — and the sidebar says so when it does not.">?</button></label>
+          <button type="button" class="help" data-help="Today's price of the underlying stock. Only the ratio of spot to strike affects the price, so the level itself does not matter. That ratio has to stay inside the model's range (0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below), and the sidebar says so when it does not.">?</button></label>
           <input class="param-val mono" id="val-spot" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="spot value, type to set exactly"></div>
         <input type="range" id="in-spot" min="55" max="195" step="1" value="100" aria-label="Spot price">
       </div>
 
       <div class="param">
         <div class="param-head"><label for="in-strike">Strike <i class="sym">K</i>
-          <button type="button" class="help" data-help="The price at which the option can be exercised. At-the-money means strike equals spot. Spot over strike has to stay inside the model's range — 0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below — and the sidebar says so when it does not.">?</button></label>
+          <button type="button" class="help" data-help="The price at which the option can be exercised. At-the-money means strike equals spot. Spot over strike has to stay inside the model's range (0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below), and the sidebar says so when it does not.">?</button></label>
           <input class="param-val mono" id="val-strike" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="strike value, type to set exactly"></div>
         <input type="range" id="in-strike" min="55" max="195" step="1" value="100" aria-label="Strike price">
       </div>
@@ -137,7 +137,7 @@
       <h2 class="kicker">Market assumptions</h2>
       <div class="param">
         <div class="param-head"><label for="in-sigma">Volatility <i class="sym">σ</i>
-          <button type="button" class="help" data-help="How much the underlying moves, annualised. Supported range 5% to 80%. Above 12 trading days it is the flat volatility of the averaging model. At or below, it sets the rough-Bergomi forward variance level (ξ₀ = σ²), not a Black-Scholes implied volatility, so the implied volatility of the resulting price varies across strikes — the short-dated surface below shows it.">?</button></label>
+          <button type="button" class="help" data-help="How much the underlying moves, annualised. Supported range 5% to 80%. Above 12 trading days it is the flat volatility of the averaging model. At or below, it sets the rough-Bergomi forward variance level (ξ₀ = σ²), not a Black-Scholes implied volatility, so the implied volatility of the resulting price varies across strikes, which the short-dated surface below shows.">?</button></label>
           <input class="param-val mono" id="val-sigma" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="25%" aria-label="sigma value, type to set exactly"></div>
         <input type="range" id="in-sigma" min="5" max="80" step="1" value="25" aria-label="Volatility in percent">
       </div>
@@ -241,7 +241,7 @@
             Asian engine that generated the training labels above 12 trading days,
             and the rough-volatility engine the short-dated network was distilled
             from at or below. <strong>Cross-check</strong>, beneath it, is how far
-            the two sit apart — how faithfully the network reproduces its own
+            the two sit apart: how faithfully the network reproduces its own
             reference, not a test of whether the assumptions are right.
           </p>
           <p>

@@ -36,9 +36,9 @@ over from simulation and one does not:
   hedge, not a safer one.
 
 In simulation a deep hedger improved the tail; the checkpoint replayed here does not, on
-history. That is two changes at once — a different measure and a different policy, since
+history. That is two changes at once (a different measure and a different policy, since
 the simulated tail improvement belongs to `hedger_rbergomi_jumps.pt` and these rows are
-`hedger.pt` — so this page is evidence that the tail claim did not survive the crossing,
+`hedger.pt`), so this page is evidence that the tail claim did not survive the crossing,
 not a measurement of how much of the loss each change accounts for. What real daily
 returns add is autocorrelation and volatility clustering that neither GBM nor the WGAN
 reproduces. The README's tail-risk claims for deep hedging are simulation-scoped; this

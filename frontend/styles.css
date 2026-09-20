@@ -97,7 +97,7 @@ body {
   color: var(--ink-low); margin-top: 1px; white-space: nowrap;
 }
 
-/* tab nav lives in the chrome — content area stays pure data */
+/* tab nav lives in the chrome; content area stays pure data */
 .tab-nav {
   display: flex; gap: 1px; padding: 3px;
   background: var(--well);
@@ -220,7 +220,7 @@ h3 + p, .kicker + h3 { margin-top: 3px; }
 .market-chip .warn { color: var(--rose); }
 .market-chip b { color: var(--ink-hi); }
 
-/* segmented controls — shared by call/put, MC paths, error metric */
+/* segmented controls, shared by call/put, MC paths, error metric */
 .segmented {
   display: flex; gap: 3px; padding: 3px;
   background: var(--well); border: 1px solid var(--line);
@@ -321,7 +321,8 @@ input[type="range"]::-moz-range-thumb {
 }
 .kicker-note { font-weight: 500; letter-spacing: 0.02em; text-transform: none;
   color: var(--ink-low); opacity: 0.8; }
-.kicker-note::before { content: "· "; }
+.kicker-note::before { content: "("; }
+.kicker-note::after { content: ")"; }
 
 /* Expiry quick-picks: the short-dated regime is a sliver of the track. */
 .quickpick { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -566,8 +567,8 @@ input[type="range"]::-moz-range-thumb {
 .agreement-neutral { color: var(--ink-hi) !important; }
 .agreement-warn { color: var(--rose) !important; }
 
-.contract-scope { font-size: 12px; line-height: 1.5; color: var(--ink-mid); }
-.contract-scope::before { content: "— "; }
+.contract-scope { font-size: 12px; line-height: 1.5; color: var(--ink-mid);
+  margin-left: 4px; }
 .stage > .contract-line { order: 0; }
 
 /* Inputs a tab does not use are dimmed rather than silently ignored. */
