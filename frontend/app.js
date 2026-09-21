@@ -1,9 +1,10 @@
-/* Neural Options Lab - dashboard logic
-   Talks to the FastAPI backend, renders Plotly charts, animates numbers. */
+/* Neural Options Lab dashboard.
+   Calls the FastAPI backend, draws the Plotly charts and builds every
+   sentence the page renders. */
 
 "use strict";
 
-// ─────────────────────────────────────────────── state & element handles ──
+// State and element handles.
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -21,31 +22,78 @@ const COLORS = {
   good: "#5a9e78", warn: "#c45c5c",
 };
 
+// A horizontal legend sits on the top edge of the plot, anchored by its bottom
+// edge, so Plotly's auto-margin grows the top margin by the legend's height.
+// A legend that wraps to two or three rows at phone width pushes the plot down
+// and stays clear of the traces.
 const PLOT_BASE = {
   paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
   font: { family: "Inter, -apple-system, SF Pro Text, sans-serif", color: COLORS.ink,
           size: 11.5 },
   margin: { l: 52, r: 16, t: 12, b: 42 },
   showlegend: true,
-  legend: { orientation: "h", y: 1.12, x: 0, font: { size: 11 } },
+  legend: { orientation: "h", x: 0, xanchor: "left", y: 1.02, yanchor: "bottom",
+            font: { size: 11 } },
 };
 const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false };
+// Phone width, where legend entries are shortened so the legend stays compact.
+const isNarrow = () => window.matchMedia("(max-width: 480px)").matches;
 
-// ───────────────────────────────────────────────────────────── utilities ──
+// Utilities.
 const NL_CHAR = String.fromCharCode(10);
 
 const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
 
-// Backend exception text used to be written straight into panel subtitles,
-// where it read as a stray sentence about the model's internals.
+// Escapes text bound for innerHTML or a quoted attribute.
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+
+// One request in flight per panel and at most one waiting behind it. The
+// server admits one simulation at a time, and a sync handler runs to its end
+// after a client abort, so the in-flight request is left to finish: its
+// response is the signal that the slot is free. Slider stops superseded while
+// it ran are never sent. fn receives isCurrent(), which turns false once a
+// newer call is waiting, and drops a response that arrives stale.
+function latestOnly(fn) {
+  let running = null, rerun = false;
+  const drain = async () => {
+    do {
+      rerun = false;
+      await fn(() => !rerun).catch(() => {});
+    } while (rerun);
+    running = null;
+  };
+  return () => {
+    if (running) { rerun = true; return running; }
+    return (running = drain());
+  };
+}
+
+// Backend exception text is never shown verbatim, because it describes the
+// model's internals. Each status maps to one sentence about what to change.
+// `detail` is a string from the domain gate or a list of {loc, msg} from
+// pydantic, and either is searched for the field that was refused.
 function friendlyError(status, detail) {
-  const d = String(detail || "");
-  if (status === 422 || /moneyness|domain|between|less than|greater than/i.test(d)) {
+  const d = typeof detail === "string" ? detail
+    : Array.isArray(detail)
+      ? detail.map((e) => (e.loc || []).join(".") + " " + (e.msg || "")).join("; ")
+      : "";
+  if (status === 422) {
+    if (/sigma|volatil/i.test(d)) return "Volatility must be between 5% and 80%.";
+    if (/\brate\b/i.test(d)) return "The rate must be between 0% and 10%.";
+    if (/maturity|expiry/i.test(d)) {
+      return "Expiry must be between one trading day and two years. Expiries "
+        + "between 12 trading days and 0.05 years are covered by neither model.";
+    }
     return "This contract is outside the range the models were trained on. "
       + "Move spot and strike closer together, or pick another expiry.";
   }
+  if (/moneyness|domain|between|less than|greater than/i.test(d)) {
+    return "This contract is outside the range the models were trained on. "
+      + "Move spot and strike closer together, or pick another expiry.";
+  }
+  if (status === 413) return "The request is too large.";
   if (status === 503) return "The server is busy with another simulation. Try again in a moment.";
   if (status === 0) return "Could not reach the server.";
   return "This panel is unavailable right now.";
@@ -78,8 +126,8 @@ const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + " s"
   : ms >= 1 ? ms.toFixed(1) + " ms"
   : (ms * 1000).toFixed(0) + " µs";
 
-// Tween a numeric readout for that premium feel. Falls back to setting the
-// value directly when the tab is hidden (rAF is throttled there).
+// Tween a numeric readout. The value is set directly when the tab is hidden,
+// where requestAnimationFrame is throttled.
 const tweens = new Map();
 function animateNumber(el, target, format) {
   const start = tweens.has(el) ? tweens.get(el) : target;
@@ -113,7 +161,9 @@ function panelMessage(plotId, text) {
   el.querySelector(".panel-message")?.remove();
   const box = document.createElement("div");
   box.className = "empty-state panel-message";
-  box.innerHTML = "<p>" + text + "</p>";
+  const p = document.createElement("p");
+  p.textContent = text;
+  box.appendChild(p);
   el.appendChild(box);
 }
 
@@ -128,7 +178,7 @@ function optionBody() {
   };
 }
 
-// ─────────────────────────────────────────────────────────────── controls ──
+// Controls.
 function bindSlider(id, onChange) {
   const el = $("in-" + id);
   const paint = () => {
@@ -138,57 +188,70 @@ function bindSlider(id, onChange) {
   el.addEventListener("input", () => { paint(); onChange(parseFloat(el.value)); });
   paint();
 
-  // The matching readout is a typed field: a slider cannot express a strike
-  // of 137.42, and a pricer that cannot take one is a demonstration.
+  // The matching readout is a typed field, because a slider cannot express a
+  // strike of 137.42. commit() returns whether the typed value was accepted.
   const box = $("val-" + id);
   if (!box) return;
   const commit = () => {
     const raw = box.value.trim().replace(/[%$,\s]/g, "");
     // "1.5y" and "30d" both mean something for maturity.
     const m = /^([0-9]*\.?[0-9]+)\s*([a-z]*)$/i.exec(raw);
-    if (!m) { box.classList.add("invalid"); return; }
+    if (!m) { box.classList.add("invalid"); return false; }
     let v = parseFloat(m[1]);
     const unit = m[2].toLowerCase();
     if (id === "maturity") {
       if (unit === "d") v = v / 252;
       else if (unit === "m") v = v / 12;
       else if (unit === "w") v = v / 52;
-      // a bare number large enough to be days rather than years
+      // A bare number above 3 is read as days; the slider stops at 2 years.
       else if (!unit && v > 3) v = v / 252;
     }
-    let lo = parseFloat(el.min);
+    // The pricer is homogeneous in spot and strike, so a positive level off
+    // the slider track is valid. Both tracks are rescaled around it, as they
+    // are for a fetched ticker, and the other input keeps its value. The
+    // moneyness check in refreshReadouts then reports the pair.
+    if ((id === "spot" || id === "strike") && isFinite(v) && v > 0 &&
+        (v < parseFloat(el.min) || v > parseFloat(el.max))) {
+      const other = id === "spot" ? "strike" : "spot";
+      rescaleSpotSliders(v);
+      $("in-" + other).step = "any";
+      setSlider(other, state[other]);
+    }
+    const lo = parseFloat(el.min);
     const hi = parseFloat(el.max);
-    // One trading day is 1/252 = 0.003968 years, a hair under the slider's
-    // 0.004 floor, so a typed "1d" was refused although the quick-pick offers
-    // it. Snap values that are within rounding of the floor onto it.
+    // One trading day is 1/252 = 0.003968 years, just under the slider's 0.004
+    // floor, and the quick-pick offers it. Values within rounding of the floor
+    // snap onto it, so a typed "1d" is accepted.
     if (id === "maturity" && v < lo && v >= lo - 1e-4) v = lo;
     // Volatility and rate are shown and typed in percent, and their sliders
     // are in percent too; only the state is a fraction.
-    const sliderValue = v;
-    if (!isFinite(sliderValue) || sliderValue < lo || sliderValue > hi) {
+    if (!isFinite(v) || v < lo || v > hi) {
       box.classList.add("invalid");
-      return;
+      return false;
     }
     box.classList.remove("invalid");
     // Typed values are exact: widen the step so the browser does not round
     // 137.42 to 137 on its way into the slider.
     el.step = "any";
-    el.value = sliderValue;
+    el.value = v;
     paint();
     onChange(parseFloat(el.value));
+    return true;
   };
   box.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); box.blur(); }
+    // A refused value keeps the focus and its red border until it is fixed.
+    if (e.key === "Enter") { e.preventDefault(); if (commit()) box.blur(); }
     if (e.key === "Escape") { box.classList.remove("invalid"); refreshReadouts(); box.blur(); }
   });
   // While a field has focus, refreshReadouts must not overwrite what is
   // being typed.
   box.addEventListener("focus", () => { box.dataset.editing = "1"; });
   box.addEventListener("blur", () => {
-    box.classList.remove("invalid");
     commit();
     delete box.dataset.editing;
     refreshReadouts();
+    // The field shows the last accepted value again, so the flag comes off.
+    box.classList.remove("invalid");
   });
 }
 
@@ -203,17 +266,17 @@ function setReadout(id, text) {
 // surrogate, which is trained on a narrower moneyness band.
 const ZERO_DTE_CUTOFF = 12 / 252;
 const is0dte = () => state.maturity <= ZERO_DTE_CUTOFF + 1e-9;
-// The short-dated network's trained volatility band. It is not on the wire
-// (the checkpoint block carries the moneyness and maturity box only), so it
-// is transcribed from the sampling bounds in backend/quant/dataset_0dte.py.
+// The short-dated network's trained volatility band, transcribed from the
+// sampling bounds in backend/quant/dataset_0dte.py; the checkpoint block on
+// the wire carries the moneyness and maturity box only.
 const ZERO_DTE_SIGMA = [0.05, 0.80];
 
 // A position is contracts x shares each; a negative count is a short, which
 // flips the sign of the premium and of every Greek.
 const positionSize = () => state.qty * state.mult;
 
-// A quote with no price in it would still carry a real timestamp and the
-// model's identity, so the export stays closed until there is one.
+// The export stays disabled until a price exists. A quote without one would
+// still carry a timestamp and the model's identity.
 function paintQuoteActions() {
   const ok = lastNNPrice != null;
   const copy = $("btn-copy-quote"), dl = $("btn-download-quote");
@@ -229,9 +292,9 @@ function fmtSigned(v, digits) {
 
 // Whole-share and whole-dollar figures for a book. The per-share premium keeps
 // four decimals because the cross-check beside it is a gap of a few
-// ten-thousandths of a dollar and needs something to compare against; those
-// digits are finer than the model's own measured error, which is why the card
-// sub-line prints that error in dollars next to the price.
+// ten-thousandths of a dollar. Those digits are finer than the model's
+// measured error, so the card sub-line prints that error in dollars next to
+// the price.
 function renderPosition() {
   const value = $("pos-value"), sub = $("pos-sub");
   const hint = $("position-hint");
@@ -268,14 +331,17 @@ function renderGreeks() {
   for (const [k, id] of Object.entries(map)) {
     const el = $(id);
     if (!el) continue;
-    const v = lastGreeks[k] * n;
+    // A value that rounds to zero prints without a sign, so a tiny negative
+    // theta reads "0.0000" and never "-0.0000".
+    const raw = lastGreeks[k] * n;
+    const v = Math.abs(raw) < 0.5 * Math.pow(10, -digits) ? 0 : raw;
     el.textContent = greekBasis === "position"
       ? (v < 0 ? "\u2212" : "") + Math.abs(v).toLocaleString(undefined, {
           minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : v.toFixed(digits);
   }
-  // In position terms each Greek is a quantity, not a per-dollar rate, so
-  // the per-contract unit string would read as nonsense appended to itself.
+  // In position terms each Greek is a quantity (shares, or dollars per point),
+  // so the unit strings change with the basis.
   const POSITION_UNITS = {
     "g-delta": "shares of the underlying",
     "g-gamma": "shares per $1 move",
@@ -323,10 +389,7 @@ function maturityWords() {
   return T.toFixed(2) + "-year";
 }
 
-// The contract in one sentence. This is the page's answer to "what am I
-// looking at, and did I need to type a ticker first?" - so it always says
-// whether the underlying is hypothetical or a real one that was loaded.
-// Just the instrument, for prose that continues after it.
+// The instrument alone, for prose that continues after it.
 function contractShort() {
   const kind = is0dte() ? "European " + state.optionType
                         : "Asian " + state.optionType;
@@ -335,6 +398,8 @@ function contractShort() {
                     : head + " on a $" + state.spot + " stock";
 }
 
+// The contract in one sentence. It names the underlying as a loaded ticker or
+// as a hypothetical stock, and carries every priced input.
 function contractSentence() {
   const kind = is0dte() ? "European " + state.optionType
                         : "Asian " + state.optionType;
@@ -349,18 +414,18 @@ function contractSentence() {
     vol + ", rate " + rate + ".";
 }
 
-// What each tab does with the contract named above it. The Hedging tab in
-// particular runs its own instrument, which nothing on screen used to say.
+// What each tab does with the contract named above it. The Hedge tab runs its
+// own instrument, and this line is where the page says so.
 const CONTRACT_SCOPE = {
-  hedging: "The hedge bench trades its own 30-day at-the-money call, the contract its policies were trained on, not the one above.",
+  hedging: "The hedge bench trades its own 30-day at-the-money call, the contract its policies were trained on. The contract above does not enter it.",
   ai: "The note is written from the price, the attribution and the hedge run listed below.",
   stream: "The feed prices this contract, tick by tick.",
 };
 
 function renderContractLine() {
   const pill = $("contract-pill");
-  // Loading a ticker makes the inputs real; the contract stays hypothetical,
-  // and the pill is the one word that says so.
+  // Loading a ticker sets the inputs from market data. The contract stays
+  // hypothetical, and the pill says so.
   pill.textContent = marketData ? marketData.ticker + ", hypothetical" : "Example";
   pill.classList.toggle("live", !!marketData);
   $("contract-text").textContent = contractSentence();
@@ -371,7 +436,7 @@ function renderContractLine() {
 }
 
 // Under rough volatility the hedging run supplies its own volatility and
-// rate, so the two sliders that look like they drive it do nothing.
+// rate, so those two sliders are marked inactive on that tab.
 function paintRailScope() {
   const idle = currentTab === "hedging" && state.hedgeDynamics === "rough";
   for (const id of ["in-sigma", "in-rate"])
@@ -421,8 +486,8 @@ function refreshReadouts() {
   document.querySelectorAll("#maturity-quickpick .pick").forEach((b) =>
     b.classList.toggle("active", Math.abs(+b.dataset.t - state.maturity) < 1e-6));
 
-  // The short-dated volatility surface only describes contracts of 12
-  // trading days or less, so open it when the reader moves into that regime.
+  // The short-dated volatility surface describes contracts of 12 trading days
+  // or less, so its group opens when the maturity moves into that regime.
   const short = is0dte();
   if (short !== wasShortDated) {
     const g = $("group-domain");
@@ -430,8 +495,8 @@ function refreshReadouts() {
     wasShortDated = short;
     // The accuracy teaser, the accuracy chips and the model card all quote a
     // measured error, and the model that produces the price changes here. They
-    // are painted from the same place that knows the regime so they can never
-    // carry one model's number under the other model's name.
+    // are repainted at the regime change so each carries the number of the
+    // model it names.
     paintModelScope();
   }
 }
@@ -448,18 +513,17 @@ function bindSegmented(containerId, onPick) {
   });
 }
 
-// ───────────────────────────────────────────────────────── price + greeks ──
-let priceSeq = 0;
+// Price and Greeks. Every updater below takes isCurrent from latestOnly and
+// returns without painting once a newer request is waiting.
 let lastNNPrice = null;
 let lastGreeks = null;
 let lastCheck = null;
 let greekBasis = "unit";
-async function updatePrice() {
+async function updatePrice(isCurrent = () => true) {
   document.querySelector(".results").classList.add("updating");
-  const seq = ++priceSeq;
   try {
     const d = await api("/api/price", { ...optionBody(), mc_paths: state.mcPaths });
-    if (seq !== priceSeq) return; // a newer request superseded this one
+    if (!isCurrent()) return;
 
     lastNNPrice = d.nn.price;
     renderReportInputs();
@@ -474,21 +538,19 @@ async function updatePrice() {
       ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + " at 95%, from " +
       d.mc.n_paths.toLocaleString() + " paths with a fresh seed each run";
 
-    // The headline is how closely the network matches the simulation. The
-    // old speedup ratio was two single-shot wall-clocks on a shared host,
-    // so it swung several-fold between identical page loads; the timings
-    // are still reported, just not as the claim.
+    // The headline is the network-to-simulation gap in basis points of
+    // strike. Single-shot wall-clocks on a shared host swing several-fold
+    // between identical page loads, so the timings go in the timing line and
+    // carry no headline ratio.
     const diff = Math.abs(d.nn.price - d.mc.price);
     const bpsK = diff / state.strike * 1e4;
     animateNumber($("speedup"), bpsK, (v) => v.toFixed(1) + " bps");
     // Four states. At 50,000 paths the simulation's error bar is tighter than
-    // the network's own published error, so a gap can sit outside the bar and
-    // still be exactly what the model promises; calling that a failure would
-    // misreport the result in the alarming direction. The band comes from
-    // whichever network priced this contract, and the sentence names it, so a
-    // short-dated quote is never judged against the averaged ensemble's
-    // quantile. And where the premium is near zero, basis points of strike
-    // stop describing the contract, so the gap is reported against the price.
+    // the network's measured error, so a gap outside the bar and inside that
+    // error is reported as neutral. The band comes from the network that
+    // priced this contract (crossCheckTolBps) and the sentence names it.
+    // Where the premium is near zero the gap is reported as a share of the
+    // price, because basis points of strike understate it there.
     const inCI = d.comparison.within_mc_ci;
     const tol = crossCheckTolBps();
     const measured = is0dte()
@@ -499,8 +561,8 @@ async function updatePrice() {
     if (rel > 0.02) {
       agr.textContent = "$" + diff.toFixed(4) + " from the simulation, " +
         (rel * 100).toFixed(0) + "% of the price. Near zero the network's " +
-        "Softplus output floor dominates, so read this check in dollars " +
-        "rather than in basis points of strike.";
+        "Softplus output floor dominates, so this gap is read in dollars " +
+        "and as a share of the price.";
       agr.className = "card-sub agreement-neutral";
     } else if (inCI) {
       agr.textContent = "$" + diff.toFixed(4) +
@@ -508,12 +570,12 @@ async function updatePrice() {
       agr.className = "card-sub agreement-ok";
     } else if (bpsK <= tol) {
       agr.textContent = "$" + diff.toFixed(4) + " from the simulation, wider " +
-        "than the error bar, inside " + measured;
+        "than its 95% error bar and inside " + measured;
       agr.className = "card-sub agreement-neutral";
     } else {
       agr.textContent = "$" + diff.toFixed(4) + " from the simulation, wider " +
-        "than the error bar and wider than " + measured + ". Treat this price " +
-        "as indicative, or raise the cross-check precision in the sidebar.";
+        "than its 95% error bar and wider than " + measured + ". Treat this " +
+        "price as indicative, or raise the cross-check precision in the sidebar.";
       agr.className = "card-sub agreement-warn";
     }
     $("hero-error").hidden = true;
@@ -531,7 +593,7 @@ async function updatePrice() {
     const sub = $("nn-sub");
     if (d.nn.below_intrinsic) {
       sub.textContent = d.nn.below_intrinsic_bps_of_strike.toFixed(1) +
-        " bps of strike under the no-arbitrage floor \u00b7 see the " +
+        " bps of strike under the no-arbitrage floor; see the " +
         "arbitrage-free surface below";
       sub.title = "Discounted intrinsic, max(S \u2212 Ke^(\u2212rT), 0), is the " +
         "lowest price a European contract at this maturity can have without " +
@@ -547,9 +609,9 @@ async function updatePrice() {
     document.querySelector(".results").classList.remove("errored");
     renderGreeks();
   } catch (err) {
-    if (seq !== priceSeq) return;
-    // Keep the last good numbers on screen but visibly stale: a red message
-    // next to crisp prices read as if the prices belonged to the message.
+    if (!isCurrent()) return;
+    // The last good numbers stay on screen, marked stale. A red message
+    // beside unmarked prices reads as if the prices belong to it.
     document.querySelector(".results").classList.add("errored");
     const slot = $("hero-error");
     slot.textContent = err.message;
@@ -557,17 +619,22 @@ async function updatePrice() {
     $("timing-line").textContent = "";
     paintQuoteActions();
   } finally {
-    if (seq === priceSeq) document.querySelector(".results").classList.remove("updating");
+    if (isCurrent()) document.querySelector(".results").classList.remove("updating");
   }
 }
 
-// ──────────────────────────────────────────────────────── convergence plot ──
-async function updateConvergence() {
+// Convergence plot.
+async function updateConvergence(isCurrent = () => true) {
   try {
     const d = await api("/api/convergence", optionBody());
+    if (!isCurrent()) return;
     clearShimmer("plot-convergence");
     clearPanelMessage("plot-convergence");
 
+    // Four full-length legend entries take four rows at phone width and leave
+    // the plot half its box, so the names are shortened there. The panel's
+    // description carries the long forms.
+    const narrow = isNarrow();
     const xs = d.mc_points.map((p) => p.n_paths);
     const traces = [
       { // CI band (upper then lower with fill)
@@ -576,12 +643,12 @@ async function updateConvergence() {
             ...d.mc_points.map((p) => p.ci_low).reverse()],
         fill: "toself", fillcolor: "rgba(196,131,92,0.15)",
         line: { width: 0 }, hoverinfo: "skip",
-        name: "95% confidence interval", showlegend: true,
+        name: narrow ? "95% band" : "95% confidence interval", showlegend: true,
       },
       {
         x: xs, y: d.mc_points.map((p) => p.price),
         mode: "lines+markers",
-        name: d.engine === "rough_bergomi"
+        name: d.engine === "rough_bergomi" && !narrow
           ? "Simulation (rough volatility)" : "Simulation",
         line: { color: COLORS.mc, width: 2.5, shape: "spline" },
         marker: { size: 7, color: COLORS.mc },
@@ -592,13 +659,14 @@ async function updateConvergence() {
         x: [xs[0], xs[xs.length - 1]], y: [d.nn.price, d.nn.price],
         mode: "lines", name: "Model price",
         line: { color: COLORS.nn, width: 2.5, dash: "dash" },
-        hovertemplate: "NN: $%{y:.4f}<extra></extra>",
+        hovertemplate: "Model price: $%{y:.4f}<extra></extra>",
       },
       {
         x: [xs[0], xs[xs.length - 1]],
         y: [d.reference.price, d.reference.price],
         mode: "lines",
-        name: `High-precision reference (${Math.round(d.reference.n_paths / 1000)}k paths)`,
+        name: (narrow ? "Reference (" : "High-precision reference (") +
+          Math.round(d.reference.n_paths / 1000) + (narrow ? "k)" : "k paths)"),
         line: { color: "rgba(255,255,255,0.45)", width: 1.5, dash: "dot" },
         hovertemplate: "Reference: $%{y:.4f}<extra></extra>",
       },
@@ -613,21 +681,21 @@ async function updateConvergence() {
                zeroline: false, tickformat: ".3f" },
     }, PLOT_CONFIG);
   } catch (err) {
-    panelMessage("plot-convergence", err.message);
+    if (isCurrent()) panelMessage("plot-convergence", err.message);
   }
 }
 
-// ─────────────────────────────────────────────────────── IV surface plot ──
 // The 0DTE implied-vol surface depends only on (sigma, r): it is the
-// no-arbitrage surrogate's smile at every maturity in the 0DTE box, with the
-// Durrleman butterfly function g and the calendar slope dw/dT evaluated by
-// autograd on the same grid so the "arbitrage-free" claim is checked live.
-async function updateIVSurface() {
+// no-arbitrage surrogate's smile at every maturity in the 0DTE box. The
+// Durrleman butterfly function g and the calendar slope dw/dT are evaluated by
+// autograd on the same grid, so both conditions are checked on every draw.
+async function updateIVSurface(isCurrent = () => true) {
   const panel = $("panel-ivsurface");
   if (!panel) return;
   try {
     const d = await api("/api/iv-surface",
       { sigma: state.sigma, rate: state.rate, resolution: 41 });
+    if (!isCurrent()) return;
     clearShimmer("plot-ivsurface");
     clearPanelMessage("plot-ivsurface");
     const fmtK = (v) => v.toFixed(3);
@@ -669,22 +737,23 @@ async function updateIVSurface() {
       },
     }, PLOT_CONFIG);
   } catch (err) {
-    const sub = $("ivsurface-sub");
-    if (sub) sub.textContent = err.message;
-    panelMessage("plot-ivsurface", err.message);
+    // The message goes in the plot area. The panel's description stays, since
+    // a later successful draw does not rewrite it.
+    if (isCurrent()) panelMessage("plot-ivsurface", err.message);
   }
 }
 
-// ─────────────────────────────────────────────────────────── latency plot ──
+// Latency plot.
 async function updateBenchmark() {
   const btn = $("btn-benchmark");
   btn.disabled = true;
+  // The initial-load block leaves a hint in this panel, and Plotly renders
+  // into the same div without clearing it.
+  $("plot-latency").querySelector(".latency-hint")?.remove();
   try {
     const d = await api("/api/benchmark", optionBody());
     clearShimmer("plot-latency");
-    // Remove the "click Re-run" hint the initial-load block leaves in this
-    // panel; Plotly renders into the same div without clearing it.
-    $("plot-latency").querySelector(".latency-hint")?.remove();
+    clearPanelMessage("plot-latency");
 
     const rows = [
       ...d.mc.map((r) => ({ ...r, color: COLORS.mc })),
@@ -707,22 +776,27 @@ async function updateBenchmark() {
                gridcolor: COLORS.grid, zeroline: false },
       yaxis: { gridcolor: "rgba(0,0,0,0)", automargin: true },
     }, PLOT_CONFIG);
+  } catch (err) {
+    // A refused contract or a busy server is reported in the panel; without
+    // this the rejection surfaces only in the console.
+    panelMessage("plot-latency", err.message);
   } finally { btn.disabled = false; }
 }
 
-// ─────────────────────────────────────────────────────────── surface plot ──
-async function updateSurface() {
+// Price surface plot.
+async function updateSurface(isCurrent = () => true) {
   try {
     const d = await api("/api/surface", {
       sigma: state.sigma, rate: state.rate, strike: state.strike,
       option_type: state.optionType,
     });
+    if (!isCurrent()) return;
     clearShimmer("plot-surface");
     clearPanelMessage("plot-surface");
 
     $("surface-stat").textContent = "This grid is " +
       d.n_prices.toLocaleString() + " separate prices, computed in " +
-      fmtMs(d.latency_ms) + " on this server: about " +
+      fmtMs(d.latency_ms) + " on this server, about " +
       Math.round(d.prices_per_second / 1000).toLocaleString() +
       ",000 prices per second in a batch.";
 
@@ -769,13 +843,12 @@ async function updateSurface() {
       });
     }
   } catch (err) {
-    panelMessage("plot-surface", err.message);
+    if (isCurrent()) panelMessage("plot-surface", err.message);
   }
 }
 
-// ────────────────────────────────────────────────── error-distribution plot ──
-// Units are 1e-4 of the quantity: price errors are bps of strike; delta and
-// vega errors are x10^-4 (per unit vol for vega).
+// Error-distribution plot. Units are 1e-4 of the quantity: price errors are
+// bps of strike; delta and vega errors are x10^-4 (per unit vol for vega).
 const ERROR_METRA = {
   price: { label: "pricing error (bps of strike)", unit: "bps" },
   delta: { label: "delta error (×10⁻⁴)", unit: "×10⁻⁴" },
@@ -784,7 +857,7 @@ const ERROR_METRA = {
   vega: { label: "vega error (×10⁻⁴ of strike, per 1.00 of σ)", unit: "×10⁻⁴" },
   // Measured at unit strike, so this is d²(C/K)/d(S/K)²: the risk strip's
   // per-$ gamma at a $100 strike is a hundredth of it.
-  gamma: { label: "gamma error (×10⁻⁴ of strike, per unit of S/K²)", unit: "×10⁻⁴" },
+  gamma: { label: "gamma error (×10⁻⁴ of strike, per unit of (S/K)²)", unit: "×10⁻⁴" },
 };
 let errorReport = null;
 let errorMetric = "price";
@@ -806,15 +879,13 @@ function renderErrorDistribution() {
     "drawn from the same parameter box, so this is its error inside that box. " +
     "The short-dated model is measured separately, on the methodology page.";
   const e = d.ensemble[errorMetric];
-  // The mean is a signed bias, not a third dispersion statistic: most of the
-  // RMSE on price is the ensemble sitting rich, and that is the part a reader
-  // would act on. Name it, and give the scatter that is left after it.
+  // The mean is a signed bias. The sentence names it and gives the scatter
+  // that remains once it is removed, sqrt(rmse² − bias²).
   const bias = e.mean_bps;
   const scatter = Math.sqrt(Math.max(e.rmse_bps * e.rmse_bps - bias * bias, 0));
   const ofStrike = errorMetric === "price" ? " of strike" : "";
-  // Only price carries a mean the sample can resolve. On delta and vega the
-  // mean sits well inside the standard error of the mean, so calling it a
-  // systematic bias would assert a direction the 600 points do not support.
+  // A mean is called a systematic bias only when it exceeds two standard
+  // errors of the mean. Inside that, the sample resolves no direction.
   const seOfMean = scatter / Math.sqrt(Math.max(d.n_points, 1));
   const biasResolved = Math.abs(bias) > 2 * seOfMean;
   const biasClause = biasResolved
@@ -827,9 +898,9 @@ function renderErrorDistribution() {
       " of scatter around that bias."
     : "The mean error is " + (bias >= 0 ? "+" : "−") +
       Math.abs(bias).toFixed(1) + " " + meta.unit +
-      ", inside the standard error of the mean over these " +
+      ", inside two standard errors of the mean over these " +
       d.n_points.toLocaleString() +
-      " points, so the errors scatter around zero rather than leaning one way.";
+      " points, so the sample resolves no bias in either direction.";
   // Gamma's reference is itself a Monte Carlo estimate (a conditional
   // density at the strike), so its own noise is part of the measured gap.
   const refClause = (errorMetric === "gamma" && d.gamma_reference_se_rms_bps != null)
@@ -848,19 +919,21 @@ function renderErrorDistribution() {
   const span = Math.max(Math.abs(Math.min(...all)), Math.abs(Math.max(...all)));
   const binSize = (2 * span) / 46;
 
+  // At phone width the legend names the two histograms and the sentence above
+  // carries their typical errors.
+  const legendName = (label, s) => isNarrow() ? label
+    : label + ", typical error " + s.rmse_bps.toFixed(1) + " " + meta.unit;
   const traces = [
     {
       type: "histogram", x: single,
-      name: "one network, typical error " +
-        d.single[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit,
+      name: legendName("one network", d.single[errorMetric]),
       marker: { color: "rgba(143,123,255,0.5)",
                 line: { color: COLORS.violet, width: 1 } },
       xbins: { start: -span, end: span, size: binSize },
     },
     {
       type: "histogram", x: ens,
-      name: "five averaged, typical error " +
-        d.ensemble[errorMetric].rmse_bps.toFixed(1) + " " + meta.unit,
+      name: legendName("five averaged", d.ensemble[errorMetric]),
       marker: { color: "rgba(90,140,200,0.45)",
                  line: { color: COLORS.nn, width: 1 } },
       xbins: { start: -span, end: span, size: binSize },
@@ -889,23 +962,23 @@ async function loadErrorDistribution() {
   }
 }
 
-// ──────────────────────────────────────────────────────────── model badge ──
+// Model badge and model card.
 let modelInfo = null;
 
-// Two different networks price this page. Above 12 trading days it is the
-// averaged-contract (Asian) ensemble, whose held-out error is artifacts/
-// eval.json; at or below it a rough-Bergomi network, whose own validation
-// error arrives on the wire as zero_dte.val_rmse_bps_of_strike. Every accuracy
-// sentence on the page is built through these helpers so that it names the
-// model it is quoting and can never carry the other one's number.
+// Two networks price this page. Above 12 trading days it is the
+// averaged-contract (Asian) ensemble, whose held-out error is
+// artifacts/eval.json. At or below, it is a rough-Bergomi network whose
+// validation error arrives as zero_dte.val_rmse_bps_of_strike. Accuracy
+// sentences are built through these helpers so each names the model it quotes.
 function shortDatedRmseBps() {
   const z = modelInfo && modelInfo.zero_dte;
   return z && z.available && typeof z.val_rmse_bps_of_strike === "number"
     ? z.val_rmse_bps_of_strike : null;
 }
 
-// Typical held-out error of whichever model priced the contract on screen,
-// in basis points of strike.
+// Typical error of the model that priced the contract on screen, in basis
+// points of strike: held-out for the ensemble, validation for the short-dated
+// network.
 function activeModelRmseBps() {
   if (!modelInfo) return null;
   return is0dte() ? shortDatedRmseBps()
@@ -914,9 +987,8 @@ function activeModelRmseBps() {
 
 // Band the cross-check card judges the network-to-simulation gap against: the
 // 95th percentile of the averaged ensemble's held-out errors above the cutoff,
-// the short-dated network's own validation RMSE below it. Judging a
-// short-dated quote against the averaged ensemble's quantile is what sent a
-// contract behaving exactly as documented into the alarming state.
+// the short-dated network's validation RMSE at or below it. Each regime is
+// judged against the error of the model that priced it.
 function crossCheckTolBps() {
   if (is0dte()) {
     const z = shortDatedRmseBps();
@@ -940,34 +1012,44 @@ function nnSubText() {
     (band >= 0.1 ? band.toFixed(2) : band.toFixed(3)) + " at this strike";
 }
 
+// Both teasers quote a benchmark measured on a fixed set, so the sentence
+// that says so is written once.
+const FIXED_BENCHMARK = " These figures come from a fixed benchmark set and do " +
+  "not change with the contract on screen.";
+
+// The short-dated figures against high-precision references are the six-smile
+// re-pricing in docs/no_arbitrage_surface.md, section 4 (0.79 to 3.76 bps
+// RMSE, largest single strike 14.4 bps), also tabulated on the methodology
+// page. They are constants of that audit: update them with it when the
+// short-dated checkpoint is retrained.
 function accuracyTeaserText() {
   if (!modelInfo) return "";
   if (is0dte()) {
     const r = shortDatedRmseBps();
     return (r == null
-      ? "Short-dated model: its held-out error is on the methodology page."
+      ? "Short-dated model: its measured error is on the methodology page."
       : "Short-dated model: typical error " + r.toFixed(1) + " basis points of "
-        + "strike against its 20,000-path training labels, 0.8 to 3.8 against "
-        + "400,000-path references, worst single strike 14.4 bps.")
-      + " A standing benchmark, measured once; it does not move with the "
-      + "contract on screen. The chart below measures the averaged-contract "
-      + "ensemble, not this model.";
+        + "strike against its 20,000-path training labels, and 0.8 to 3.8 on "
+        + "six smiles re-priced against 4 x 400,000-path references, with a "
+        + "largest single-strike error of 14.4 bps.")
+      + FIXED_BENCHMARK + " The chart below belongs to the averaged-contract "
+      + "ensemble.";
   }
   const e = modelInfo.eval;
   if (!e) return "";
   return "Averaged-contract ensemble: typical error " +
     e.ensemble.price.rmse_bps.toFixed(1) + " basis points of strike on " +
     e.n_points.toLocaleString() + " held-out contracts against " +
-    (e.ref_paths / 1000).toFixed(0) + ",000-path references. A standing " +
-    "benchmark, measured once; it does not move with the contract on screen. " +
-    "Individual contracts run higher: " +
+    (e.ref_paths / 1000).toFixed(0) + ",000-path references. Individual " +
+    "contracts run higher: " +
     e.ensemble.price.p95_abs_bps.toFixed(1) + " bps at the 95th percentile, " +
-    e.ensemble.price.max_abs_bps.toFixed(1) + " bps at the worst point measured.";
+    e.ensemble.price.max_abs_bps.toFixed(1) + " bps at the worst point measured." +
+    FIXED_BENCHMARK;
 }
 
 // Rows of the model-badge popover. The trained box differs by regime and the
-// sidebar warning quotes the live one, so whichever box is in force is named
-// first and both are on the card.
+// sidebar warning quotes the one in force, so that box is named first and
+// both are on the card.
 function modelCardRows() {
   const m = modelInfo;
   const p = m.param_ranges || {};
@@ -1012,13 +1094,13 @@ function modelCardRows() {
     if (row) pairs.push(row);
   // The short-dated checkpoint carries its own provenance: whether its
   // rough-Bergomi parameters came from an accepted market calibration, and
-  // which one. Every field comes from the checkpoint; nothing is typed here.
+  // which one. Every field comes from the checkpoint.
   if (z && z.available) {
     const hurst = typeof z.H === "number" ? ", Hurst index " + z.H.toFixed(3) : "";
     pairs.push(["Short-dated model", (z.calibrated
       ? "rough Bergomi calibrated to market option prices"
-      : "rough Bergomi with default parameters, not market-calibrated") + hurst +
-      (z.calibration_note ? ". " + z.calibration_note : "")]);
+      : "rough Bergomi with default parameters, without a market calibration") + hurst +
+      (z.calibration_note ? ". " + esc(z.calibration_note) : "")]);
   }
   return pairs;
 }
@@ -1093,7 +1175,7 @@ async function loadModelInfo() {
 }
 
 // The model card opens on click and closes on the next click outside it or
-// on Escape, so it never sits over the page uninvited.
+// on Escape.
 (() => {
   const btn = $("model-badge"), card = $("model-card");
   const setOpen = (open) => {
@@ -1112,19 +1194,47 @@ async function loadModelInfo() {
   });
 })();
 
-// ─────────────────────────────────────────────────────────────── wire up ──
-const refreshFast = debounce(updatePrice, 220);
-const refreshSlow = debounce(() => { updateConvergence(); updateSurface(); updateXAI(); updateIVSurface(); }, 650);
+// Wiring. Each panel gets a single-flight runner, and the debounced refreshes
+// call the runners.
+const runPrice = latestOnly(updatePrice);
+const runConvergence = latestOnly(updateConvergence);
+const runSurface = latestOnly(updateSurface);
+const runXAI = latestOnly(updateXAI);
+const runIVSurface = latestOnly(updateIVSurface);
+
+// The two WebGL surfaces sit in the collapsed range group, and each redraw
+// rebuilds a 3D scene on the main thread. While the group is closed a slider
+// stop marks them stale, and the redraw happens when the group opens.
+let surfacesStale = false;
+function refreshSurfaces() {
+  const g = $("group-domain");
+  if (g && !g.open) { surfacesStale = true; return; }
+  surfacesStale = false;
+  runSurface();
+  runIVSurface();
+}
+
+const refreshFast = debounce(runPrice, 220);
+const refreshSlow = debounce(() => { runConvergence(); runXAI(); refreshSurfaces(); }, 650);
 const refreshAll = () => { refreshReadouts(); refreshFast(); refreshSlow(); syncURL(); };
+
+// A chart drawn while its group was collapsed is laid out against a box with
+// no width, so it is resized when the group opens.
+document.querySelectorAll("details.group-details").forEach((g) => {
+  g.addEventListener("toggle", () => {
+    if (!g.open) return;
+    g.querySelectorAll(".js-plotly-plot").forEach((p) => Plotly.Plots.resize(p));
+    if (g.id === "group-domain" && surfacesStale) refreshSurfaces();
+  });
+});
 
 bindSlider("spot", (v) => { state.spot = v; refreshAll(); });
 bindSlider("strike", (v) => { state.strike = v; refreshAll(); });
 // Maturities strictly between the 0DTE cutoff (12/252) and the Asian net's
-// 0.05y training floor are covered by neither model; the API rejects them
-// with a 422. The slider's 0.001 grid has three such positions (0.048,
-// 0.049 and, because of float rounding, 0.047619 itself is unreachable), so
-// snap to whichever valid endpoint is nearer: 0.047 (serves as 12 trading
-// days) or 0.05.
+// 0.05y training floor are covered by neither model, and the API rejects them
+// with a 422. The slider's 0.001 grid has two such positions (0.048 and
+// 0.049), so the value snaps to the nearer valid endpoint: 0.047, which is
+// priced as 12 trading days, or 0.05.
 const ASIAN_FLOOR = 0.05;
 function snapMaturity(v) {
   if (v > ZERO_DTE_CUTOFF && v < ASIAN_FLOOR) {
@@ -1146,7 +1256,7 @@ bindSegmented("error-metric", (v) => { errorMetric = v; renderErrorDistribution(
 
 $("btn-benchmark").addEventListener("click", updateBenchmark);
 
-// Run the pricer backwards: which volatility reproduces this premium?
+// Solves for the volatility input that reproduces a typed premium.
 async function solveImpliedVol() {
   const box = $("in-target-price"), note = $("iv-solve-note");
   const btn = $("btn-solve-iv");
@@ -1166,7 +1276,8 @@ async function solveImpliedVol() {
       rate: state.rate, option_type: state.optionType, price: target,
     });
     if (!d.bracketed) {
-      // Say what the model can and cannot reach rather than clamping quietly.
+      // No volatility in the trained range produces this premium. The note
+      // gives the reachable price range and the volatility stays as it was.
       note.textContent = "No volatility between " +
         (d.search_range[0] * 100).toFixed(0) + "% and " +
         (d.search_range[1] * 100).toFixed(0) + "% prices this contract at $" +
@@ -1183,21 +1294,20 @@ async function solveImpliedVol() {
     setSlider("sigma", pct);
     $("in-sigma").value = pct;
     refreshAll();
-    // What the solver returns is the volatility INPUT that reproduces the
-    // premium, and its last digits are inside the pricer's own error: vega
-    // converts that error into volatility points, so the note says how far the
-    // answer can move rather than quoting it to a hundredth.
+    // The solver returns the volatility input that reproduces the premium,
+    // and its last digits are inside the pricer's error. Vega converts that
+    // error into volatility points, and the note quotes that width.
     const bps = activeModelRmseBps();
     const vega = lastGreeks ? lastGreeks.vega : null;
     const volPts = (bps != null && vega && Math.abs(vega) > 1e-9)
       ? Math.abs(bps * state.strike / 1e4 / vega) : null;
     note.textContent = "$" + d.target_price.toFixed(4) + " is reproduced by " +
       pct.toFixed(1) + "% volatility " + (is0dte()
-        ? "in the short-dated model, where it sets the rough-volatility " +
-          "forward variance (ξ₀ = σ²) rather than a Black-Scholes implied " +
-          "volatility."
-        : "in this average-price model. That is a model input, not a " +
-          "market-convention implied volatility.") +
+        ? "in the short-dated model, where σ sets the rough-volatility " +
+          "forward variance (ξ₀ = σ²). It is a different quantity from a " +
+          "Black-Scholes implied volatility."
+        : "in this average-price model. It is this model's volatility input " +
+          "and a different quantity from a market-quoted implied volatility.") +
       (volPts != null
         ? " The model's own " + bps.toFixed(1) + " bps price error moves it by " +
           "about " + volPts.toFixed(2) + " of a volatility point."
@@ -1240,16 +1350,16 @@ bindSizeField("in-mult", "mult", { min: 1, max: 10000, integer: true });
 
 bindSegmented("greek-basis", (v) => { greekBasis = v; renderGreeks(); });
 
-// A quote that can leave the page: the contract, every input, the price, the
-// Greeks, the Monte Carlo cross-check and when it was produced. The check runs
-// the same model's dynamics through a different numerical method, so it is a
-// cross-check and not an independent valuation.
+// The exported quote: the contract, every input, the price, the Greeks, the
+// Monte Carlo check and when it was produced. The check runs the same model's
+// dynamics through a different numerical method, so the rows label it a
+// cross-check. It is the same valuation model computed a second way.
 function quoteRows() {
   const g = lastGreeks || {};
   const n = positionSize();
-  // This row leads the clipboard quote and the downloaded CSV, the one
-  // artifact that leaves the page, so the stamp is the reader's own clock and
-  // it names the zone. sv-SE is the ISO-shaped locale; any locale would do.
+  // This row leads the clipboard quote and the downloaded CSV. The stamp is
+  // the browser's local clock and names its zone. sv-SE formats the date in
+  // ISO order.
   const stamp = new Date().toLocaleString("sv-SE", { hour12: false });
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
   const rows = [
@@ -1264,9 +1374,9 @@ function quoteRows() {
     ["Type", state.optionType],
     ["Contracts", state.qty],
     ["Shares per contract", state.mult],
-    // The pricer values an option on ONE unit of underlying, so the price and
-    // the five Greeks below are per share; multiply by the shares per contract
-    // for a contract, and by the position rows below for a book.
+    // The pricer values an option on one unit of underlying, so the price and
+    // the five Greeks below are per share. The whole-position rows scale them
+    // by contracts times shares per contract.
     ["Price per share", lastNNPrice == null ? "" : lastNNPrice.toFixed(6)],
     ["Position value", lastNNPrice == null ? "" : (lastNNPrice * n).toFixed(2)],
     ["Delta per share", g.delta == null ? "" : g.delta.toFixed(6)],
@@ -1286,10 +1396,9 @@ function quoteRows() {
     rows.push(["Cross-check 95% half-width", lastCheck.half.toFixed(6)]);
   }
   if (modelInfo) {
-    // Which network priced this quote, and its own error - not the other
-    // one's. Below 12 trading days the short-dated ensemble produced the row
-    // above, and quoting the averaged ensemble's figure beside it would put
-    // the wrong accuracy on the only artifact that leaves the page.
+    // The network that priced this quote, and that network's error. At or
+    // below 12 trading days the short-dated ensemble produced the price row,
+    // so its error is the one exported.
     rows.push(["Pricing model", is0dte()
       ? "short-dated rough-volatility ensemble"
       : modelInfo.n_members + " networks x " + modelInfo.n_parameters +
@@ -1334,15 +1443,15 @@ $("btn-download-quote").addEventListener("click", () => {
   flashQuoteNote("CSV downloaded");
 });
 
-// ──────────────────────────────────────────── URL state, presets, sharing ──
-// Every slider, the contract type, the tab and the hedging cost are mirrored
-// into the query string so a specific finding can be sent as a link, e.g.
+// URL state, presets and sharing. Every slider, the contract type, the tab and
+// the hedging cost are mirrored into the query string so a specific finding
+// can be sent as a link, e.g.
 //   /?tab=pricing&spot=160&strike=100&T=1&sigma=0.25&rate=0.04&type=put
 const TAB_IDS = { pricing: "tab-pricing", stream: "tab-stream",
                   hedging: "tab-hedging", ai: "tab-ai" };
-// The tabs now read Quote / Hedge / Live / Desk note. Links already in the
-// wild use the old keys, and serializeState keeps writing them, so the new
-// vocabulary is accepted as a read-only alias.
+// The tab labels read Quote / Hedge / Live / Desk note, and the URL keys are
+// pricing / hedging / stream / ai. Shared links carry those keys and
+// serializeState writes them, so the label vocabulary is accepted on read only.
 const TAB_ALIAS = { quote: "pricing", price: "pricing", hedge: "hedging",
                     live: "stream", monitor: "stream", note: "ai",
                     desk: "ai", report: "ai" };
@@ -1444,9 +1553,11 @@ function showTab(key) {
     b.classList.toggle("active", b.dataset.tab === id));
   document.querySelectorAll(".tab-pane").forEach((p) =>
     p.style.display = p.id === id ? "flex" : "none");
-  // Each pane's content starts at the top; landing mid-scroll shows a void.
+  // Each pane's content starts at the top, so the scroll position resets
+  // with the tab.
   window.scrollTo(0, 0);
-  // charts drawn or window-resized while this pane was hidden need a nudge
+  // Charts drawn or resized while this pane was hidden were laid out against
+  // a box with no width; resize them once the pane is visible.
   requestAnimationFrame(() => {
     document.querySelectorAll("#" + id + " .js-plotly-plot")
       .forEach((p) => Plotly.Plots.resize(p));
@@ -1454,8 +1565,9 @@ function showTab(key) {
   syncURL();
 }
 
-// The Write summary button used to be a black box: it silently ran the
-// hedging simulation and the attribution before writing anything.
+// Write summary runs the attribution and the hedging simulation first when
+// either is missing. These chips show which inputs are ready and which will
+// be computed.
 function renderReportInputs() {
   const el = $("report-inputs");
   if (!el) return;
@@ -1494,13 +1606,15 @@ $("btn-share").addEventListener("click", async () => {
   setTimeout(() => { btn.textContent = "Copy link"; btn.classList.remove("copied"); }, 1600);
 });
 
-// Parameter rail: on phones it starts collapsed so the results are the
-// first thing on screen; the choice is remembered. Desktop never collapses
-// (the toggle is display:none there), so the class is harmless.
+// Parameter rail. Up to 1100px wide, where the rail stacks above the stage, it
+// starts collapsed so the results are the first thing on screen, and the
+// choice is remembered. This width must equal the breakpoint of the
+// .rail.collapsed rules in styles.css. Wider layouts hide the toggle, and the
+// class has no effect there.
 (() => {
   const rail = $("controls"), btn = $("rail-toggle");
-  const phone = window.matchMedia("(max-width: 800px)").matches;
-  let collapsed = phone;
+  const stacked = window.matchMedia("(max-width: 1100px)").matches;
+  let collapsed = stacked;
   try {
     const saved = localStorage.getItem("nol.rail");
     if (saved) collapsed = saved === "collapsed";
@@ -1517,9 +1631,8 @@ $("btn-share").addEventListener("click", async () => {
   });
 })();
 
-// "How to read this page": a disclosure beside the lede, so the explanation
-// is always one click away instead of a paragraph that blocks the result
-// once and then is dismissed forever.
+// "What this tool does" is a disclosure beside the lede, so the explanation
+// stays one click away and takes no room above the result.
 (() => {
   const btn = $("btn-howto"), box = $("howto");
   btn.addEventListener("click", () => {
@@ -1530,9 +1643,8 @@ $("btn-share").addEventListener("click", async () => {
   });
 })();
 
-// One tap-to-reveal help primitive for every [data-help] control. Native
-// title tooltips never appear on touch, so on a phone the page had no
-// explanations at all.
+// One tap-to-reveal help bubble for every [data-help] control. Native title
+// tooltips do not appear on touch screens.
 (() => {
   const bubble = $("help-bubble");
   let anchor = null;
@@ -1563,8 +1675,8 @@ $("btn-share").addEventListener("click", async () => {
   window.addEventListener("resize", close);
 })();
 
-// Expiry quick-picks: the short-dated regime is 2% of the slider's track,
-// so landing on it by dragging is luck.
+// Expiry quick-picks. The short-dated regime is 2% of the slider's track and
+// hard to reach by dragging.
 document.querySelectorAll("#maturity-quickpick .pick").forEach((btn) => {
   btn.addEventListener("click", () => {
     const v = parseFloat(btn.dataset.t);
@@ -1574,14 +1686,13 @@ document.querySelectorAll("#maturity-quickpick .pick").forEach((btn) => {
   });
 });
 
-// ───────────────────────────────────────────────────────────── Ticker API ──
-// The pricer works in moneyness, so any spot level is exact - we rescale the
-// spot/strike sliders around the live price instead of clamping into the
-// demo range, and set the strike at-the-money.
+// Ticker lookup. The pricer works in moneyness, so any spot level is exact.
+// The spot and strike sliders are rescaled around the fetched price and the
+// strike is set at the money.
 let marketData = null;
 
-// backend/quant/market_data.py returns the symbol the risk-free rate actually
-// came from: ^IRX first, ^TNX when that fails.
+// backend/quant/market_data.py returns the symbol the risk-free rate came
+// from: ^IRX first, ^TNX when that fails.
 const RATE_SOURCE_NAMES = {
   "^IRX": "13-week Treasury bill (^IRX)",
   "^TNX": "10-year Treasury note (^TNX)",
@@ -1608,9 +1719,9 @@ async function fetchTicker() {
     const d = await api("/api/market/" + encodeURIComponent(t));
     marketData = d;
     rescaleSpotSliders(d.spot);
-    // A range input snaps its value to the step, so a 1% volatility step
-    // turned a fetched 12.9% into 13% while the chip still advertised 12.9.
-    // Fine steps keep the readout, the chip and the priced inputs identical.
+    // A range input snaps its value to the step. At a 1% step a fetched 12.9%
+    // volatility becomes 13% while the chip shows 12.9, so the steps are made
+    // fine enough to keep the readout, the chip and the priced inputs equal.
     $("in-sigma").step = "0.1";
     $("in-rate").step = "0.01";
     $("in-sigma").value = (d.sigma * 100).toFixed(1);
@@ -1618,27 +1729,25 @@ async function fetchTicker() {
     for (const id of ["in-spot", "in-strike", "in-sigma", "in-rate"])
       $(id).dispatchEvent(new Event("input"));
 
-    // market_data tries ^IRX and falls back to ^TNX, the 10-year, and says
-    // which in rate_source; the sidebar promises that this chip names the
-    // instrument, so it reads the field rather than asserting the bill. The
-    // quote is used as the model's continuously compounded rate without
-    // conversion, which is what "used as" says and "converted to" would not.
+    // market_data tries ^IRX and falls back to ^TNX, the 10-year, and reports
+    // which in rate_source. The chip names the instrument from that field.
+    // The quote enters the model as a continuously compounded rate without
+    // conversion, hence "used as".
     const rateName = RATE_SOURCE_NAMES[d.rate_source] ||
       ("Treasury yield" + (d.rate_source ? " (" + d.rate_source + ")" : ""));
     chip.innerHTML =
-      "<b>" + d.ticker + "</b> $" + d.spot.toLocaleString(undefined,
+      "<b>" + esc(d.ticker) + "</b> $" + d.spot.toLocaleString(undefined,
         { maximumFractionDigits: 2 }) +
       ", one-year realised volatility " + (d.sigma_raw * 100).toFixed(1) +
-      "%, " + rateName + " " + (d.rate_raw * 100).toFixed(2) +
+      "%, " + esc(rateName) + " " + (d.rate_raw * 100).toFixed(2) +
       "%, used as the model's continuously compounded rate" +
-      "<br>as of " + d.as_of.slice(0, 16).replace("T", " ") + " " +
-      (d.as_of_tz || "UTC") + ", the time the server fetched it" +
-      // The spot is a trade only when the quote endpoint answered; otherwise
-      // it is the previous session's close, which is what it always is outside
-      // market hours. The chip says which rather than leaving the reader to
-      // assume the first.
+      "<br>as of " + esc(d.as_of.slice(0, 16).replace("T", " ")) + " " +
+      esc(d.as_of_tz || "UTC") + ", the time the server fetched it" +
+      // The spot is a trade only when the quote endpoint answered. Otherwise
+      // it is the previous session's close, as it always is outside market
+      // hours, and the chip says which.
       (d.spot_source === "last_close"
-        ? "; the spot is the last daily close, not a trade"
+        ? "; the spot is the last daily close"
         : d.spot_source === "last_price" ? "; the spot is the last trade" : "") +
       (Math.abs(state.spot - d.spot) > 0.005
         ? "<br>priced at $" + state.spot.toLocaleString() +
@@ -1650,7 +1759,7 @@ async function fetchTicker() {
     chip.classList.add("show");
   } catch (err) {
     marketData = null;
-    chip.innerHTML = "<span class='warn'>No market data for \"" + t +
+    chip.innerHTML = "<span class='warn'>No market data for \"" + esc(t) +
       "\". Check the symbol, or leave it blank to keep the example contract.</span>";
     chip.classList.add("show");
     refreshReadouts();
@@ -1663,7 +1772,7 @@ $("in-ticker").addEventListener("keydown", (e) => {
   if (e.key === "Enter") fetchTicker();
 });
 
-// ───────────────────────────────────────────────────────────── Tabs ──
+// Tabs.
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     const key = Object.keys(TAB_IDS).find((k) => TAB_IDS[k] === btn.dataset.tab);
@@ -1671,15 +1780,19 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
-// ───────────────────────────────────────────────────────────── XAI ──
+// Price attribution (Integrated Gradients).
 let lastAttributions = null;
-// The desk note quotes the Integrated Gradients baseline by value, so it needs
-// the same baseline_price this panel prints; keep it beside the attributions
-// rather than re-deriving it from a second /api/explain call.
+// The desk note quotes the Integrated Gradients baseline by value, so the
+// baseline_price this panel prints is kept beside the attributions and the
+// note needs no second /api/explain call.
 let lastBaselinePrice = null;
-async function updateXAI() {
+// The panel's static copy, restored when a contract has no attribution.
+const XAI_SUB_DEFAULT = $("xai-sub").textContent;
+const XAI_STAT_DEFAULT = $("xai-stat").textContent;
+async function updateXAI(isCurrent = () => true) {
   try {
     const d = await api("/api/explain", optionBody());
+    if (!isCurrent()) return;
     clearShimmer("plot-xai");
     clearPanelMessage("plot-xai");
     lastAttributions = d.attributions;
@@ -1699,16 +1812,18 @@ async function updateXAI() {
     $("xai-sub").textContent = "Starting from a minimal at-the-money option " +
       "worth $" + d.baseline_price.toFixed(2) + ", the inputs add up to this " +
       "contract's $" + d.target_price.toFixed(2) + ". " +
-      top.name.replace(" (moneyness)", "") + " contributes the most.";
+      top.name + " contributes the most.";
     if (Math.abs(d.attributions.spot) < 0.005) {
       $("xai-sub").textContent += " The spot bar is near zero because this " +
         "contract is at the money, the same as the baseline option.";
     }
     // Integrated Gradients is complete against its baseline: the four
-    // contributions sum to the price MINUS the baseline option, so the
+    // contributions sum to the price minus the baseline option, so the
     // baseline has to be in the sentence for the arithmetic to close.
+    const bDays = Math.round(bT * 252);
     $("xai-stat").textContent = "Integrated Gradients against a baseline option " +
-      "at " + (bT < 13 / 252 ? Math.round(bT * 252) + " days" : bT + " years") +
+      "at " + (bT < 13 / 252 ? bDays + (bDays === 1 ? " trading day" : " trading days")
+                             : bT + (bT === 1 ? " year" : " years")) +
       " to expiry, 5% volatility and a zero rate" +
       (d.regime === "0dte_rough_bergomi" ? ", in the short-dated regime" : "") +
       ". The four contributions plus that baseline's $" +
@@ -1736,13 +1851,22 @@ async function updateXAI() {
       yaxis: { gridcolor: "rgba(0,0,0,0)", automargin: true },
     }, PLOT_CONFIG);
   } catch (err) {
-    $("xai-sub").textContent = err.message;
+    if (!isCurrent()) return;
+    // A refused contract has no attribution. The previous contract's is
+    // dropped so that neither this panel nor the desk note can present it as
+    // this contract's, and the plot area says why (for a 422, that the
+    // contract is outside the trained range).
+    lastAttributions = null;
+    lastBaselinePrice = null;
+    renderReportInputs();
+    $("xai-sub").textContent = XAI_SUB_DEFAULT;
+    $("xai-stat").textContent = XAI_STAT_DEFAULT;
     panelMessage("plot-xai", err.message);
   }
 }
 
-// ───────────────────────────────────────────────────────────── Hedging ──
-// P&L is in strike units; scale by the current strike into dollars.
+// Hedging. P&L is in strike units and is scaled by the current strike into
+// dollars.
 let lastHedge = null;
 state.hedgeCost = 0.005;
 state.hedgeDynamics = "rough";
@@ -1756,31 +1880,42 @@ $("in-cost").addEventListener("input", () => {
   syncURL();
 });
 
+// Help text, keyed by the chip label as rendered.
 const CHIP_HELP = {
-  "Learned policy": "Average loss over the worst 5% of paths (the 95% conditional value at risk) when the neural policy hedges the short call. Closer to zero is better.",
-  "Delta hedge": "The same measure for a Black-Scholes delta hedge that pays the same transaction costs on every trade.",
-  "Whalley-Wilmott band": "The same measure for a delta hedge that only trades when it drifts outside a cost-aware no-trade band (Whalley and Wilmott, 1997). This is the strongest classical baseline.",
-  "Trading cost per path": "Average transaction costs paid over one path by the learned policy and by the delta hedge.",
-  "No-arbitrage check": "Whether a butterfly spread could ever have a negative price, and whether total variance ever falls as expiry lengthens. Either would be an arbitrage. Both are evaluated by automatic differentiation at every point of the displayed grid. The penalties that produced the surface are soft, so this is a check, not a proof.",
+  "Worst-5% loss, learned policy": "Average loss over the worst 5% of paths (the 95% conditional value at risk) when the neural policy hedges the short call. Closer to zero is better. The line beneath gives its mean profit or loss and its transaction costs per path.",
+  "Worst-5% loss, delta hedge": "The same measure for a Black-Scholes delta hedge that pays the same transaction costs on every trade.",
+  "Worst-5% loss, Whalley-Wilmott band": "The same measure for a delta hedge that trades only when it drifts outside a cost-aware no-trade band (Whalley and Wilmott, 1997). The band's risk aversion is tuned on a separate block of paths before the comparison.",
+  "No-arbitrage check": "Whether a butterfly spread could ever have a negative price, and whether total variance ever falls as expiry lengthens. Either would be an arbitrage. Both are evaluated by automatic differentiation at every point of the displayed grid. The penalties that produced the surface are soft, so the check covers this grid and carries no guarantee between its points.",
   "Distance from the pricing model": "How far this arbitrage-free surface sits from the pricing ensemble it was fitted to, in volatility points.",
 };
-function hedgeStatChip(k, v, cls) {
-  const help = CHIP_HELP[k] ? " title='" + CHIP_HELP[k] + "'" : "";
-  return "<div class='hedge-stat'" + help + "><span class='k'>" + k +
-    "</span><span class='v" + (cls ? " " + cls : "") + "'>" + v + "</span></div>";
+// A stat chip: label k, figure v, an optional class on the figure and an
+// optional line of small print under it. Help uses the page's one affordance,
+// a "?" button with data-help, so it opens in the tap bubble on touch screens.
+function hedgeStatChip(k, v, cls, sub) {
+  const help = CHIP_HELP[k]
+    ? "<button type='button' class='help' data-help='" + esc(CHIP_HELP[k]) + "'>?</button>"
+    : "";
+  return "<div class='hedge-stat'><span class='k'>" + k + help +
+    "</span><span class='v" + (cls ? " " + cls : "") + "'>" + v + "</span>" +
+    (sub ? "<span class='k' style='display:block;margin-top:6px'>" + sub + "</span>" : "") +
+    "</div>";
 }
 
-// Which hedger pairs the paired bootstrap separates, in the short names the
-// desk note uses, so both tabs decide "who won" the same way. The backend
+// Which hedger pairs the paired bootstrap separates, keyed by the short names
+// the desk note uses, so both tabs rank the hedgers with one test. The backend
 // keys pairs by strategy ("deep", "delta", "whalley_wilmott", "linear") in
-// the order it generated them; this normalises to a sorted key over the
-// three policies the note talks about. Returns null when the run predates
-// the paired bootstrap, and the note then falls back to its own test.
+// generation order; this normalises to a sorted key over the three policies
+// the note covers. Returns null when the response carries no paired
+// statistics, and the note then applies its two-standard-error test.
 const PAIRED_SHORT = { deep: "deep", delta: "delta", whalley_wilmott: "band" };
 
 // Policy names are written lower-case so they read inside a sentence; this
 // lifts one that has to open its own.
 const capFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Hedge P&L arrives in units of strike. These format it in dollars at strike K.
+const hedgeDollars = (K) => (v) => (v < 0 ? "−$" : "$") + Math.abs(v * K).toFixed(2);
+const hedgeError = (K) => (se) => (se ? " ± " + (se * K).toFixed(2) : "");
 
 function pairedSeparationMap(hedge) {
   const pairs = hedge && hedge.paired_bootstrap && hedge.paired_bootstrap.pairs;
@@ -1795,12 +1930,108 @@ function pairedSeparationMap(hedge) {
   return Object.keys(out).length ? out : null;
 }
 
+// Returns the verdict paragraph and `winner`, the key of the hedger it names
+// as best, or null when it names none. cvar95 is a positive loss magnitude, so
+// the smallest is the best hedge. Every hedger ran on the same paths, so the
+// backend resamples those paths once per replicate and reports the sampling
+// error of each difference. Two hedgers are separated when the 95% paired
+// bootstrap interval of their difference excludes zero. The opening sentence,
+// the closing clause and the green chip all apply that one test, so the
+// paragraph names a winner only where the chips show one.
+function hedgeVerdict(d, K) {
+  const usd = hedgeDollars(K), pm = hedgeError(K);
+  const entry = (label, key, s) =>
+    ({ label, key, cvar: s.cvar95, se: s.cvar95_se || 0 });
+  const deep = entry("the learned policy", "deep", d.deep);
+  const delta = entry("the delta hedge", "delta", d.delta);
+  const ranked = [deep, delta];
+  if (d.whalley_wilmott) {
+    ranked.push(entry("the Whalley-Wilmott band", "whalley_wilmott",
+                      d.whalley_wilmott));
+  }
+  ranked.sort((a, b) => a.cvar - b.cvar);
+
+  const pairs = d.paired_bootstrap && d.paired_bootstrap.pairs;
+  const pairStat = (a, b) =>
+    (pairs && (pairs[a.key + "|" + b.key] || pairs[b.key + "|" + a.key])) || null;
+  // Without paired statistics the test is two combined standard errors.
+  const separated = (a, b) => {
+    const s = pairStat(a, b);
+    return s ? !!s.excludes_zero
+             : Math.abs(a.cvar - b.cvar) > 2 * Math.hypot(a.se, b.se);
+  };
+  const quote = (h) => usd(-h.cvar) + pm(h.se);
+  // The gap is quoted with the standard error of the paired difference.
+  // Combining the two chips' error bars would overstate that error, because a
+  // path that is bad for one hedger is usually bad for all of them.
+  const gapSentence = (lead, a, b) => {
+    const s = pairStat(a, b);
+    if (!s) {
+      return lead + (separated(a, b) ? " is wider than" : " is inside") +
+        " two combined bootstrap standard errors.";
+    }
+    return lead + " is $" + Math.abs(s.diff * K).toFixed(2) + " ± " +
+      (s.se * K).toFixed(2) + " on the same paths, and its 95% paired " +
+      "bootstrap interval " + (s.excludes_zero ? "excludes" : "contains") +
+      " zero.";
+  };
+
+  const [first, second, third] = ranked;
+  const called = separated(first, second);
+  const market = d.dynamics === "gbm"
+    ? "Black-Scholes paths" : "rough-volatility paths with jumps";
+  let text = "Over " + d.n_paths.toLocaleString() + " " + market + " at " +
+    (d.cost * 10000).toFixed(0) + " basis points a trade, ";
+  if (called) {
+    text += first.label + " has the smallest worst-5% loss, " + quote(first) +
+      ", against " + quote(second) + " for " + second.label +
+      (third ? " and " + quote(third) + " for " + third.label : "") + ". " +
+      gapSentence("The gap to " + second.label, first, second) + " ";
+  } else {
+    text += first.label + " and " + second.label + " are level on " +
+      "worst-5% loss, " + quote(first) + " and " + quote(second) + ". " +
+      gapSentence("The gap between them", first, second) + " ";
+    if (third) {
+      text += capFirst(third.label) + (separated(first, third)
+        ? " is behind at " + quote(third) + ". "
+        : ", at " + quote(third) + ", is not separated from " + first.label +
+          " either. ");
+    }
+  }
+
+  // The comparison with the delta hedge is gated on the same test, and the
+  // closing clause places the learned policy against the leader with it too.
+  const costs = usd(d.deep.mean_costs) + " a path in costs against " +
+    usd(d.delta.mean_costs) + " for the delta hedge";
+  const pct = Math.abs((1 - deep.cvar / Math.max(delta.cvar, 1e-9)) * 100).toFixed(0);
+  if (!separated(deep, delta)) {
+    text += "The learned policy and the delta hedge are level on worst-5% " +
+      "loss, and the policy pays " + costs + ".";
+  } else if (deep.cvar < delta.cvar) {
+    text += "The learned policy's worst-5% loss is " + pct + "% smaller than " +
+      "the delta hedge's, and it pays " + costs + ".";
+    if (first !== deep) {
+      text += separated(first, deep)
+        ? " " + capFirst(first.label) + " is ahead of it at this cost level."
+        : " It is level with " + first.label + " at this cost level.";
+    }
+  } else {
+    // Worst-5% loss is net of costs, so a cheaper policy with the wider tail
+    // has that saving counted already.
+    text += "The learned policy's worst-5% loss is " + pct + "% larger than " +
+      "the delta hedge's. It pays " + costs +
+      (d.deep.mean_costs < d.delta.mean_costs
+        ? ", and the worst-5% loss is already net of those costs." : ".");
+  }
+  return { text, winner: called ? first.key : null };
+}
+
 async function runHedge() {
   const btn = $("btn-hedge");
   btn.textContent = "Simulating...";
   btn.disabled = true;
-  // The simulation takes seconds (tens of seconds on a small host); without
-  // this the panel is a blank void with only the button label as feedback.
+  // The simulation takes seconds (tens of seconds on a small host), so the
+  // panel says what is running while it waits.
   $("hedge-verdict").textContent = "";
   $("hedge-sub").textContent =
     "Simulating paths and hedging the same short call three ways. " +
@@ -1816,132 +2047,39 @@ async function runHedge() {
     lastHedge = d;
     renderReportInputs();
     const K = state.strike;
-    const $$ = (v) => (v < 0 ? "−$" : "$") + Math.abs(v * K).toFixed(2);
-
-    // cvar95 is a positive loss magnitude, so the SMALLER one is the better
-    // hedge. The deep hedge does not always win (the honest out-of-sample
-    // result under GBM often favors delta), so the green "good" highlight
-    // and the reduction/increase label both follow the measurement instead
-    // of assuming the deep policy won.
+    const $$ = hedgeDollars(K), pm = hedgeError(K);
     const ww = d.whalley_wilmott;
-    const improvement = (1 - d.deep.cvar95 / Math.max(d.delta.cvar95, 1e-9)) * 100;
-    const best = Math.min(d.deep.cvar95, d.delta.cvar95,
-                          ww ? ww.cvar95 : Infinity);
-    // cvar95 is a positive loss magnitude, so the SMALLEST one is the best
-    // hedge. Only that one is highlighted: two green chips pointing at
-    // different winners is how a reader ends up unable to tell who won.
-    const pm = (se) => se ? " ± " + (se * K).toFixed(2) : "";
-    $("hedge-stats").innerHTML =
-      hedgeStatChip("Worst-5% loss, learned policy",
-        $$(-d.deep.cvar95) + pm(d.deep.cvar95_se),
-        d.deep.cvar95 === best ? "good" : "") +
-      hedgeStatChip("Worst-5% loss, delta hedge",
-        $$(-d.delta.cvar95) + pm(d.delta.cvar95_se),
-        d.delta.cvar95 === best ? "good" : "") +
-      (ww ? hedgeStatChip("Worst-5% loss, Whalley-Wilmott band",
-        $$(-ww.cvar95) + pm(ww.cvar95_se), ww.cvar95 === best ? "good" : "") : "") +
-      // A worst-5% loss is the mean loss plus the tail about that mean, and on
-      // these runs most of the gap between the hedgers is the mean half - the
-      // commission bill. Three tail chips and a cost chip let a reader take
-      // the tail difference for tail shape, so the mean stands beside them.
-      hedgeStatChip("Average P&L per path",
-        $$(d.deep.mean) + " vs " + $$(d.delta.mean) + " for delta" +
-        (ww ? " and " + $$(ww.mean) + " for the band" : "")) +
-      hedgeStatChip("Trading cost per path",
-        $$(d.deep.mean_costs) + " vs " + $$(d.delta.mean_costs) + " for delta");
-
-    // Say who won, in a sentence, covering every ordering the run can produce
-    // (see pairedSeparationMap below for the test this leans on).
-    // - and only as far as the evidence will carry it. Every hedger ran on
-    // the same paths, so the comparison is a PAIRED one: the backend
-    // re-samples those paths once per replicate and reports the sampling
-    // error of each difference directly. That is a tighter and more honest
-    // test than combining two separate error bars, which would assume the
-    // hedgers were independent when a path that is bad for one is usually
-    // bad for all of them.
-    const names = [["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0, "deep"],
-                   ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0, "delta"]];
-    if (ww) names.push(["the Whalley-Wilmott band", ww.cvar95, ww.cvar95_se || 0,
-                        "whalley_wilmott"]);
-    names.sort((a, b) => a[1] - b[1]);
-    const pairStat = (a, b) => {
-      const p = d.paired_bootstrap && d.paired_bootstrap.pairs;
-      if (!p) return null;
-      return p[a[3] + "|" + b[3]] || p[b[3] + "|" + a[3]] || null;
-    };
-    // A 95% paired bootstrap interval for the difference that stays on one
-    // side of zero separates them; otherwise fall back to the unpaired bar.
-    const separated = (a, b) => {
-      const s = pairStat(a, b);
-      return s ? s.excludes_zero
-               : Math.abs(a[1] - b[1]) > 2 * Math.hypot(a[2], b[2]);
-    };
-    // How the two were compared, in the reader's units. The paired branch
-    // quotes the gap and its own error rather than asking anyone to combine
-    // the two chips above, which would give the wrong answer.
-    const gapPhrase = (a, b) => {
-      const s = pairStat(a, b);
-      if (!s) return "a gap inside two combined standard errors";
-      const gap = "$" + Math.abs(s.diff * K).toFixed(2) + " ± " +
-        (s.se * K).toFixed(2) + " on the same paths";
-      return s.excludes_zero
-        ? gap + ", a 95% paired bootstrap interval clear of zero"
-        : gap + ", a 95% paired bootstrap interval that still contains zero";
-    };
     const costBps = (d.cost * 10000).toFixed(0);
-    const market = d.dynamics === "gbm"
-      ? "Black-Scholes paths" : "rough-volatility paths with jumps";
-    const opening = "Over " + d.n_paths.toLocaleString() + " " + market +
-      " at " + costBps + " basis points a trade, ";
-    let verdict = separated(names[0], names[1])
-      ? opening + names[0][0] + " has the smallest worst-5% loss, " +
-        $$(-names[0][1]) + pm(names[0][2]) + ", against " + $$(-names[1][1]) +
-        pm(names[1][2]) + " for " + names[1][0] +
-        (names[2] ? " and " + $$(-names[2][1]) + pm(names[2][2]) + " for " +
-          names[2][0] : "") + ". The gap is " + gapPhrase(names[0], names[1]) + ". "
-      : opening + names[0][0] + " and " + names[1][0] + " are level on " +
-        "worst-5% loss, " + $$(-names[0][1]) + pm(names[0][2]) + " and " +
-        $$(-names[1][1]) + pm(names[1][2]) + ": " +
-        gapPhrase(names[0], names[1]) +
-        (names[2] ? ". " + capFirst(names[2][0]) + " is behind at " +
-          $$(-names[2][1]) + pm(names[2][2]) : "") + ". ";
-    // The pairwise comparison against the delta hedge is gated the same way,
-    // and it says where it sits in the ranking rather than following a
-    // conceded loss with a favourable number.
-    const deepVsDelta = separated(
-      ["the learned policy", d.deep.cvar95, d.deep.cvar95_se || 0, "deep"],
-      ["the delta hedge", d.delta.cvar95, d.delta.cvar95_se || 0, "delta"]);
-    const costs = $$(d.deep.mean_costs) + " a path in costs against " +
-      $$(d.delta.mean_costs) + " for the delta hedge";
-    const pct = Math.abs(improvement).toFixed(0);
-    if (!deepVsDelta) {
-      verdict += "The learned policy and a plain delta hedge are level on tail " +
-        "loss here, and the policy pays " + costs + ".";
-    } else if (improvement >= 0) {
-      verdict += names[0][0] === "the learned policy"
-        ? "The learned policy beats a plain delta hedge by " + pct +
-          "% on tail loss while paying " + costs + "."
-        : "Against the delta hedge alone the learned policy is " + pct +
-          "% better on tail loss and pays " + costs + "; " + names[0][0] +
-          " is the one to beat at this cost level.";
-    } else {
-      verdict += "A plain delta hedge keeps the smaller tail loss here; the " +
-        "learned policy trades less (" + costs + ") but that saving does not " +
-        "cover the wider tail.";
-    }
-    $("hedge-verdict").textContent = verdict;
+
+    // One chip per hedger. Its figure is green only when the verdict names
+    // that hedger as best, so with the top two level no chip is green. The
+    // line under each figure gives the hedger's mean P&L and trading cost: a
+    // worst-5% loss is the mean plus the tail beyond it, and the two lines
+    // together show which of the two a gap comes from.
+    const verdict = hedgeVerdict(d, K);
+    const tailChip = (label, key, s) => hedgeStatChip(
+      "Worst-5% loss, " + label, $$(-s.cvar95) + pm(s.cvar95_se),
+      verdict.winner === key ? "good" : "",
+      "average P&L " + $$(s.mean) + ", trading cost " + $$(s.mean_costs) + " a path");
+    $("hedge-stats").innerHTML =
+      tailChip("learned policy", "deep", d.deep) +
+      tailChip("delta hedge", "delta", d.delta) +
+      (ww ? tailChip("Whalley-Wilmott band", "whalley_wilmott", ww) : "");
+
+    $("hedge-verdict").textContent = verdict.text;
     $("hedge-convention").textContent =
       "Worst-5% loss is the average profit or loss across the worst 5% of " +
       "simulated paths, in dollars per option at a $" + K + " strike. Closer " +
-      "to zero is better; ± is a bootstrap standard error.";
-    // The served note states the vol-matching as a neutral fact. It is a
-    // handicap taken on purpose, and a reader who spots it without the reason
-    // reads it as a mistake.
+      "to zero is better; ± is a bootstrap standard error. Average P&L is " +
+      "the mean over all paths after costs, so a worst-5% loss is that mean " +
+      "plus the tail beyond it.";
+    // The served note states the vol-matching. This sentence adds its
+    // consequence: the realised volatility is information a live hedger
+    // lacks, so the protocol favours the baselines.
     $("hedge-method").textContent = (d.measure_note || "") +
-      " Handing the baselines the volatility these dynamics actually realise " +
-      "is information a live hedger would not have; it is given to them " +
-      "deliberately, so the learned policy has to beat the strongest honest " +
-      "version of each.";
+      " The volatility these paths realise is information a live hedger " +
+      "would not have, so the learned policy has to beat each baseline at " +
+      "its strongest.";
 
     $("hedge-sub").textContent =
       "Short one 30-day at-the-money call, hedged daily on " +
@@ -1952,8 +2090,8 @@ async function runHedge() {
       "trade. " +
       (d.sigma_source === "SPY calibration"
         ? "Volatility (" + (d.sigma * 100).toFixed(1) + "%) and rate (" +
-          (d.rate * 100).toFixed(1) + "%) come from the SPY calibration this " +
-          "market was fitted to, not from the sidebar."
+          (d.rate * 100).toFixed(1) + "%) are those of the SPY calibration " +
+          "this market was fitted to. Neither is read from the sidebar."
         : "Volatility " + (d.sigma * 100).toFixed(1) + "% and rate " +
           (d.rate * 100).toFixed(1) + "%, from the sidebar.") +
       (d.clamped ? " Inputs were clamped to the policy's trained range." : "");
@@ -1963,24 +2101,37 @@ async function runHedge() {
     const span = Math.max(Math.abs(Math.min(...allPnl)), Math.abs(Math.max(...allPnl)));
     const binSize = (2 * span) / 60;
 
+    // Plotly wraps a horizontal legend between entries, never inside one, and
+    // gives every entry the width of the longest. At phone width the legend
+    // names the hedger alone and abbreviates the band, which keeps it to two
+    // rows; the chips above hold the figures and the full names.
+    const narrow = isNarrow();
+    const bandName = narrow ? "W-W band" : "Whalley-Wilmott band";
+    const legendName = (label, s) =>
+      narrow ? label : label + ", worst-5% loss " + $$(-s.cvar95);
+    // One dotted guide per histogram, at that hedger's worst-5% loss.
+    const guide = (s, color) => ({
+      type: "line", x0: -s.cvar95 * K, x1: -s.cvar95 * K, y0: 0, y1: 1,
+      yref: "paper", line: { color, width: 2, dash: "dot" } });
+
     Plotly.react("plot-hedge", [
       {
         type: "histogram", x: d.delta.pnl.map((v) => v * K),
-        name: "delta hedge, worst-5% loss " + $$(-d.delta.cvar95),
+        name: legendName("delta hedge", d.delta),
         marker: { color: "rgba(196,131,92,0.45)",
                   line: { color: COLORS.mc, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
       },
       {
         type: "histogram", x: d.deep.pnl.map((v) => v * K),
-        name: "learned policy, worst-5% loss " + $$(-d.deep.cvar95),
+        name: legendName("learned policy", d.deep),
         marker: { color: "rgba(90,140,200,0.45)",
                   line: { color: COLORS.nn, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
       },
       ...(ww && ww.pnl ? [{
         type: "histogram", x: ww.pnl.map((v) => v * K),
-        name: "Whalley-Wilmott band, worst-5% loss " + $$(-ww.cvar95),
+        name: legendName(bandName, ww),
         marker: { color: "rgba(136,145,163,0.35)",
                   line: { color: COLORS.violet, width: 1 } },
         xbins: { start: -span, end: span, size: binSize },
@@ -1991,20 +2142,19 @@ async function runHedge() {
                gridcolor: COLORS.grid, zeroline: false },
       yaxis: { title: { text: "paths" }, gridcolor: COLORS.grid, zeroline: false },
       shapes: [
-        { type: "line", x0: -d.delta.cvar95 * K, x1: -d.delta.cvar95 * K,
-          y0: 0, y1: 1, yref: "paper",
-          line: { color: COLORS.mc, width: 2, dash: "dot" } },
-        { type: "line", x0: -d.deep.cvar95 * K, x1: -d.deep.cvar95 * K,
-          y0: 0, y1: 1, yref: "paper",
-          line: { color: COLORS.nn, width: 2, dash: "dot" } },
+        guide(d.delta, COLORS.mc),
+        guide(d.deep, COLORS.nn),
+        ...(ww && ww.pnl ? [guide(ww, COLORS.violet)] : []),
       ],
     }, PLOT_CONFIG);
 
-    // holdings along the illustrative path
+    // Holdings along the illustrative path. The band's holdings are drawn
+    // when the response carries them.
     const days = d.example_path.deep_holdings.map((_, i) => i + 1);
+    const bandHoldings = d.example_path.whalley_wilmott_holdings;
     Plotly.react("plot-holdings", [
       {
-        x: days.concat([]), y: d.example_path.spot.slice(1).map((s) => s * K),
+        x: days, y: d.example_path.spot.slice(1).map((s) => s * K),
         mode: "lines", name: "spot path ($)", yaxis: "y2",
         line: { color: "rgba(255,255,255,0.35)", width: 1.5 },
       },
@@ -2018,6 +2168,11 @@ async function runHedge() {
         mode: "lines+markers", name: "learned policy",
         line: { color: COLORS.nn, width: 2.5 }, marker: { size: 4 },
       },
+      ...(bandHoldings ? [{
+        x: days, y: bandHoldings,
+        mode: "lines", name: bandName,
+        line: { color: COLORS.violet, width: 2, dash: "dot" },
+      }] : []),
     ], {
       ...PLOT_BASE,
       margin: { l: 52, r: 52, t: 12, b: 42 },
@@ -2039,32 +2194,33 @@ async function runHedge() {
 }
 $("btn-hedge").addEventListener("click", runHedge);
 
-// ───────────────────────────────────────────────────────────── LLM ──
+// Desk note.
 $("btn-risk").addEventListener("click", async () => {
   const btn = $("btn-risk");
   btn.textContent = "Writing...";
-  let step = 0;
   btn.disabled = true;
   const out = $("ai-report");
   try {
-    // Auto-gather any missing inputs instead of bouncing the user around.
+    // Missing inputs are computed first, in the order the note uses them.
     if (!lastAttributions) {
       out.textContent = "Working out what drives the price... (1 of 3)";
-      await updateXAI();
+      await runXAI();
     }
     if (!lastHedge) {
       out.textContent = "Running the hedging simulation... (2 of 3)";
       await runHedge();
     }
     out.textContent = "Writing the summary... (3 of 3)";
-    if (lastNNPrice == null || !lastAttributions || !lastHedge)
-      throw new Error("pricing/hedging inputs unavailable; is the backend up?");
+    if (lastNNPrice == null || !lastAttributions || !lastHedge) {
+      throw new Error("It needs the price, the attribution and a hedging " +
+        "run, and one of them is unavailable for this contract.");
+    }
 
     out.classList.add("streaming");
     const K = state.strike;
     const req = {
-      // Only a successfully fetched ticker names the underlying; a failed
-      // lookup used to put strings like "ZZZZQQ" into the report.
+      // Only a successfully fetched ticker names the underlying. Text left in
+      // the ticker box after a failed lookup does not reach the report.
       ticker: marketData ? marketData.ticker : "",
       contract: contractShort(),
       nn_price: lastNNPrice,
@@ -2072,9 +2228,9 @@ $("btn-risk").addEventListener("click", async () => {
       deep_cvar: -lastHedge.deep.cvar95 * K,
       ww_cvar: lastHedge.whalley_wilmott
         ? -lastHedge.whalley_wilmott.cvar95 * K : null,
-      // The Hedging tab only calls a winner when the gap clears two combined
-      // bootstrap standard errors; send the same errors so the desk note
-      // applies the same test instead of ranking on point estimates.
+      // The bootstrap standard errors travel with the point estimates, so the
+      // note can apply the two-standard-error test when the paired verdict
+      // below is absent.
       bs_cvar_se: lastHedge.delta.cvar95_se != null
         ? lastHedge.delta.cvar95_se * K : null,
       deep_cvar_se: lastHedge.deep.cvar95_se != null
@@ -2082,10 +2238,10 @@ $("btn-risk").addEventListener("click", async () => {
       ww_cvar_se: (lastHedge.whalley_wilmott
         && lastHedge.whalley_wilmott.cvar95_se != null)
         ? lastHedge.whalley_wilmott.cvar95_se * K : null,
-      // Which pairs the PAIRED bootstrap separates. The three hedgers ran on
-      // the same paths, so the error of a difference is not hypot of their
-      // two error bars; sending the paired verdict keeps the note and the
-      // Hedging tab applying one test to one run.
+      // Which pairs the paired bootstrap separates. The three hedgers ran on
+      // the same paths, so their errors are correlated and the hypot of two
+      // error bars misstates the error of a difference. Sending the paired
+      // verdict keeps the note and the Hedge tab on one test for one run.
       paired_separated: pairedSeparationMap(lastHedge),
       baseline_price: lastBaselinePrice,
       deep_cost: lastHedge.deep.mean_costs * K,
@@ -2100,7 +2256,11 @@ $("btn-risk").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     });
-    if (!response.ok) throw new Error((await response.json()).detail || response.statusText);
+    if (!response.ok) {
+      let detail = response.statusText;
+      try { detail = (await response.json()).detail || detail; } catch { /* not json */ }
+      throw new Error(friendlyError(response.status, detail));
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -2112,7 +2272,7 @@ $("btn-risk").addEventListener("click", async () => {
       out.textContent += decoder.decode(value, { stream: true });
     }
   } catch (e) {
-    out.textContent = "The summary could not be written: " + e.message;
+    out.textContent = "The summary could not be written. " + e.message;
   } finally {
     out.classList.remove("streaming");
     btn.textContent = "Write summary";
@@ -2120,12 +2280,22 @@ $("btn-risk").addEventListener("click", async () => {
   }
 });
 
-// ───────────────────────────────────────────────── WebSocket Live Stream ──
+// Live stream over the websocket.
 let ws = null;
 let wsSpots = [];
 let wsPrices = [];
 let wsTicks = [];
 const WS_MAX_POINTS = 400;
+// The server sends one error frame and closes when it refuses a stream (a
+// contract outside the trained range, or no free stream slot). The reason is
+// kept so the close handler shows it in place of the generic line.
+let wsRefusal = "";
+function streamRefusalText(detail) {
+  const d = String(detail || "");
+  if (/capacity|saturated/i.test(d)) return "The live feed is at capacity. Try again shortly.";
+  if (/not loaded/i.test(d)) return "The pricing model is not loaded on this server.";
+  return friendlyError(422, d);
+}
 
 function wsConnect() {
   const btn = $("btn-stream");
@@ -2139,6 +2309,7 @@ function wsConnect() {
   wsSpots = [];
   wsPrices = [];
   wsTicks = [];
+  wsRefusal = "";
 
   ws.onopen = () => {
     btn.textContent = "Disconnect";
@@ -2178,13 +2349,19 @@ function wsConnect() {
 
   ws.onmessage = (ev) => {
     const d = JSON.parse(ev.data);
-    if (d.error) return;
+    if (d.error) {
+      // An error frame without a tick is a refusal and the socket closes next.
+      // One with a tick is a simulated spot outside the trained range, and the
+      // stream continues with the following tick.
+      if (d.tick === undefined) wsRefusal = streamRefusalText(d.error);
+      return;
+    }
     if (d.status === "ready") {
-      // The server caps the requested rate (MAX_STREAM_HZ); show the rate it
-      // actually granted. This frame has no tick fields - falling through
-      // used to throw a TypeError on every connect.
-      // The stat beside this caption is the pricing wall-clock, not the tick
-      // period, and the two would otherwise imply two different rates.
+      // The server caps the requested rate (MAX_STREAM_HZ), so the caption
+      // shows the granted rate. The ready frame carries no tick fields and
+      // returns before the tick rendering below. The stat beside this caption
+      // is the pricing wall-clock, and the caption says so because the tick
+      // period implies a different rate.
       $("stream-sub").textContent = "Live: " + d.hz +
         " simulated ticks a second. Pricing time is the network's wall-clock " +
         "for the price and all five Greeks on this server.";
@@ -2214,7 +2391,7 @@ function wsConnect() {
       wsTicks.shift();
     }
 
-    // Throttle chart updates to ~10 fps to avoid layout thrashing
+    // The chart is extended on every second tick to limit layout work.
     if (d.tick % 2 === 0) {
       Plotly.extendTraces("plot-stream",
         { y: [[d.spot], [d.price]] }, [0, 1],
@@ -2225,7 +2402,7 @@ function wsConnect() {
   ws.onclose = () => {
     btn.textContent = "Connect";
     btn.classList.remove("btn-stream-active");
-    $("stream-sub").textContent = "Disconnected. Press Connect to resume.";
+    $("stream-sub").textContent = wsRefusal || "Disconnected. Press Connect to resume.";
     $("stream-stats").classList.add("idle");
     ws = null;
   };
@@ -2240,12 +2417,11 @@ function wsConnect() {
 
 $("btn-stream").addEventListener("click", wsConnect);
 
-// Initial load. Cheap calls go out immediately; the simulation-heavy panels
-// load one after another, because the server admits only one Monte Carlo /
-// batch-inference job at a time (firing them in parallel would just queue
-// them there while tying up connections). The latency benchmark is the whole
-// convergence workload re-run for its wall-clock alone, so it loads on
-// demand via its Re-run button instead of on every page view.
+// Initial load. Cheap calls go out immediately. The simulation-heavy panels
+// load in sequence, because the server admits one Monte Carlo or
+// batch-inference job at a time and parallel requests would queue there while
+// holding connections. The latency benchmark re-runs the convergence workload
+// for its wall-clock alone, so it runs on demand from its button.
 const urlParams = Object.fromEntries(new URLSearchParams(location.search));
 applyState(urlParams);
 if (urlParams.tab) {
@@ -2266,11 +2442,13 @@ loadErrorDistribution();
   // The headline price lands first: /api/price and /api/convergence would
   // otherwise race for the server's single simulation slot, and losing that
   // race leaves the hero card blank while the convergence run finishes.
-  await updatePrice().catch(() => {});
-  await updateConvergence().catch(() => {});
-  await updateSurface().catch(() => {});
-  await updateXAI().catch(() => {});
-  await updateIVSurface().catch(() => {});
+  // The surfaces are drawn once here even while their group is collapsed.
+  // After that refreshSurfaces defers them until the group is open.
+  await runPrice();
+  await runConvergence();
+  await runSurface();
+  await runXAI();
+  await runIVSurface();
   if (currentTab === "hedging" && urlParams.run === "1") runHedge();
 })();
 const latencyShimmer = $("plot-latency").querySelector(".shimmer");

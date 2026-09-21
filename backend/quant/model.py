@@ -4,10 +4,14 @@ Architecture notes
 ------------------
 - Inputs (m, T, sigma, r) are affinely mapped to [-1, 1] using the training
   box, which keeps every feature on the same scale without a fitted scaler.
-- SiLU activations + LayerNorm residual blocks: smooth (C-infinity)
-  activations matter here because we differentiate the network to obtain
-  Greeks - ReLU would give piecewise-constant delta and zero gamma a.e.
-- Softplus output enforces price positivity while staying smooth.
+- SiLU activations + LayerNorm residual blocks. The network is
+  differentiated to obtain Greeks, so the activations are smooth
+  (C-infinity); ReLU would give a piecewise-constant delta and zero gamma
+  almost everywhere.
+- Softplus output keeps the price positive and smooth. It cannot emit zero:
+  on the 149 points of the 2,000-point ablation set whose true price is below
+  1 bp of strike, the served Asian ensemble's mean error is +0.31 bps and
+  every error is positive (artifacts/ablation.json, arm baseline_softplus).
 """
 
 from __future__ import annotations

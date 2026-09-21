@@ -8,7 +8,7 @@
 
 **Live demo: [neural-options-lab.onrender.com](https://neural-options-lab.onrender.com)**. It runs on an always-on paid instance, so there is no wake-up delay on first load. Every number on the dashboard is computed live by the models described below.
 
-A neural network that prices arithmetic Asian options roughly 750x faster per price than the 400,000-path Monte Carlo reference it is scored against and 33x more accurately than the Levy (1992) closed-form approximation over the full trained box (Curran's 1994 conditioning approximation is more accurate still on price alone; see [docs/approximation_benchmark.md](docs/approximation_benchmark.md)), wrapped in an interactive dashboard you can run locally in two commands.
+A neural network that prices arithmetic Asian options 165x faster per price than the 200,000-path Monte Carlo reference it is scored against and 27.9x more accurately than the Levy (1992) closed-form approximation over the full trained box (95% interval 22.9 to 33.5; on price alone Curran's 1994 conditioning approximation is more accurate below σ = 0.55; see [docs/approximation_benchmark.md](docs/approximation_benchmark.md)), wrapped in an interactive dashboard you can run locally in two commands.
 
 The project covers the full stack of a modern quant pricing system: the numerical methods that generate ground truth, the deep learning that learns to imitate them, a rough volatility model for same-day-expiry options, a reinforcement-style hedging agent, live market calibration, and a browser front end that ties it together. Trained model weights are included, so it runs the moment you clone it.
 
@@ -18,7 +18,7 @@ Built with PyTorch, FastAPI, and plain JavaScript with Plotly. No frontend build
 
 Every figure here is measured; the sections below say how.
 
-- **Pricing.** The neural surrogate prices an arithmetic Asian option in 633 µs against the 480 ms its 400,000-path Monte Carlo reference takes, both timed in the same run by `scripts/benchmark_approximations.py` ([docs/approximation_benchmark.md](docs/approximation_benchmark.md)); absolute times are specific to the machine that ran it, the ratio between the rows is not. Price RMSE is 1.33 basis points of strike on 600 held-out points against 200,000-path references (`artifacts/eval.json`). Against Levy (1992) moment matching it is 33x more accurate, at 633 µs against Levy's 55 µs.
+- **Pricing.** The neural surrogate prices an arithmetic Asian option in 3.2 ms against the 529 ms its 200,000-path Monte Carlo reference takes, both timed in the same single-threaded run by `scripts/benchmark_approximations.py` ([docs/approximation_benchmark.md](docs/approximation_benchmark.md)); absolute times are specific to the machine and run that produced them, the ratio between the rows is not. Price RMSE is 1.33 basis points of strike on 600 held-out points against 200,000-path references (`artifacts/eval.json`). Over the full trained box its RMSE ratio against Levy (1992) moment matching is 27.9 (95% interval 22.9 to 33.5); at σ = 0.25 the margin is about 5x, and Curran (1994) is more accurate than both there.
 - **Variance reduction.** Antithetic sampling with a geometric-Asian control variate cuts the Monte Carlo standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000), measured as the ratio of empirical standard deviations across 300 seeded replications.
 - **0DTE.** The rough Bergomi ensemble serving maturities of 12 trading days or less is calibrated to the live SPY smile: the served checkpoint carries the accepted 2026-08-20 fit (η 3.657, ρ −0.628, H 0.255; 1.568 vol points over 618 quotes, adopted in commit `03cbc88`), recorded in `artifacts/rough_calibration_20260820.json` and named by the provenance note `train_0dte.py` stamps into the checkpoint metadata alongside a `calibrated` flag. `dataset_0dte.py` reads that same file, so re-running the documented recipe regenerates the dynamics the served model was trained on. That artifact is a record read out of the checkpoint's own metadata, not a re-fit: the optimiser inputs behind it were not preserved, so the fields it cannot attest to are null. Its recorded ensemble validation RMSE is 3.3 bps of strike against its 20,000-path training labels; the arbitrage audit, which re-prices the served checkpoint against 4 × 400,000-path rough Bergomi references, measures 1.9-3.8 bps of price RMSE at its hardest smiles (1-5 days, 10% vol) and 0.8-2.3 bps on the rest, with a largest single-strike error of 14.4 bps ([docs/no_arbitrage_surface.md](docs/no_arbitrage_surface.md)). A held-out evaluation against high-precision references, comparable to `artifacts/eval.json` for the main pricer, is still to be re-measured for this checkpoint; see [the 0DTE section](#the-0dte-model-driver-live-calibration-and-what-is-measured).
 - **Deep hedging.** Evaluated out of sample on risk-neutral GBM over a 12-cell (σ, cost) grid with 15,000 paths per cell, the learned CVaR policy loses to a vol-matched delta hedge in 7 of 12 cells and to Whalley-Wilmott in 11 of 12.
@@ -40,11 +40,11 @@ Three links into the live dashboard, each opening on a case discussed below. The
 
 ## Why this is not trivial
 
-Arithmetic Asian options have no exact closed-form price. The payoff depends on the average price over the option's life, so the standard way to value one is Monte Carlo simulation, which is accurate but slow: the 400,000-path reference this project scores against takes 480 milliseconds for a single price, and a trading desk needs thousands of prices and their risk sensitivities (the Greeks) refreshed continuously.
+Arithmetic Asian options have no exact closed-form price. The payoff depends on the average price over the option's life, so the standard way to value one is Monte Carlo simulation, which is accurate but slow: in the committed benchmark run the 400,000-path reference takes 946 milliseconds for a single price, and a trading desk needs thousands of prices and their risk sensitivities (the Greeks) refreshed continuously.
 
-A neural network trained on Monte Carlo prices learns the pricing function itself. Once trained it prices the same contract in about 633 microseconds and returns all five Greeks as exact derivatives of the network through automatic differentiation, not finite differences. Price plus all Greeks together costs roughly twelve times a price-only call, because gamma needs a second backward pass through five ensemble members. That turns a batch job into something interactive.
+A neural network trained on Monte Carlo prices learns the pricing function itself. Once trained it prices the same contract in about 4 milliseconds on the same machine and returns all five Greeks as exact derivatives of the network through automatic differentiation, not finite differences. Price plus all Greeks together costs roughly twelve times a price-only call, because gamma needs a second backward pass through five ensemble members. That turns a batch job into something interactive.
 
-The interesting part is doing this with enough numerical care that the surrogate's error is known rather than assumed: sub-2-basis-point pricing error, delta and vega measured against pathwise Monte Carlo references and theta and rho against their own analytic checks, and a separate model for the short-dated regime where the usual assumptions break down. Gamma is measured against a conditional-Monte-Carlo density reference on the same held-out set (140 × 10⁻⁴ RMSE per unit of (S/K)², 0.6% median relative error where gamma is large, concentrated at small σ√T). No experiment in this project has yet hedged a path with the surrogate's own Greeks.
+The interesting part is doing this with enough numerical care that the surrogate's error is known rather than assumed: sub-2-basis-point pricing error, delta and vega measured against pathwise Monte Carlo references and theta and rho against their own analytic checks, and a separate model for the short-dated regime where the usual assumptions break down. Gamma is measured against a conditional-Monte-Carlo density reference on the same held-out set: 140 × 10⁻⁴ RMSE per unit of (S/K)² against a reference whose own noise is 50 × 10⁻⁴ RMS, and on the 222 contracts where gamma exceeds 0.5 the median relative error is 0.46% against a median reference standard error of 0.35%, so the comparison resolves gamma to about that floor. The error concentrates at σ√T < 0.1 (356 × 10⁻⁴ RMSE there, against 104 × 10⁻⁴ of reference noise). No experiment in this project has yet hedged a path with the surrogate's own Greeks.
 
 ## What it does
 
@@ -192,54 +192,66 @@ Softplus floor can distort. It is 37% worse instead, because the residual has a 
 relative dynamic range (p99/p50 of 12.46 versus 3.27) and that outweighs the 21x smaller
 output scale.
 
-### Is a neural surrogate even the right tool?
+### Closed-form baselines: Levy and Curran
 
 Arithmetic Asians have had fast closed-form approximations since the early 1990s, so the
-comparison that matters is not only against Monte Carlo. Against Levy (1992) moment matching, on
-300 points versus 200,000-path references:
+surrogate is measured against them as well as against Monte Carlo.
+`scripts/benchmark_approximations.py --lhs` scores the served ensemble, Levy (1992) /
+Turnbull-Wakeman moment matching and Curran's (1994) conditioning approximation on 300
+Latin-hypercube points over the full trained box (seed 1992, used by no training or
+model-selection draw) against 200,000-path control-variate references, stores every
+per-point price in `docs/approximation_benchmark.json`, and renders
+[docs/approximation_benchmark.md](docs/approximation_benchmark.md) from that file:
 
 | method | RMSE | bias | p95 abs err |
 |---|---|---|---|
-| neural ensemble | 1.329 bps | +0.548 | 2.376 |
-| Levy moment matching | 44.344 bps | +19.813 | 103.300 |
-| Monte Carlo, 200k paths | (reference) | n/a | n/a |
+| neural ensemble | 1.395 bps | +0.308 | 3.312 |
+| Levy moment matching | 38.911 bps | +17.662 | 99.335 |
+| Curran, exact threshold | 2.347 bps | −1.038 | 4.859 |
+| Monte Carlo, 200k paths | (reference; RMS SE 0.835 bps) | n/a | n/a |
 
-**33x more accurate** than Levy over the full trained box. The scope matters: it is an RMSE
-ratio over a box where volatility runs to 80%, and Levy's error is a bias that grows with
-maturity, so at a more typical σ = 0.25 the margin narrows to about 5x (0.72 against
-3.65 bps of mean absolute error).
+The Levy to ensemble RMSE ratio is 27.9, with a 95% interval of 22.9 to 33.5 from a paired
+bootstrap over the 300 points. The ratio is an average over volatility, because Levy's error
+is a bias that grows with σ²T: by σ band it is 1.8 (0.05 to 0.30), 14.0 (0.30 to 0.55) and
+37.8 (0.55 to 0.80), and at a more typical σ = 0.25 the margin is about 5x (0.72 against
+3.65 bps of mean absolute error on the 36-cell grid).
 
-The latency column belongs to a separate, re-runnable measurement rather than to this table:
-`scripts/benchmark_approximations.py` times the surrogate, both closed forms and the Monte
-Carlo reference in one process and writes [docs/approximation_benchmark.md](docs/approximation_benchmark.md)
-(633 µs, 55 µs, 75 µs and 479.94 ms per price on the machine that generated the committed
-copy). Absolute times move with the machine: a re-run on different hardware measured 987 µs,
-123 µs, 150 µs and 765 ms, with every accuracy column identical to three decimals. The ratios
-between rows are what travel. Against Monte Carlo the ratio is about 750x, and it is not an
-iso-accuracy comparison: the reference is far more accurate than the thing being timed.
+The ordering against Curran depends on volatility. Curran has the lower RMSE for σ below
+0.55 (0.188 against 1.180 bps over the 0.05-0.30 band, 0.863 against 1.211 over 0.30-0.55)
+and the ensemble above it (1.725 against 3.969 bps over 0.55-0.80), where the gap between
+Curran's lower bound and the true price widens with σ²T; over the whole box the ensemble to
+Curran RMSE ratio is 0.59 (95% interval 0.50 to 0.74). On the 36-cell grid at σ = 0.25
+Curran is 6.9x more accurate than the ensemble on price at about a tenth of the cost per
+price. The surrogate adds all five Greeks as exact derivatives from the same pass, batch
+throughput, and a training recipe that carries over to dynamics with no conditioning closed
+form, such as the rough-volatility 0DTE ensemble.
 
-Levy is also not the only closed form for an arithmetic Asian, and against the better one
-the network loses on price: Curran's (1994) conditioning approximation is a rigorous lower
-bound, and on a 36-cell grid at σ = 0.25 it is 6.9x more accurate than the ensemble at about
-an eighth of the latency ([docs/approximation_benchmark.md](docs/approximation_benchmark.md)).
-What the surrogate offers over Curran is differentiability (all five Greeks as exact
-derivatives from the same pass) and batch throughput, not price accuracy.
+Both runs time every pricer in the same single-threaded process. On the run that produced
+the committed artifact one ensemble price took 3.21 ms against 529.36 ms for its
+200,000-path reference, a ratio of 165, with Levy at 299 µs and Curran at 388 µs; the
+artifact records the machine's load and power state next to those times. The speed
+comparison is not iso-accuracy, since that Monte Carlo price carries an RMS standard error
+of 0.835 bps against the ensemble's 1.395 bps RMSE. A re-run at the recorded seed
+reproduces every accuracy digit exactly and moves only the timing columns, so the ratios
+between rows are the quantity to quote.
 
-The one regime where Levy still wins is where the true price is essentially zero
-(0.082 vs 0.310 bps), which is the Softplus floor seen from an independent direction. Note
-that gap narrowed by more than 3x when the head was conditioned (the floor shrank from
-1.050 to 0.310 bps), which is corroboration from a completely different measurement that
-the bias diagnosis was right.
+Levy has the lower RMSE where the reference price is below 1 bp of strike (0.049 against
+0.396 bps over 19 of the 300 points). Where the true price is near zero Levy returns a
+price near zero, and the ensemble's Softplus output cannot, the same floor
+`scripts/fullscale_ablation.py` documents.
 
 ### Latency
 
 Only one latency measurement in this project is regenerated by a committed script:
 `scripts/benchmark_approximations.py`, which writes
 [docs/approximation_benchmark.md](docs/approximation_benchmark.md) and puts a single
-price-only call at **633 µs** (`torch.set_num_threads(1)`, median of 20 calls per cell over
-36 cells) next to its own 400,000-path reference at 479.94 ms. Re-running it on different
-hardware reproduces every accuracy column to three decimals and moves every latency column
-by about the same factor, so quote the ratios, not the absolute times.
+price-only call at 3.21 ms (`torch.set_num_threads(1)`, median of 20 calls per point over
+the 300 box points; 4.00 ms on the 36-cell grid run) next to its own Monte Carlo references
+at 529.36 ms for 200,000 paths and 946.06 ms for 400,000. The artifact stores the
+system-wide CPU load and the power source of each timed run next to the numbers they
+affect. Re-running at the recorded seeds reproduces every accuracy column digit for digit
+and moves every latency column with the machine and its load, so quote the ratios, not the
+absolute times.
 
 The Greeks path costs roughly **twelve times a price-only call**, because gamma needs a
 second backward pass for each of the five ensemble members. That ratio holds across the
@@ -521,8 +533,11 @@ The committed models let the app run immediately. To rebuild them:
 python -m backend.quant.train --samples 500000 --paths 5000 --epochs 400 --ensemble 5
 python -m backend.quant.evaluate
 
-# Hedging policy and 0DTE model
-python -m backend.quant.hedging --iters 8000
+# Hedging policies (one per served dynamics; each writes artifacts/hedger_<measure>.pt)
+python -m backend.quant.hedging --measure rbergomi_jumps --iters 4000
+python -m backend.quant.hedging --measure gbm --iters 6000
+
+# 0DTE model
 python -m backend.quant.train_0dte --ensemble 5 --epochs 500
 
 # Optional: calibrate the 0DTE dynamics to the live market and retrain

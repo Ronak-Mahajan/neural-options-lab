@@ -1,7 +1,7 @@
 services:
   - type: web
     name: neural-options-lab
-    env: docker
+    runtime: docker
     # The live demo runs on the Starter plan (always on, no idle spin-down,
     # 512 MB); the service is sized to fit the free plan too, see DEPLOY.md.
     plan: starter

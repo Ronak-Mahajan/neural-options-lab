@@ -1,13 +1,15 @@
 """Serving engine: neural pricing, autograd Greeks, and benchmarking.
 
-The network prices the *unit-strike call* as a function of
-(m = S/K, T, sigma, r). Everything else is exact math on top:
+The network prices the unit-strike call as a function of
+(m = S/K, T, sigma, r). Strikes, puts and Greeks follow from exact identities
+applied to that output:
 
 - Any strike:      C(S, K, ...) = K * f(S/K, ...)          (homogeneity)
-- Puts:            P = C - exp(-rT) * (E[A] - K)           (Asian parity)
-- Greeks:          reverse-mode autograd through f *and* the parity term,
+- Puts:            P = C - exp(-rT) * (E[A] - K)           (Asian parity;
+                   European parity at or below ZERO_DTE_CUTOFF)
+- Greeks:          reverse-mode autograd through f and the parity term,
                    so delta/gamma/vega/theta/rho are analytic derivatives of
-                   the surrogate, not finite differences.
+                   the surrogate.
 """
 
 from __future__ import annotations
@@ -28,14 +30,11 @@ ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
 # Maturity at or below which the 0DTE (European, rough-Bergomi) surrogate serves.
 ZERO_DTE_CUTOFF = 12.0 / 252.0
 
-# Days in the year this engine quotes maturities in. The contract clock is
-# trading days end to end: the averaging dates of the Asian payoff are trading
-# days, ZERO_DTE_CUTOFF is twelve of them, and every maturity the dashboard
-# shows is T * 252. Theta is scaled to the same day so that decay per day times
-# days to expiry is the life of the contract as quoted, rather than the 1.45x
-# mismatch a 365-day theta leaves against a 252-day maturity. Calendar time
-# enters only in calibrate.py, which reads venue timestamps in ACT/365 and
-# documents the same 365/252 gap at the short end.
+# Days per year on the engine's clock. Maturities are in trading days
+# throughout: the Asian fixings are trading days, ZERO_DTE_CUTOFF is twelve of
+# them, and the dashboard shows T * 252. Theta is quoted per trading day so it
+# shares that clock (a 365-day theta would differ by 365/252 = 1.45x).
+# Calendar time enters only in calibrate.py, which reads ACT/365 timestamps.
 TRADING_DAYS_PER_YEAR = 252.0
 
 
@@ -48,7 +47,7 @@ class PricingEngine:
                 "Train one first: python -m backend.quant.train")
         blob = torch.load(checkpoint, map_location="cpu", weights_only=False)
         self.meta = blob["meta"]
-        # New checkpoints hold an ensemble; old single-model ones still load.
+        # A checkpoint holds an ensemble under "members" or one "state_dict".
         states = blob["members"] if "members" in blob else [blob["state_dict"]]
         self.members: list[AsianPricerNet] = []
         for state in states:
@@ -65,13 +64,11 @@ class PricingEngine:
         self._highs = torch.tensor([hi for _, hi in ranges.values()],
                                    dtype=torch.float32)
 
-        # Fixed output scale. The Softplus head is trained to emit a quantity of
-        # order 1 and the magnitude is carried here instead, which is what
-        # halved the systematic price bias (+0.985 -> +0.467 bps): the previous
-        # recipe initialised every run at softplus(0) = 0.693, i.e. 6,930 bps
-        # against a mean price of 3,664 bps, and never fully recovered.
-        # Legacy checkpoints, which fold the magnitude into the network, carry
-        # no such field and get 1.0.
+        # Fixed output scale. The Softplus head emits a quantity of order 1
+        # and the price magnitude is carried here. An unscaled head starts at
+        # softplus(0) = 0.693, i.e. 6,930 bps against a mean price of 3,664
+        # bps; with the scale the systematic price bias is +0.467 bps against
+        # +0.985 bps. Legacy checkpoints carry no output_scale and get 1.0.
         self._output_scale = float(self.meta.get("output_scale", 1.0))
 
         # Load 0DTE surrogate if available
@@ -92,7 +89,6 @@ class PricingEngine:
             self._0dte_lows = torch.tensor([0.85, 1/252.0, 0.05, 0.0], dtype=torch.float32)
             self._0dte_highs = torch.tensor([1.15, 12/252.0, 0.80, 0.10], dtype=torch.float32)
 
-    # ------------------------------------------------------------- internals
     def _call_price_torch(self, m, mat, sig, r,
                           member: int | None = None) -> torch.Tensor:
         """Unit-strike call price/K as a differentiable torch graph.
@@ -110,13 +106,10 @@ class PricingEngine:
         if not bool(mask.any()):
             return self._asian_call(m, mat, sig, r, member)
 
-        # Mixed batch. This used to gate on .all(), so a batch spanning the
-        # cutoff sent EVERY element through the Asian net - including
-        # maturities below its 0.05 training floor, silently extrapolated -
-        # while price_batch then applied EUROPEAN parity to the short-dated
-        # ones. Two different parity relations on one price vector. Route
-        # per element instead, so each maturity is priced by the model that
-        # owns it and receives the matching parity relation.
+        # Mixed batch: route per element, so each maturity is priced by the
+        # model that owns it and price_batch applies that model's parity
+        # relation (Asian above the cutoff, European at or below). Pinned by
+        # tests/test_regression.py::test_mixed_maturity_batch_matches_scalar.
         return torch.where(mask,
                            self._zero_dte_call(m, mat, sig, r, member),
                            self._asian_call(m, mat, sig, r, member))
@@ -146,21 +139,18 @@ class PricingEngine:
         """exp(-rT) * (E[A]/K - 1) with spot=m, strike=1, differentiable.
 
         E[A]/K = (m/n) * sum_{i=1..n} exp(r t_i), t_i = i * T / n, evaluated
-        as that sum rather than through its geometric-series closed form
-        m * e^{r dt} * expm1(rT) / (n * expm1(r dt)). The two agree wherever
-        the closed form is defined, but the closed form is 0/0 at r = 0 - a
-        rate the API accepts - and any guard that holds r away from zero
-        (a clamp, a floor, an epsilon) carries zero derivative there, which
-        silently deletes the whole parity contribution from rho and leaves a
-        put reporting its call's rho. The sum is analytic in r at every rate,
-        so autograd returns the true sensitivity throughout: at r = 0 the
-        term itself vanishes (E[A] = S there, every fixing carries forward
-        m) while its derivative does not, and that derivative is exactly the
-        gap between a put's rho and a call's. Differentiating the whole
-        parity term at r = 0 gives -T * (m - 1) + m * T * (n + 1) / (2n),
-        whose first piece is the discount factor's own sensitivity and
-        vanishes only at the money. Accumulated in float64 and cast back, so
-        summing n terms costs no precision against the closed form.
+        as the sum. Its geometric-series closed form
+        m * e^{r dt} * expm1(rT) / (n * expm1(r dt)) is 0/0 at r = 0, a rate
+        the API accepts, and a guard that holds r away from zero (a clamp, a
+        floor, an epsilon) has zero derivative there, which removes the
+        parity contribution from rho and leaves a put reporting its call's
+        rho. The sum is analytic in r at every rate. At r = 0 the term
+        reduces to m - 1 and its derivative in r is
+        -T * (m - 1) + m * T * (n + 1) / (2n): the discount factor's
+        sensitivity, which vanishes at the money, plus that of E[A]. That
+        derivative is the gap between a put's rho and a call's. Accumulated
+        in float64 and cast back, so summing n terms costs no precision
+        against the closed form.
         """
         n = self.n_steps
         m64, mat64, r64 = (m.to(torch.float64), mat.to(torch.float64),
@@ -170,7 +160,6 @@ class PricingEngine:
         ea = m64 * torch.exp(r64.unsqueeze(-1) * t).mean(dim=-1)
         return (torch.exp(-r64 * mat64) * (ea - 1.0)).to(m.dtype)
 
-    # ------------------------------------------------------------ public API
     def price_with_greeks(self, spot: float, strike: float, maturity: float,
                           sigma: float, rate: float,
                           option_type: str = "call",
@@ -209,10 +198,10 @@ class PricingEngine:
         }
 
     # Rows fed through the ensemble per block in price_batch. Every row is
-    # priced independently, so blocking is exact; without it a 50,000-point
-    # batch transiently held ~110 MB of (batch, width) float32 activations
-    # across the 5 members - most of the request headroom on the 512 MB
-    # free-tier container this serves from.
+    # priced independently, so blocking is exact. Unblocked, a 50,000-point
+    # batch transiently holds ~110 MB of (batch, width) float32 activations
+    # across the 5 members, most of the request headroom on the 512 MB
+    # container this serves from.
     _BATCH_CHUNK = 8_192
 
     @torch.no_grad()
@@ -253,16 +242,16 @@ class PricingEngine:
 
     def in_domain(self, spot: float, strike: float, maturity: float,
                   sigma: float, rate: float) -> bool:
-        """Is this request inside the trained box of whichever model serves it?
+        """True when the request lies inside the serving model's trained box.
 
-        Previously this checked only the Asian box, so a legitimate 0DTE query
-        (maturity below 12/252, which the 0DTE surrogate covers down to 1/252)
-        was reported out-of-domain. It also went uncalled by price_batch, so
-        nothing actually guarded extrapolation.
+        (m, T, sigma, r) is checked against the 0DTE box, which reaches down
+        to 1/252, for maturities at or below ZERO_DTE_CUTOFF, and against the
+        Asian box for longer ones. Maturities in (12/252, 0.05) are above the
+        0DTE cutoff and below the Asian surrogate's training floor. Neither
+        model covers them and this returns False.
 
-        Note the gap between the two boxes: maturities in (12/252, 0.05) are
-        above the 0DTE cutoff but below the Asian surrogate's training floor,
-        so NO model is valid there and this returns False.
+        The pricing methods do not call this. Requests are gated by the
+        caller (validate_domain in backend/api/main.py).
         """
         x = np.array([spot / strike, maturity, sigma, rate])
         if self.has_0dte and maturity <= ZERO_DTE_CUTOFF:

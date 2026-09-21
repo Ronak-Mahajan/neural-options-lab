@@ -5,9 +5,9 @@ Trains the same architecture as the main pricer but specifically on the
 Because rough vol pathwise Greeks are complex, this uses standard price MSE.
 
 The near-expiry price surface has a sharp ATM kink, which a single short
-run underfits badly (~30 bps true error vs ~2 bps label noise) - so this
-trains a deep ensemble with a longer cosine schedule, mirroring the main
-pricer's recipe.
+run underfits (~30 bps true error against ~2 bps label noise). This script
+therefore trains a deep ensemble with a longer cosine schedule, the same
+recipe as the main pricer.
 
 Usage:  python -m backend.quant.train_0dte --ensemble 5 --epochs 500
 """
@@ -50,25 +50,22 @@ def main():
     ds = torch.load(ds_path, map_location="cpu", weights_only=True)
     X = ds["X"]
     y = ds["y"]
-    # dynamics the dataset was generated under (persisted by dataset_0dte);
-    # older datasets predate this field and used the historical defaults
+    # Dynamics the dataset was generated under (persisted by dataset_0dte). A
+    # dataset file without the field was generated under the defaults below.
     dyn = ds.get("params", {"eta": 1.5, "rho": -0.7, "H": 0.1})
     print(f"dataset dynamics: {dyn}")
 
-    # Whether these dynamics came from a market calibration is a FACT ABOUT THE
-    # DATASET, so read it from the calibration the same way dataset_0dte did,
-    # and check the parameters actually match. The alternative - trusting the
-    # artifact to still describe reality - is how the checkpoint ended up
-    # announcing "uncalibrated defaults" while carrying eta=2.688 from a live
-    # SPY fit.
+    # Whether these dynamics came from a market calibration is a fact about the
+    # dataset: read the calibration the way dataset_0dte did and require the
+    # parameters and the kernel to match.
     calibrated, note = False, (
         "Historical defaults (eta 1.5, rho -0.7, H 0.1); no market calibration "
         "was adopted. Run 'python -m backend.quant.calibrate --retrain' during "
         "market hours to fit and adopt live dynamics.")
-    # There is one calibration artifact per market (SPY via calibrate.py, BTC
-    # via calibrate_deribit.py); whichever one these dynamics came from is the
-    # one that gets named. Checking only the SPY file would stamp a BTC-driven
-    # retrain "uncalibrated" -- the same lie in a new costume.
+    # One calibration artifact per market (SPY via calibrate.py, BTC via
+    # calibrate_deribit.py). Every file is checked and the one these dynamics
+    # came from is the one named, so a BTC-driven retrain is stamped with the
+    # BTC fit.
     from backend.quant.dataset_0dte import CAL_FILES
     for cal_path in (ARTIFACTS / f for f in CAL_FILES.values()):
         if not cal_path.exists():
@@ -81,7 +78,7 @@ def main():
             market = cal.get("ticker") or cal.get("market", "?")
             # A calibration record recovered from a checkpoint carries the
             # parameters but not the per-expiry detail, so `expiries` can be
-            # present and null; count what is there rather than assume a list.
+            # present and null. The provenance count is the fallback.
             n_expiries = (len(cal.get("expiries") or [])
                           or cal.get("provenance", {}).get("n_expiries", "?"))
             note = (f"Calibrated to {market} on "
@@ -177,13 +174,8 @@ def main():
                          "H": float(dyn["H"]), "eta": float(dyn["eta"]),
                          "rho": float(dyn["rho"]),
                          "kernel": dyn.get("kernel", "type_I_fbm_LEGACY"),
-                         # DERIVED from the dataset, never hardcoded. This was
-                         # pinned to False with a note explaining that the then
-                         # current calibration was unusable - true when written,
-                         # and silently false the moment a good fit was adopted.
-                         # A checkpoint carrying eta=2.688 from a live SPY fit
-                         # while announcing "uncalibrated defaults" misinforms
-                         # exactly the person who thought to check.
+                         # Derived from the dataset, never hardcoded, so the
+                         # flag and the note cannot disagree with the weights.
                          "calibrated": calibrated,
                          "calibration_note": note,
                          "epochs": args.epochs, "lr": args.lr,

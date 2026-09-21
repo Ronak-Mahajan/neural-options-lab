@@ -1,14 +1,14 @@
 """Heston (1993) semi-analytic reference: characteristic function + COS pricing.
 
-Why this module exists
-----------------------
+Purpose
+-------
 The project's short-dated engine is rough Bergomi, priced by Monte Carlo and by
 a neural map of that Monte Carlo. Both need a classical benchmark that is
 (a) exact to floating-point precision, (b) fast enough to calibrate in seconds
-on a CPU, and (c) the textbook stochastic-volatility model whose *failure* on
-the short-dated skew is the reason rough volatility exists. Heston is all
-three. This module is numpy only - no torch - and is importable from anywhere
-in the backend.
+on a CPU, and (c) the textbook stochastic-volatility model whose failure on
+the short-dated skew motivates rough volatility. Heston is all three. This
+module uses numpy only (no torch) and is importable from anywhere in the
+backend.
 
 Model (risk-neutral, dividend yield q):
 
@@ -25,10 +25,10 @@ which never crosses the branch cut of the complex log for any maturity (the
 original Heston form with (beta + d) does, and produces discontinuities for
 T beyond a few years).
 
-One further rewrite, ours: the trap-free form still divides by sigma_v^2, so it
-cannot be evaluated at or near the Black-Scholes limit sigma_v -> 0 (the
-coefficient kappa theta / sigma_v^2 blows up while (beta - d) -> 0 by
-cancellation). The identity
+One further rewrite is specific to this module. The trap-free form still
+divides by sigma_v^2, so it cannot be evaluated at or near the Black-Scholes
+limit sigma_v -> 0 (the coefficient kappa theta / sigma_v^2 blows up while
+(beta - d) -> 0 by cancellation). The identity
 
     beta - d = -sigma_v^2 (u^2 + i u) / (beta + d)
 
@@ -57,8 +57,8 @@ phi is evaluated once per maturity and the (N x n_strikes) coefficient matrix
 carries the strike dependence through the kink at ln(K / S_0). N = 2^10 is the
 default. Measured against the reference value of FO2008 Table 3 (see the
 tests): 8.0e-9 at their own L = 12 from N = 2^8 on, and 1.6e-8 once the range
-is widened until the martingale identity holds to 1e-10 (below) - the residual
-is the published reference's own truncation, not this pricer's.
+is widened until the martingale identity holds to 1e-10 (below). That residual
+is the truncation of the published reference value.
 
 The cumulant rule alone is not safe. For FO2008's own Feller-violating test
 parameters at T = 1, L = 12 leaves 4e-7 of the exponential moment E[e^z]
@@ -66,22 +66,22 @@ outside the range, which shows up as a 4e-5 error in the put (the call is
 insensitive to the left tail, so their call reference does not see it); for
 the parameters a short-dated SPY calibration selects (sigma_v ~ 5, kappa ~ 100)
 the tails are heavier still. `_cos_terms` therefore checks the expanded
-density against E[e^z] = e^{mu T} - exactly the identity put-call parity
-tests - and widens L by 1.5 (scaling N with it) until the defect is below
-RANGE_TOL = 1e-10. `cos_range_report` shows what was used.
+density against E[e^z] = e^{mu T}, the identity that put-call parity tests,
+and widens L by 1.5 (scaling N with it) until the defect is below
+RANGE_TOL = 1e-10. `cos_range_report` returns the range that was used.
 
-`heston_implied_vol` prices the OUT-OF-THE-MONEY instrument at each strike
+`heston_implied_vol` prices the out-of-the-money instrument at each strike
 (put below the forward, call above) and inverts it with a vectorised Black-76
-bisection, which is the numerically well-conditioned way to get a smile:
-inverting a deep in-the-money call recovers a tiny extrinsic value from a
-large number and loses digits in exactly the wing the calibration cares about.
+bisection, the numerically well-conditioned way to get a smile. Inverting a
+deep in-the-money call recovers a tiny extrinsic value from a large number
+and loses digits in the wing the calibration is fitted on.
 
 Calibration
 -----------
 `calibrate_heston` fits (v0, kappa, theta, sigma_v, rho) to a list of
 `calibrate.Quote` by bounded least squares (scipy.optimize.least_squares, TRF)
 on implied vols in vol points, from several starting points. Everything is
-priced ON THE FORWARD of each expiry (S = F = fwd_pv e^{r tau}, r = q = 0,
+priced on the forward of each expiry (S = F = fwd_pv e^{r tau}, r = q = 0,
 undiscounted), the convention of backend/quant/surface.py, so model and market
 share one forward by construction and the market's own Black-76 implied vol is
 the target. Quotes whose model price falls below the Black-76 no-arbitrage
@@ -90,9 +90,9 @@ floor have no implied vol; they are scored by the vega-linearised price error
 calibrate.iv_fit_report uses, so the worst-fitting quotes are never dropped
 from the metric.
 
-The Feller condition 2 kappa theta > sigma_v^2 is REPORTED (`feller`), never
-imposed: the little-trap characteristic function is valid either way, and a
-short-dated index smile routinely wants it violated.
+The Feller condition 2 kappa theta > sigma_v^2 is reported (`feller`) and
+never imposed: the little-trap characteristic function is valid either way, and
+fits to short-dated index smiles routinely violate it.
 
 ATM skew
 --------
@@ -102,7 +102,7 @@ difference at steps h and 2h, Richardson combination, |psi_h - psi_2h|/3 as
 the truncation estimate), so Heston's term structure can be laid over that
 document's market and rough-Bergomi curves. The classical short-maturity limit
 `heston_short_skew_limit` = rho sigma_v / (4 sqrt(v0)) is the textbook result
-(Gatheral 2006, ch. 3): finite as T -> 0, i.e. a log-log slope of ZERO, where
+(Gatheral 2006, ch. 3): finite as T -> 0, i.e. a log-log slope of zero, where
 rough volatility predicts H - 1/2.
 
 References
@@ -150,7 +150,7 @@ IV_LO, IV_HI, IV_ITERS = 1e-4, 5.0, 24
 #: same value calibrate.VEGA_FLOOR uses (forward vega here, undiscounted).
 VEGA_FLOOR = 1e-4
 #: Calibration bounds. kappa and sigma_v are judged for bound-pinning on a log
-#: scale, v0 and theta in vol (sqrt) space, rho linearly - see HestonFit.
+#: scale, v0 and theta in vol (sqrt) space, rho linearly (see _pinned).
 HESTON_BOUNDS: dict[str, tuple[float, float]] = {
     "v0": (1e-4, 1.0), "kappa": (1e-2, 100.0), "theta": (1e-4, 1.0),
     "sigma_v": (1e-2, 10.0), "rho": (-0.999, 0.5),
@@ -167,14 +167,14 @@ def _log1p_c(z: np.ndarray) -> np.ndarray:
     """log(1 + z) for complex z with full relative precision at tiny |z|.
 
     numpy's complex log1p is log(1 + z) evaluated naively: measured here,
-    log1p(-1e-12 - 1e-13j) came back with a 2e-5 RELATIVE error, which
-    destroyed the sigma_v -> 0 limit of the characteristic function. Below
-    |z| = 1e-4 the four-term Taylor series is exact to 2e-17 relative; above
-    it the classic corrected form (Higham 2002, sec. 1.14.1) is used, where
-    the rounding error of forming w = 1 + z cancels in z * log(w) / (w - 1).
-    (The corrected form alone is not enough: a denormal imaginary part of z
-    survives w - 1 and overflows the division - observed at u ~ 1500 on the
-    FO2008 parameters, where e^{-dT} ~ 1e-308.)
+    log1p(-1e-12 - 1e-13j) returns a 2e-5 relative error, which destroys the
+    sigma_v -> 0 limit of the characteristic function. Below |z| = 1e-4 the
+    four-term Taylor series is exact to 2e-17 relative; above it the classic
+    corrected form (Higham 2002, sec. 1.14.1) is used, where the rounding
+    error of forming w = 1 + z cancels in z * log(w) / (w - 1). The corrected
+    form alone is not enough: a denormal imaginary part of z survives w - 1
+    and overflows the division. This occurs at u ~ 1500 on the FO2008
+    parameters, where e^{-dT} ~ 1e-308.
     """
     z = np.asarray(z, dtype=np.complex128)
     small = np.abs(z) < 1e-4
@@ -222,7 +222,7 @@ def heston_cumulants(T: float, v0: float, kappa: float, theta: float,
                      ) -> tuple[float, float]:
     """First two cumulants of ln(S_T / S_0).
 
-    Derived from the CIR moments rather than copied: with I = int_0^T v dt and
+    Derived from the CIR moments: with I = int_0^T v dt and
     M = int_0^T sqrt(v) dW,  X = mu T - I/2 + M, so
 
         c1 = mu T - E[I]/2,
@@ -234,10 +234,10 @@ def heston_cumulants(T: float, v0: float, kappa: float, theta: float,
     E[I M] = rho sigma_v { theta (T - (1 - e)/kappa)/kappa
              + (v0 - theta)(1 - e (1 + kappa T))/kappa^2 },   e = e^{-kappa T}.
 
-    The version printed as FO2008 Table 11 that this module first carried had
-    "theta (6 e - 7)" where the derivation gives "theta (4 e - 5)"; the
-    numerical second derivative of ln phi at u = 0 sides with the derivation
-    (tests/test_heston.py checks both cumulants against the cf to 1e-6).
+    The expression printed as FO2008 Table 11 has "theta (6 e - 7)" where this
+    derivation gives "theta (4 e - 5)". The numerical second derivative of
+    ln phi at u = 0 agrees with the derivation (tests/test_heston.py checks
+    both cumulants against the cf to 1e-6).
     """
     e = math.exp(-kappa * T)
     s = sigma_v
@@ -260,12 +260,11 @@ def feller_ratio(kappa: float, theta: float, sigma_v: float) -> float:
 
 # ── COS pricing ───────────────────────────────────────────────────────────
 #: Truncation self-check: the cosine expansion of the density on [a, b] must
-#: reproduce E[e^z] = e^{mu T} (the martingale condition, which is exactly
-#: what put-call parity measures) to this relative tolerance, else the range
-#: is widened. FO2008's L = 12 passes it at every maturity this project
-#: prices; it fails at T = 1 for their own Feller-violating test parameters
-#: (measured defect 4.2e-7, i.e. a 4e-5 put error at K = 100), which is why
-#: the check exists.
+#: reproduce E[e^z] = e^{mu T} (the martingale condition that put-call parity
+#: measures) to this relative tolerance, else the range is widened. FO2008's
+#: L = 12 passes it at every maturity this project prices; it fails at T = 1
+#: for their own Feller-violating test parameters (measured defect 4.2e-7,
+#: i.e. a 4e-5 put error at K = 100). That case is the reason for the check.
 RANGE_TOL = 1e-10
 RANGE_WIDEN = 1.5
 RANGE_MAX_STEPS = 4
@@ -374,8 +373,8 @@ def cos_range_report(T: float, v0: float, kappa: float, theta: float,
                      sigma_v: float, rho: float, mu: float = 0.0,
                      N: int = DEFAULT_N, L: float = DEFAULT_L,
                      range_tol: float = RANGE_TOL) -> dict[str, float]:
-    """What truncation range the pricer actually used for these inputs, and
-    the martingale defect it achieved: {a, b, L, N, defect, c1, c2}."""
+    """The truncation range the pricer uses for these inputs and the
+    martingale defect it achieves: {a, b, L, N, defect, c1, c2}."""
     t = _cos_terms(T, v0, kappa, theta, sigma_v, rho, mu, N, L, range_tol)
     return {k: float(t[k]) for k in ("a", "b", "L", "N", "defect", "c1", "c2")}
 
@@ -392,7 +391,7 @@ def heston_call(S: float, K, T: float, r: float, q: float, v0: float,
     S : spot. K : strike, scalar or array (vectorised). T : years.
     r, q : continuously compounded rate and dividend yield.
     v0, kappa, theta, sigma_v, rho : Heston parameters (v0, theta are
-        VARIANCES; sigma_v is the vol of variance).
+        variances; sigma_v is the vol of variance).
     N : cosine terms (2^8 .. 2^12 are all converged for this project's use).
     L : truncation half-width in standard deviations, [a, b] = c1 -+ L sqrt(c2).
         The range is widened automatically (and N scaled with it) until the
@@ -513,7 +512,7 @@ def heston_implied_vol(S: float, K, T: float, r: float, q: float, v0: float,
 
     Prices the out-of-the-money instrument at each strike on the forward
     F = S e^{(r - q) T} (put for K < F, call for K >= F, undiscounted) and
-    inverts it with black76_implied_vol. This IS the Black-Scholes implied
+    inverts it with black76_implied_vol. This equals the Black-Scholes implied
     vol of the corresponding spot-space option (the discounting and the
     dividend cancel between price and inversion), computed where it is best
     conditioned. NaN where the model price sits below the no-arb floor
@@ -540,8 +539,8 @@ def heston_atm_skew(T: float, v0: float, kappa: float, theta: float,
     """psi(T) = d sigma_imp / dk at k = ln(K/F) = 0 by the five-point stencil
     convention of scripts/atm_skew_term_structure.py.
 
-    Step h defaults to max(h_scale sqrt(v0) sqrt(T), h_floor) - the same rule
-    that document applied with its forward variance xi in place of v0 - and
+    Step h defaults to max(h_scale sqrt(v0) sqrt(T), h_floor) (the same rule
+    that script applies with its forward variance xi in place of v0), and
     the strikes are F e^{k} for k in STENCIL * h on a unit forward (the skew
     is scale free). Returns psi (central difference at h), psi_2h, the
     Richardson combination (4 psi_h - psi_2h)/3, the truncation estimate
@@ -567,8 +566,8 @@ def heston_mc_call(S: float, K, T: float, r: float, q: float, v0: float,
                    seed: int | None = 0, chunk: int = 50_000
                    ) -> tuple[np.ndarray, np.ndarray]:
     """Independent check of the COS prices: full-truncation Euler
-    (Lord, Koekkoek & van Dijk 2010) - the variance may go negative in the
-    state but enters every coefficient as max(v, 0). Returns (price, standard
+    (Lord, Koekkoek & van Dijk 2010), where the variance may go negative in
+    the state but enters every coefficient as max(v, 0). Returns (price, standard
     error), each shaped like K. Discretisation bias is O(dt); the tests use
     enough steps that it sits well inside the statistical error."""
     K = np.atleast_1d(np.asarray(K, dtype=float))
@@ -633,7 +632,7 @@ def heston_smile_residuals(groups: Sequence[dict[str, Any]], params: Sequence[fl
     over expiries in `groups` order (see _groups).
 
     Residual = 100 (iv_model - iv_mkt) where the model price inverts, else
-    100 (P_model - P_mkt) / vega_mkt - the first-order continuation of the
+    100 (P_model - P_mkt) / vega_mkt, the first-order continuation of the
     implied-vol error past the no-arb boundary (calibrate.iv_fit_report).
     Prices are computed per expiry (one COS density each); the inversion
     runs once over every quote."""
@@ -658,9 +657,9 @@ def heston_smile_residuals(groups: Sequence[dict[str, Any]], params: Sequence[fl
 class HestonFit:
     """Result of calibrate_heston. `params` are the fitted values, `se` the
     nominal standard errors from the Jacobian at the optimum (s^2 (J'J)^-1
-    with s^2 = RSS / (n - p); they assume independent, homoscedastic
-    residuals, which smile residuals are not - read them as a curvature
-    scale, not a confidence interval)."""
+    with s^2 = RSS / (n - p)). They assume independent, homoscedastic
+    residuals, which smile residuals are not, so they measure the curvature
+    of the objective and do not give confidence intervals."""
     params: dict[str, float]
     se: dict[str, float]
     rmse_volpts: float                  # sqrt(mean r^2), all quotes, vol points
@@ -754,8 +753,8 @@ def calibrate_heston(quotes: Sequence[Any], rate: float, *,
                      max_nfev: int = 400) -> HestonFit:
     """Fit (v0, kappa, theta, sigma_v, rho) to `quotes` (calibrate.Quote).
 
-    loss     'linear' - plain least squares on the vol-point residuals, so the
-             number minimised IS the RMSE reported; 'huber' - scipy's Huber
+    loss     'linear': plain least squares on the vol-point residuals, so the
+             number minimised is the RMSE reported; 'huber': scipy's Huber
              with f_scale = `huber_delta_volpts` (2 vp, the project's
              calibrate.HUBER_DELTA), the objective the rough-Bergomi map
              calibration in artifacts/intraday_params.json was fitted with.
@@ -833,7 +832,7 @@ def calibrate_heston(quotes: Sequence[Any], rate: float, *,
     r_plain, ivs, n_unpr = heston_smile_residuals(groups, x, N, L)
     n = r_plain.size
     # nominal covariance from a fresh finite-difference Jacobian of the
-    # unweighted residuals at the optimum, over the FREE parameters
+    # unweighted residuals at the optimum, over the free parameters
     J = np.empty((n, len(free)))
     for c, j in enumerate(free):
         step = 1e-5 * max(abs(x[j]), 1e-3)

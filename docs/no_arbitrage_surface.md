@@ -1,51 +1,56 @@
 # A no-arbitrage implied-volatility surface for the 0DTE regime, and an arbitrage audit of the served price surrogate
 
-**Summary.** The served 0DTE model (`artifacts/model_0dte.pt`, a 5-member ensemble that
-outputs European call *prices*) is not arbitrage-free. Audited by autograd on a
+## Summary
+
+The served 0DTE model (`artifacts/model_0dte.pt`, a 5-member ensemble that
+outputs European call prices) is not arbitrage-free. Audited by autograd on a
 134,100-point grid over its trained box (k = ln(K/F) in [-0.139, 0.157], T in [1, 12]
 trading days, five vols, four rates), its implied total variance violates the Durrleman
-butterfly condition g(k) >= 0 on **4.9%** of the points where an implied vol exists and
-the calendar condition dw/dT >= 0 on **10.5%**; on a further **6.8%** of the box the served
-price is *below intrinsic value* (by up to **24.8 bps of strike**), so no implied vol
-exists at all, and 1%-wide butterflies can be bought for as little as **-7.1 bps of
-strike**. The violations sit almost entirely on the in-the-money side at low sigma sqrt(T)
+butterfly condition g(k) >= 0 on 4.9% of the points where an implied vol exists and
+the calendar condition dw/dT >= 0 on 10.5%. On a further 6.8% of the box the served
+price is below intrinsic value (by up to 24.8 bps of strike), so no implied vol
+exists there, and 1%-wide butterflies can be bought for as little as -7.1 bps of
+strike. The violations sit almost entirely on the in-the-money side at low sigma sqrt(T)
 (92% of butterfly violations at k < -0.05; 59% at sigma = 0.05; 15% of 1-2-day points vs
 3% of 8-12-day points), where the true price is a hinge and the ensemble's few-bps
 smoothing error is larger than the hinge's time value. Inside the region where the
-surrogate's implied vol is actually resolved (BS vega >= 0.02 per unit strike, 42% of the
-box) violations are rare - **0.06%** butterfly, **0.18%** calendar - and small.
+surrogate's implied vol is resolved (BS vega >= 0.02 per unit strike, 42% of the
+box) violations are rare and small: 0.06% butterfly and 0.17% calendar (34 and 99 of
+56,638 points).
 
 A constrained surface in the style of Ackerer, Tagasovska & Vatter (2020),
 w = sigma^2 T * softplus(MLP), 12,929 parameters, trained in 518 s on CPU against the served
-ensemble as teacher with autograd butterfly and calendar penalties, has **zero**
-violations of either condition on the same 134,100 points (min g = **+0.072**,
-min dw/dT = **+6.5e-5**), never prices below intrinsic, and reproduces the teacher to
-**0.22 vol points** RMSE on 32,768 held-out points in the resolved region (0.38 on the
-low-vol-heavy audit grid), **0.77 bps** of strike in price (1.84 bps on the grid, dominated
-by the 6.8% of points where the teacher is below intrinsic and the surface, by
-construction, is not). Against a fresh 4 x 400,000-path rough Bergomi Monte Carlo of the
-same dynamics on six smiles, the constrained surface is closer to the truth than its
-teacher on four (1-day smiles: 2.96 vs 3.94 and 0.77 vs 1.37 vol points) and farther on
-two (by 0.06 and 0.07 vol points); both are tens to hundreds of Monte Carlo standard
-errors from the truth at 1-5 days, so the residual error is the teacher's systematic
-underfit of the short end, not noise, and the constrained surface inherits it. The
+ensemble as teacher with autograd butterfly and calendar penalties, has zero
+violations of either condition on the same 134,100 points (min g = +0.072,
+min dw/dT = +6.5e-5) and never prices below intrinsic. Where the implied vol is resolved
+it reproduces the teacher to 0.22 vol points RMSE on its held-out validation draw (32,768
+random points, 15,757 of them resolved) and to 0.38 on the 56,638 resolved points of the
+134,100-point audit grid, which puts 40% of its points at sigma = 0.05 and 0.10. In price
+the two figures are 0.77 bps of strike on the validation draw and 1.84 bps on the grid; the
+grid figure is dominated by the 6.8% of points where the teacher is below intrinsic and the
+surface, by construction, is above it. Against a fresh 4 x 400,000-path rough Bergomi Monte
+Carlo of the same dynamics on six smiles, the constrained surface is closer to the truth
+than its teacher on four (1-day smiles: 2.96 vs 3.94 and 0.77 vs 1.37 vol points) and
+farther on two (by 0.06 and 0.07 vol points). Both are tens to hundreds of Monte Carlo
+standard errors from the truth at 1-5 days, so the residual error is the teacher's
+systematic underfit of the short end, and the constrained surface inherits it. The
 largest inherited error is the teacher's over-pricing of low-vol out-of-the-money calls
 (16.30 bps against a Monte Carlo 8.80 +- 0.1 bps at sigma = 0.10, 12 days, k = 0.019;
-6.80 against 1.59 at 5 days), which the surface reproduces to within a bp: it is
-arbitrage-free, and wrong there in the same way its teacher is.
+6.80 against 1.59 at 5 days), which the surface reproduces to within 1.3 bps. At those
+strikes the surface is arbitrage-free and carries the teacher's error.
 
-Everything here was produced by `python -m scripts.no_arbitrage_surface` (752 s on 16 CPU
-threads, 8 used by torch; audit 110 s, training 518 s, Monte Carlo 123 s). Numbers are in
-`docs/no_arbitrage_surface.json` (rewritten by a `--skip-train` pass that re-audits and
-re-runs the Monte Carlo with the same seeds so the per-strike smiles are stored; its
-timings are its own), the figure is `docs/no_arbitrage_surface.png`, the surface is
-`artifacts/iv_surface_0dte.pt`.
+Produced by `python -m scripts.no_arbitrage_surface` in 752 s on 16 CPU threads, 8 used by
+torch (audit 110 s, training 518 s, Monte Carlo 123 s). Numbers are in
+`docs/no_arbitrage_surface.json`. That file is written by a `--skip-train` pass that
+re-audits both surfaces and re-runs the Monte Carlo with the same seeds to store the
+per-strike smiles, so its `timings_s` block describes that pass. The figure is
+`docs/no_arbitrage_surface.png` and the surface is `artifacts/iv_surface_0dte.pt`.
 
 ![No-arbitrage surface](no_arbitrage_surface.png)
 
 ---
 
-## 1. What was built
+## 1. Construction
 
 ### 1.1 The served surrogate, read as an implied-volatility surface
 
@@ -55,44 +60,43 @@ European call price per unit strike as a function of (S/K, T, sigma, r) over S/K
 [0.85, 1.15], T in [1, 12] trading days, sigma in [0.05, 0.80], r in [0, 0.10], trained on
 rough Bergomi labels with the checkpoint's own dynamics (H = 0.2554, eta = 3.657,
 rho = -0.628, Riemann-Liouville kernel, calibrated to SPY on 2026-08-20). Nothing in its
-training constrains the surface it produces to be free of static arbitrage; the README
-says so. This package measures how far from arbitrage-free it is, and builds a surface
-that is.
+training constrains the surface it produces to be free of static arbitrage. This package
+measures the violations and builds a surface that has none on the audit grid.
 
 `backend/quant/iv_surface.py :: TeacherSurface` wraps the engine:
 
-- **Coordinates.** k = ln(K/F) with F = S e^{rT} (the engine drifts the spot at r with no
+- Coordinates. k = ln(K/F) with F = S e^{rT} (the engine drifts the spot at r with no
   dividend), the variable in which the Durrleman and calendar conditions are stated
   (Gatheral & Jacquier 2014). The engine's moneyness is m = S/K = exp(-(k + rT)); the
   shift rT is at most 0.0048. The k box [-0.139, 0.157] is the largest interval whose
   image stays inside the trained S/K box for every (r, T).
-- **Inversion.** Prices are inverted to Black-Scholes implied vols by a vectorised
-  64-step bisection (no gradient) followed by two Newton steps that autograd *does*
-  differentiate. At a converged root the Newton map has zero derivative with respect to
+- Inversion. Prices are inverted to Black-Scholes implied vols by a vectorised
+  64-step bisection (no gradient) followed by two Newton steps that autograd
+  differentiates. At a converged root the Newton map has zero derivative with respect to
   its starting point, so two steps return the exact implicit first and second
   derivatives of sigma_imp with respect to k and T (one step is exact only to first
   order; the missing term is the one the outer step supplies). Checked against central
   finite differences in `tests/test_iv_surface.py` (relative agreement 1e-4 on w', 1e-3
   on w''). The forward pass runs on float64 copies of the same weights; they reproduce
   the served float32 path to 2.7e-8 in price.
-- **Conditions.** Total variance w(k, T) = sigma_imp^2 T. The Durrleman function
+- Conditions. Total variance w(k, T) = sigma_imp^2 T. The Durrleman function
   g(k) = (1 - k w'/(2w))^2 - (w'^2/4)(1/w + 1/4) + w''/2 must be >= 0 on every slice
   (the risk-neutral density in k is g e^{-d_-^2/2} / sqrt(2 pi w), so g < 0 is a negative
   density); dw/dT >= 0 at fixed k rules out calendar-spread arbitrage. Both are computed
   by autograd through the surrogate. As a cross-check the price-space conditions are
   evaluated directly through the network with the strike as the free variable:
   dC/dK in [-e^{-rT}, 0], d2C/dK2 >= 0, a discrete 1%-wide butterfly, d(C/S)/dT >= 0 at
-  fixed k (exactly equivalent to dw/dT >= 0, because the normalised Black-Scholes price is
+  fixed k (equivalent to dw/dT >= 0, because the normalised Black-Scholes price is
   monotone in w at fixed k), dC/dT >= 0 at fixed strike, and the bounds
   max(S - K e^{-rT}, 0) <= C <= S.
-- **Resolution.** A price error dP moves the implied vol by dP / vega. The surrogate's
-  own accuracy is 1.33 bps of strike (`artifacts/eval.json`, ensemble price RMSE over 600
-  held-out points), so where the Black-Scholes vega per
-  unit strike per unit vol falls below **0.02** (`VEGA_FLOOR`), that error is already
-  0.67 vol points and the implied vol read off the surrogate carries no information about
-  the smile: at sigma = 0.05 and T = 1 day the resolved band is |k| < 0.003, three grid
-  cells wide. Every statistic below is therefore reported on the full box **and** on the
-  vega-resolved sub-region, and the write-up is careful to say which.
+- Resolution. A price error dP moves the implied vol by dP / vega. Against
+  4 x 400,000-path references the served ensemble's price RMSE is 0.79 to 3.76 bps of
+  strike on the six smiles of Section 4. Where the Black-Scholes vega per unit strike per
+  unit vol falls below 0.02 (`VEGA_FLOOR`), 1 bp of price is at least 0.5 vol points, so
+  price errors of that size are at least 0.4 to 1.9 vol points and the implied vol read off
+  the surrogate carries no information about the smile. At sigma = 0.05 and T = 1 day the resolved band
+  is |k| < 0.003, three grid cells wide. Every statistic below is reported on the full box
+  and on the vega-resolved sub-region, and each figure names its region.
 
 ### 1.2 The constrained surface
 
@@ -104,27 +108,26 @@ positive prior times a positive multiplier,
 with the flat-vol prior sigma^2 T (arbitrage-free on its own: g = 1, dw/dT = sigma^2 > 0)
 and a width-64, depth-4 SiLU MLP (12,929 parameters) whose head is zero-initialised, so
 training starts exactly at the prior. Inputs are the affinely normalised (k, T, sigma, r)
-plus asinh(k / (sigma sqrt T)) / 3: standardised moneyness is the coordinate in which a
-stochastic-volatility smile is nearly stationary, and without it a 1-day, 5%-vol smile is
-0.003 wide in k and a small MLP in raw k cannot resolve it.
+plus asinh(k / (sigma sqrt T)) / 3. Standardised moneyness is the coordinate in which a
+stochastic-volatility smile is nearly stationary; without it a 1-day, 5%-vol smile is
+0.003 wide in k, which a small MLP in raw k cannot resolve.
 
-**Labels.** The served ensemble is the teacher: it is deterministic, differentiable and
-cheap (262,144 samples in 9 s), and its systematic error against high-precision rough
+The labels come from the served ensemble, the teacher. It is deterministic, differentiable
+and cheap (262,144 samples in 9 s), and its systematic error against high-precision rough
 Bergomi references is smaller than the noise a fresh label set would carry over most of
-the box: on the six smiles Section 4 re-prices against 4 x 400,000-path references the
+the box. On the six smiles Section 4 re-prices against 4 x 400,000-path references the
 teacher's price RMSE is 0.79 to 3.76 bps of strike, against the 2.35 bps per-label noise
-of a fresh 20,000-path Monte Carlo set, and it is only at the 1-day, 10%-vol corner that
-the teacher is the worse of the two. Regenerating labels by Monte Carlo at that accuracy
-would have cost the whole compute budget for a target that is noisier everywhere else.
-The price the teacher returns, not its implied vol, is the label, because the vol does
-not exist on 6.8% of the
-box (Section 2). Samples are drawn half uniformly in k and half uniformly in
+of a fresh 20,000-path Monte Carlo set; the teacher is the worse of the two only on the
+two 1-day smiles (3.76 and 2.42 bps). Regenerating labels by Monte Carlo at that path
+count would cost the compute budget of this study for a target that is noisier on the
+other four smiles. The label is the teacher's price, because its implied vol does not
+exist on 6.8% of the box (Section 2). Samples are drawn half uniformly in k and half uniformly in
 z = k / (sigma sqrt T) on [-8, 8], so the narrow low-vol smiles are sampled as densely as
 the wide ones; 7,091 of 262,144 samples (2.7%) whose teacher price lies outside the
 no-arbitrage bounds are dropped.
 
-**Loss**, per step on a 4,096-sample data batch and a fresh 4,096-point penalty batch drawn
-from the box widened by 10% in k and T:
+The loss, per step on a 4,096-sample data batch and a fresh 4,096-point penalty batch drawn
+from the box widened by 10% in k and T, is
 
     L = 2 * mean Huber_delta( (P_nn - P_teacher) / max(vega_nn, 0.02) )
         + 20 * mean relu(0.002 - g)^2
@@ -148,43 +151,45 @@ third-order autograd of a width-64 MLP is all small matmuls).
 
 ---
 
-## 2. Results: the served price surrogate admits static arbitrage
+## 2. Results: arbitrage audit of the served price surrogate
 
 Grid: k in [-0.139, 0.157] in 149 steps (0.002), T from 1 to 12 trading days in
 quarter-day steps (45), sigma in {0.05, 0.10, 0.20, 0.40, 0.80}, r in
 {0, 0.04, 0.05, 0.10}: 134,100 points, 110 s.
 
-**Coverage.** An implied vol exists on 93.2% of the box. On the other **6.8% the served
-price is below intrinsic value** (a synthetic put with negative price), by up to
-**24.8 bps of strike** at T = 1 day, k = -0.015, sigma = 0.05, r = 0: the true price there
-is intrinsic to within 1e-6 (4.8 standard deviations in the money) and the ensemble
-returns 126 bps against an intrinsic 151 bps. Never above spot. The implied vol is
-vega-resolved on 42.2% of the box.
+An implied vol exists on 93.2% of the box. On the other 6.8% the served
+price is below intrinsic value (a synthetic put with negative price), by up to
+24.8 bps of strike at T = 1 day, k = -0.015, sigma = 0.05, r = 0. The true price there
+is intrinsic to within 1e-6 (4.8 standard deviations in the money), and the ensemble
+returns 126 bps against an intrinsic 151 bps. The served price never exceeds spot. The
+implied vol is vega-resolved on 42.2% of the box.
 
 | condition (served surrogate) | points | violated | worst | at (T days, k, sigma, r) |
 |---|---|---|---|---|
-| butterfly g >= 0, all IV-defined points | 124,932 | **4.89%** | g = -151.7 | 1.25, -0.119, 0.20, 0.04 |
+| butterfly g >= 0, all IV-defined points | 124,932 | 4.89% | g = -151.7 | 1.25, -0.119, 0.20, 0.04 |
 | butterfly g >= 0, resolved region | 56,638 | 0.060% | g = -0.190 | 3.75, -0.021, 0.10, 0.00 |
-| calendar dw/dT >= 0, all IV-defined | 124,932 | **10.46%** | -14.8 | 3.75, -0.127, 0.05, 0.10 |
+| calendar dw/dT >= 0, all IV-defined | 124,932 | 10.46% | -14.8 | 3.75, -0.127, 0.05, 0.10 |
 | calendar dw/dT >= 0, resolved region | 56,638 | 0.175% | -0.0031 | 10.0, -0.009, 0.05, 0.05 |
 | price space: d2C/dK2 >= 0 | 134,100 | 6.89% | -12.7 (x K) | 1.0, -0.023, 0.05, 0.04 |
-| price space: 1%-wide butterfly >= 0 | 134,100 | 6.72% | **-7.1 bps of strike** | 1.0, -0.027, 0.05, 0.04 |
-| price space: dC/dK <= 0 | 134,100 | 0 | - | - |
+| price space: 1%-wide butterfly >= 0 | 134,100 | 6.72% | -7.1 bps of strike | 1.0, -0.027, 0.05, 0.04 |
+| price space: dC/dK <= 0 | 134,100 | 0 | n/a | n/a |
 | price space: dC/dK >= -e^{-rT} | 134,100 | 8.39% | -0.152 | 1.0, -0.023, 0.05, 0.10 |
 | price space: d(C/S)/dT >= 0 at fixed k | 134,100 | 13.15% | -0.080 | 12.0, -0.019, 0.05, 0.05 |
 | price space: dC/dT >= 0 at fixed K | 134,100 | 7.70% | -0.047 | 2.25, -0.085, 0.05, 0.00 |
 | price space: C >= max(S - K e^{-rT}, 0) | 134,100 | 6.84% | -24.8 bps | 1.0, -0.015, 0.05, 0.00 |
 
 The IV-space and price-space formulations of the same condition agree in sign at
-**100.0%** of the IV-defined points (butterfly vs convexity, and dw/dT vs d(C/S)/dT at
-fixed k), which is the check that the inversion and its autograd derivatives are right;
-the price-space fractions are larger only because they also count the 6.8% of points
+100.0% of the IV-defined points (butterfly vs convexity, and dw/dT vs d(C/S)/dT at
+fixed k); that agreement checks the inversion and its autograd derivatives. The
+price-space fractions are larger because they also count the 6.8% of points
 where no implied vol exists.
 
-**Where the violations sit.** Butterfly (g < 0, IV-defined points): 14.8% of the points
+### Location of the violations
+
+Butterfly (g < 0, IV-defined points): 14.8% of the points
 at 1-2 days violate, 8.6% at 2-4 days, 2.6% at 4-8 days, 3.0% at 8-12 days; 16.1% of the
-in-the-money wing (k < -0.05) violates and it holds **92%** of all violations, the centre
-|k| <= 0.05 holds 8%, the out-of-the-money wing k > 0.05 holds **none**; by vol, 17.3% of
+in-the-money wing (k < -0.05) violates and it holds 92% of all violations, the centre
+|k| <= 0.05 holds 8%, the out-of-the-money wing k > 0.05 holds none; by vol, 17.3% of
 the sigma = 0.05 points violate (59% of all violations), 7.4% at 0.10 (29%), 2.3% at 0.20
 (10%), 0.3% at 0.40, none at 0.80. Calendar (dw/dT < 0): 40.2% of the 1-2-day points and
 29.0% of the 2-4-day points violate against 0.9% at 8-12 days; here both wings are hit
@@ -194,22 +199,25 @@ resolved region the 34 butterfly violations are all at sigma = 0.10 and T >= 2 d
 or below the money, and the 99 calendar violations are all at sigma = 0.05 within
 |k| <= 0.05.
 
-**Why there.** At low sigma sqrt(T) the true call price is a hinge: intrinsic on the
-in-the-money side, essentially zero on the other, with all the curvature within a few
+### Mechanism
+
+At low sigma sqrt(T) the true call price is a hinge. It is intrinsic on the
+in-the-money side and close to zero on the other (0.00 bps at k = 0.019 on the 1-day,
+10%-vol Monte Carlo smile of Section 4), with all the curvature within a few
 thousandths in k of the money. The ensemble is a smooth function fitted by least squares
-to noisy labels over the whole box; its error is a few bps everywhere, which is what the
-README's 1.48 bps RMSE says, but a few bps of *smooth* error on a hinge is enormous
-relative to the hinge's own time value. The smoothing undershoots the corner (price below
+to noisy labels over the whole box. Its error is a few bps (0.79 to 3.76 bps price RMSE on
+the six smiles of Section 4), and a few bps of smooth error on a hinge exceeds
+the hinge's own time value. The smoothing undershoots the corner (price below
 intrinsic, dC/dK below -e^{-rT}), and the ripples of the fit on the flat in-the-money side
 have second derivatives of either sign (d2C/dK2 < 0, a negative density) and time
 derivatives of either sign (calendar violations). In implied-vol space the same ripples
-invert to violent fake smiles (the -151.7 minimum of g sits 8.4 standard deviations in
+invert to large spurious smiles: the -151.7 minimum of g sits 8.4 standard deviations in
 the money at sigma = 0.20, T = 1.25 days, where the time value is far below the
-surrogate's resolution), which is why the resolved-region numbers are the ones that
-describe the smile the surrogate actually produces: there, violations are rare (0.06% and
-0.18%) and small (g >= -0.19; dw/dT >= -0.0031, against sigma^2 = 0.0025 for the slope
-of a flat 5% vol). The surrogate's smile is mostly fine; its tails and its corner are not,
-and those are exactly the places a price-only loss does not see.
+surrogate's resolution. The resolved-region numbers therefore describe the smile the
+surrogate produces. There, violations are rare (0.06% and
+0.17%) and small (g >= -0.19; dw/dT >= -0.0031, against sigma^2 = 0.0025 for the slope
+of a flat 5% vol). The violations concentrate in the wings and at the low-vol corner, where
+vega is below 0.02 and a price-only loss is insensitive to the shape of the implied vol.
 
 ---
 
@@ -217,7 +225,7 @@ and those are exactly the places a price-only loss does not see.
 
 Training: 6,000 steps in 518 s on 8 threads (label generation and the final metrics
 included); 255,053 labels. The penalties
-never activated - the multiplier started at the arbitrage-free prior and the fit term
+never activated, because the multiplier starts at the arbitrage-free prior and the fit term
 never pushed it out of the feasible set (batch minimum g fell to +0.004 around step 2,500,
 above the 0.002 margin, and recovered to +0.03 by the end; batch minimum dw/dT / sigma^2
 stayed above +0.014).
@@ -225,29 +233,30 @@ stayed above +0.014).
 | | served surrogate | constrained surface |
 |---|---|---|
 | implied vol defined | 93.2% of box | 100% |
-| butterfly g < 0, all IV-defined points | 4.89% | **0** (min g = +0.072 at 4.5 d, k = 0.157, sigma 0.40, r 0) |
-| butterfly g < 0, resolved region | 0.060% | **0** (min g = +0.288) |
-| calendar dw/dT < 0, all IV-defined points | 10.46% | **0** (min dw/dT = +6.5e-5 at 3.25 d, k = 0.019, sigma 0.10, r 0.05) |
-| calendar dw/dT < 0, resolved region | 0.175% | **0** (min +1.3e-4) |
+| butterfly g < 0, all IV-defined points | 4.89% | 0 (min g = +0.072 at 4.5 d, k = 0.157, sigma 0.40, r 0) |
+| butterfly g < 0, resolved region | 0.060% | 0 (min g = +0.288) |
+| calendar dw/dT < 0, all IV-defined points | 10.46% | 0 (min dw/dT = +6.5e-5 at 3.25 d, k = 0.019, sigma 0.10, r 0.05) |
+| calendar dw/dT < 0, resolved region | 0.175% | 0 (min +1.3e-4) |
 | price below intrinsic | 6.84%, worst -24.8 bps | 0 (Black-Scholes price of a positive w) |
-| vs teacher, IV RMSE on resolved region (grid, 56,638 points) | - | **0.376** vol points (MAE 0.245, p95 0.67, max 5.80 at 1 d, k = 0.007, sigma 0.05, r 0.10) |
-| vs teacher, IV RMSE on resolved region (32,768 held-out random points) | - | **0.222** vol points (MAE 0.152, p95 0.396, max 3.60) |
-| vs teacher, IV RMSE where vega >= 0.05 (held-out) | - | 0.168 vol points |
-| vs teacher, price RMSE over the box (grid, 134,100 points) | - | **1.84** bps of strike (1.33 on IV-defined points, 1.52 on resolved points, 5.04 where the teacher is below intrinsic; MAE 0.98, p95 3.41, max 24.9) |
-| vs teacher, price RMSE, held-out random points | - | 0.767 bps (MAE 0.478, p95 1.52, max 12.9) |
+| vs teacher, IV RMSE on resolved region (audit grid, 56,638 of 134,100 points) | n/a | 0.376 vol points (MAE 0.245, p95 0.67, max 5.80 at 1 d, k = 0.007, sigma 0.05, r 0.10) |
+| vs teacher, IV RMSE on resolved region (validation draw, 15,757 of 32,768 held-out random points) | n/a | 0.222 vol points (MAE 0.152, p95 0.396, max 3.60) |
+| vs teacher, IV RMSE where vega >= 0.05 (validation draw) | n/a | 0.168 vol points |
+| vs teacher, price RMSE over the box (audit grid, 134,100 points) | n/a | 1.84 bps of strike (1.33 on IV-defined points, 1.52 on resolved points, 5.04 where the teacher is below intrinsic; MAE 0.98, p95 3.41, max 24.9) |
+| vs teacher, price RMSE (validation draw, 32,768 points) | n/a | 0.767 bps (MAE 0.478, p95 1.52, max 12.9) |
 
-The grid numbers are worse than the held-out ones because the grid weights sigma = 0.05
-and 0.10 at 40% of its points: the resolved-region IV RMSE by vol is 1.01 / 0.42 / 0.27 /
+The grid numbers are worse than the validation ones because the grid puts 40% of its points
+at sigma = 0.05 and 0.10. The resolved-region IV RMSE by vol is 1.01 / 0.42 / 0.27 /
 0.20 / 0.35 vol points at sigma = 0.05 / 0.10 / 0.20 / 0.40 / 0.80, and by maturity
-1.16 / 0.47 / 0.31 / 0.28 at 1-2 / 2-4 / 4-8 / 8-12 days. The largest differences of all
-(5.8 vol points, 24.9 bps) sit at the teacher's 1-day, 5%-vol kink, where the constrained
-surface is above intrinsic and the teacher is not; the Monte Carlo check below says which
-of the two is right there. The 0.35 at sigma = 0.80 is the box edge: the surface's
-multiplier is least constrained by neighbours at the top of the vol range.
+1.16 / 0.47 / 0.31 / 0.28 at 1-2 / 2-4 / 4-8 / 8-12 days. The largest differences
+(5.8 vol points at k = 0.007, 24.9 bps at k = -0.015) sit at the teacher's 1-day, 5%-vol
+kink. At the 24.9 bps point the teacher is below intrinsic value and the constrained
+surface is above it. Section 4's Monte Carlo check covers the 1-day smiles at 10% and 20%
+vol, and there the constrained surface is the closer of the two. The 0.35 at sigma = 0.80
+is the box edge, where the surface's multiplier is least constrained by neighbours.
 
 ---
 
-## 4. Monte Carlo arbiter: both surfaces carry the teacher's short-end error
+## 4. Monte Carlo check of both surfaces
 
 `rough_bergomi_mc` (unmodified, n_steps = 50, the project protocol) with the checkpoint's
 dynamics, r = 0.04, spot 1, all 149 grid strikes on one path set per smile (common random
@@ -264,33 +273,35 @@ the MC vol >= 0.02, SE < 0.5 vol points.
 | 0.20 | 5 | 42 | **0.34** | 0.41 | 0.66 | 0.69 | 9.4 / 12.9 | 0.024 | **0.79** | 0.94 | 0 |
 | 0.20 | 12 | 86 | 0.27 | **0.08** | 0.47 | 0.26 | 4.4 / 1.0 | 0.042 | 1.20 | **0.53** | 0 |
 
-Three things follow. (i) The Monte Carlo error is not the limiting factor anywhere: with
-median |z| of 4 to 958 the disagreements are systematic, and the largest are the
-teacher's, at 1-5 days and 10% vol, exactly where its price errors against the same
-engine are 1.9-3.8 bps RMSE and up to 14.4 bps on a single strike; the six smiles in the
-table above are the only places the teacher has been re-priced against high-precision
-references, so there is no box-wide figure to average them into. The sign is instructive:
-at sigma = 0.10 the teacher prices the k = 0.019 call at
-5.32 / 6.80 / 16.30 bps at 1 / 5 / 12 days where the Monte Carlo says 0.00 / 1.59 /
-8.80 (standard error <= 0.1 bp), i.e. it over-prices the out-of-the-money wing by
-5-8 bps while under-pricing the in-the-money side below intrinsic - the two faces of a
-smooth function fitted to a hinge. (ii) The constrained surface is *not* a more accurate pricer than its teacher
-in any general sense; it is fitted to the teacher, and it inherits the teacher's short-end
-underfit (2.96 vol points at one day). It is closer to the truth on four smiles and
-farther on two, by margins (0.06-0.07 vol points, 0.15-0.28 bps) that are small against
-the errors both share. Where it wins by a lot - the 12-day 20%-vol smile, 0.08 vs 0.27
-vol points, median |z| 1.0 - the improvement is the smoothing and the constraints
-removing the teacher's ripples; where it loses, the fit to a wrong label is the loss.
-(iii) At one day the teacher has no implied vol at 29-51 of the 149 grid strikes
-(price below intrinsic); the constrained surface has one everywhere and its price there
-is at least intrinsic, which is what the dashboard needs even before accuracy.
+1. Monte Carlo error does not limit the comparison. The teacher's median |z| runs from 4.4
+   to 958 and the constrained surface's from 1.0 to 655, so the disagreements are
+   systematic. The largest are the teacher's, at 1-5 days and 10% vol, where its price
+   errors against the same engine are 1.9-3.8 bps RMSE and up to 14.4 bps on a single
+   strike. The six smiles in the table are the only places the teacher has been re-priced
+   against high-precision references, so there is no box-wide figure to average them
+   into. At sigma = 0.10 the teacher prices the k = 0.019 call at
+   5.32 / 6.80 / 16.30 bps at 1 / 5 / 12 days where the Monte Carlo gives 0.00 / 1.59 /
+   8.80 (standard error <= 0.1 bp). It over-prices the out-of-the-money wing by
+   5-8 bps and prices the in-the-money side below intrinsic. Both errors are those of a
+   smooth function fitted to a hinge, one on each side of the kink.
+2. The constrained surface is not a more accurate pricer than its teacher in general. It is
+   fitted to the teacher and inherits the teacher's short-end underfit (2.96 vol points at
+   one day). It is closer to the truth on four smiles and farther on two. Where it is
+   farther the margins (0.06-0.07 vol points, 0.15-0.28 bps) are small against the errors
+   both share, and they are the cost of fitting a wrong label. Its largest gain is the
+   12-day 20%-vol smile (0.08 vs 0.27 vol points, median |z| 1.0), where the smoothing and
+   the constraints remove the teacher's ripples.
+3. At one day the teacher has no implied vol at 29-51 of the 149 grid strikes
+   (price below intrinsic). The constrained surface has one everywhere and its price there
+   is at least intrinsic. That property holds independently of accuracy, and a smile
+   display requires it.
 
 
 ---
 
 ## 5. API for the dashboard
 
-`backend/quant/iv_surface.py`, no edits to `main.py`:
+`backend/quant/iv_surface.py` exposes:
 
 ```python
 class IVSurface:
@@ -331,13 +342,13 @@ constrained surface.
 
 ## 6. Caveats
 
-1. **The teacher is the label, and the teacher is wrong where it is wrong.** The
-   constrained surface is fitted to the served ensemble, not to the rough Bergomi model.
+1. Teacher labels. The constrained surface is fitted to the served ensemble; the rough
+   Bergomi model enters only through that teacher.
    Where the teacher's price is below intrinsic (6.8% of the box) the label is dropped;
    where it is inside the bounds but off by several bps near its low-vol kink, the Huber
    loss limits but does not remove the pull. The Monte Carlo check in Section 4 is the
-   only independent arbiter, and it covers six smiles at one rate, not the box.
-2. **The wings are the teacher's, errors and all.** Outside the vega-resolved region
+   only independent arbiter, and it covers six smiles at one rate out of the whole box.
+2. Wings inherited from the teacher. Outside the vega-resolved region
    (57% of the box) a 1 bp price difference is worth 0.5 vol-point equivalents in the
    loss, so the multiplier there follows the teacher's wing prices at the bp level, and
    those are wrong at low vol. From the stored per-strike smiles (`mc_smiles` in the
@@ -353,38 +364,43 @@ constrained surface.
    the low-vol hinge seen from the other side: the fit that puts 1-day in-the-money calls
    below intrinsic puts out-of-the-money calls above zero, and a surface fitted to its
    prices inherits both.
-3. **Zero violations on a grid is not a proof.** The penalties act on random batches and
-   the audit on a 149 x 45 lattice per slice; g and dw/dT are checked at 134,100 points,
-   not everywhere. The minima on the grid are strictly positive with margin, which is
-   evidence, not a theorem. The Lee term is a soft guard inside a finite box, not the
-   asymptotic bound it is named after.
-4. **The resolution floor is a choice.** `VEGA_FLOOR` = 0.02 was set from the teacher's
-   1.5 bp RMSE; halving it doubles the "resolved" area and admits more of the teacher's
-   noise into the IV comparisons. The fractions reported "on the resolved region" move
-   with it; the fractions "on all IV-defined points" do not.
-5. **Static conditions only.** Butterfly and calendar arbitrage are what Durrleman's g and
+3. Grid audit, no proof. The penalties act on random batches and the audit on a 149 x 45
+   lattice per slice, so g and dw/dT are checked at 134,100 points and nowhere between
+   them. The minima on the grid are strictly positive with margin (min g = +0.072,
+   min dw/dT = +6.5e-5); that is evidence and falls short of a theorem. The Lee term is a
+   soft guard inside a finite box and does not enforce the asymptotic bound it is named
+   after.
+4. Choice of resolution floor. At `VEGA_FLOOR` = 0.02 a 1 bp price error is 0.5 vol
+   points. Halving the floor to 0.01 raises the resolved share of the box from 42.2% to
+   52.0% (56,638 to 69,794 points) and admits more of the teacher's noise into the IV
+   comparisons. Re-running `arbitrage_audit` on the same 134,100-point grid with
+   `vega_floor=0.01`, the served surrogate's resolved-region violation rates rise from
+   0.06% to 0.62% (butterfly) and from 0.17% to 0.50% (calendar). The fractions reported
+   "on the resolved region" move with the floor; the fractions "on all IV-defined points"
+   do not.
+5. Static conditions only. Butterfly and calendar arbitrage are what Durrleman's g and
    dw/dT rule out. Nothing here checks put-call parity against a served put (the engine
    derives puts from the same call), and nothing checks consistency across (sigma, r)
    slices, which are separate surfaces by construction.
-6. **One training run.** Seed 20260909, one architecture, one penalty weighting. The
+6. One training run. Seed 20260909, one architecture, one penalty weighting. The
    penalties never activated during training (the surface stayed inside the feasible set
-   with g >= 0.004 on every penalty batch), so the weights 20/20/1 were never tested
-   against a surface that wanted to violate; a different seed or a stronger fit term could
+   with g >= 0.004 on every penalty batch), so the weights 20/20/1 were never exercised
+   by a surface that left the feasible set; a different seed or a stronger fit term could
    need them.
-7. **Compute and determinism.** Everything ran on CPU, 8 torch threads; the numbers are
+7. Compute and determinism. Everything ran on CPU, 8 torch threads; the numbers are
    reproducible from the seed, and the training wall-clock quoted in the JSON is the one
    measured in this run.
 
-## 7. What would falsify this
+## 7. Falsification tests
 
 - *"The served price surrogate admits static arbitrage."* Falsified if the price-space
-  conditions - which need no implied-vol inversion at all - held everywhere: they do not
+  conditions, which need no implied-vol inversion, held everywhere. They do not
   (d2C/dK2 < 0 on 6.9% of the box, price below intrinsic on 6.8%, 1%-wide butterflies
   worth as little as -7.1 bps of strike). Independent of the vega floor.
-- *"Its violations sit where the price surface is (nearly) piecewise linear - the
-  in-the-money side at low sigma sqrt(T) - and are of the order of its own price noise."*
+- *"Its violations sit where the price surface is (nearly) piecewise linear, on the
+  in-the-money side at low sigma sqrt(T), and are of the order of its own price noise."*
   Falsified by violations in the resolved band of comparable magnitude: there are 0.06%
-  butterfly and 0.18% calendar violations there, with |g| <= 0.19 and
+  butterfly and 0.17% calendar violations there, with |g| <= 0.19 and
   |dw/dT| <= 0.003 (vs -152 and -14.8 in the unresolved wing).
 - *"The constrained surface has no butterfly or calendar arbitrage on the trained box."*
   Falsified by any grid point with g < 0 or dw/dT < 0; `tests/test_iv_surface.py` checks
@@ -392,9 +408,10 @@ constrained surface.
   grid, a slice at a rate or vol not audited, or a point outside the box could still
   find one; the margins (min g = +0.07, min dw/dT = +6.5e-5) say how much room there is.
 - *"It reproduces the teacher where the teacher is resolved."* Falsified if the IV RMSE
-  on the resolved region exceeded the 0.5 vol-point test ceiling (measured 0.22 held-out,
-  0.38 on the low-vol-heavy grid; 1.01 at sigma = 0.05 alone, which is the teacher's own
-  noise at its resolution floor as much as the fit).
+  on the resolved region exceeded the 0.5 vol-point test ceiling. Measured: 0.22 on the
+  15,757 resolved points of the 32,768-point validation draw and 0.38 on the 56,638
+  resolved points of the 134,100-point audit grid. At sigma = 0.05 alone the grid figure is
+  1.01, which reflects the teacher's own noise at its resolution floor as much as the fit.
 - *"Against the true dynamics it is about as accurate as its teacher: better where the
   teacher ripples, no better where the teacher is systematically wrong."* Already
   falsified in the strong form "at least as accurate on every smile": on two of six smiles
@@ -402,16 +419,14 @@ constrained surface.
   would be falsified by a smile where it is worse than the teacher by more than the
   teacher's own error (a factor of two), or by a smile where both agree with the Monte
   Carlo to within its standard error while the surface does not.
-- *"The residual error at the short end is the teacher's, not the surface's."* Falsified
-  if a surface trained on Monte Carlo labels of the same dynamics (the alternative this
-  package chose not to run, Section 1.2) reached the Monte Carlo to within its standard
-  error at one day with the same architecture and penalties; that would show the
-  architecture, not the labels, limits it.
+- *"The residual error at the short end comes from the teacher labels."* Falsified
+  if a surface trained on Monte Carlo labels of the same dynamics (the alternative
+  Section 1.2 sets aside) still missed the Monte Carlo at one day by a comparable margin
+  with the same architecture and penalties. That outcome would place the limit in the
+  architecture. A surface that reached the Monte Carlo to within its standard error would
+  confirm that the labels are the limit.
 
 Reproduce: `python -m scripts.no_arbitrage_surface` (matplotlib from
 `requirements-dev.txt`); `--quick` for a one-minute smoke run to a temp directory;
 `--skip-train` to re-audit the saved surface; `--figure-only` to redraw the PNG from the
-JSON. Tests: `tests/test_iv_surface.py` (11 tests, 11-12 s measured; the whole fast suite,
-`python -m pytest tests/ -q -m "not network"`, was 158 tests / 44 s when this package was
-written and is 188 tests / 86-97 s across runs on one laptop now that `tests/test_api.py`
-runs the service in-process).
+JSON. Tests: `tests/test_iv_surface.py` (11 tests).

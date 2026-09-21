@@ -917,7 +917,9 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--iters", type=int, default=6000)
     p.add_argument("--batch", type=int, default=2048)
-    p.add_argument("--measure", choices=MEASURES, default="gan")
+    p.add_argument("--measure", choices=MEASURES, required=True,
+                   help="training measure; the served checkpoints use "
+                        "rbergomi_jumps and gbm")
     p.add_argument("--out", default=None,
                    help="checkpoint file name under artifacts/")
     args = p.parse_args()

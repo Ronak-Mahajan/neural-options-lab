@@ -3,8 +3,8 @@
 Compares the currently deployed 0DTE surrogate (model_0dte.pt) against live
 SPY option-chain mid prices from yfinance.  If the root-mean-square pricing
 error (in bps of strike) exceeds a configurable threshold, the script triggers
-the full recalibration-retrain pipeline and gates promotion on the pytest
-suite.
+the full recalibration-retrain pipeline and gates promotion on
+tests/test_quant.py.
 
 Every run appends a structured JSON line to artifacts/drift_log.jsonl for
 time-series analysis of model degradation.
@@ -35,7 +35,7 @@ DRIFT_LOG = ARTIFACTS / "drift_log.jsonl"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NY = ZoneInfo("America/New_York")
 
-# ── terminal aesthetics ────────────────────────────────────────────────
+# ANSI colours for the terminal report
 CY, MG, VI, GN, RD, DIM, BOLD, RS = ("\x1b[38;5;51m", "\x1b[38;5;205m",
                                      "\x1b[38;5;141m", "\x1b[38;5;84m",
                                      "\x1b[38;5;203m", "\x1b[2m",
@@ -47,7 +47,6 @@ def rule(title: str = "") -> None:
     print(f"{DIM}{pad}{'═' * max(8, 74 - len(title))}{RS}")
 
 
-# ── report structure ───────────────────────────────────────────────────
 @dataclass
 class DriftReport:
     timestamp: str
@@ -61,7 +60,6 @@ class DriftReport:
     details: dict
 
 
-# ── live assessment ────────────────────────────────────────────────────
 def assess_drift(threshold_bps: float) -> DriftReport:
     """Fetch the live option chain and measure neural net pricing error."""
     import yfinance as yf
@@ -145,9 +143,10 @@ def assess_drift(threshold_bps: float) -> DriftReport:
           f"{n_expiries_used} expiries")
 
     if n_quotes == 0:
-        # Fail LOUD, not open. Previously this returned rmse_bps=0.0 with
-        # drift_detected=False, which is indistinguishable in the log from a
-        # perfectly calibrated model and would suppress a real alert.
+        # No quotes means the drift status is unknown. The report carries NaN
+        # errors and action "aborted": rmse_bps=0.0 with drift_detected=False
+        # would be indistinguishable in the log from a perfectly calibrated
+        # model and would suppress a real alert.
         return DriftReport(
             timestamp=now.isoformat(),
             n_quotes=0,
@@ -161,20 +160,11 @@ def assess_drift(threshold_bps: float) -> DriftReport:
                               "UNKNOWN, not healthy"},
         )
 
-    # Neural net pricing.
-    #
-    # This previously constructed PricingEngine(ARTIFACTS / "model_0dte.pt")
-    # and raised KeyError: 'width'. PricingEngine.__init__ reads meta['width'],
-    # 'blocks', 'n_monitoring_steps' and 'param_ranges', none of which exist in
-    # the 0DTE checkpoint - its meta holds {'0dte','normalize','n_members',
-    # 'val_rmse_bps','model','H','eta','rho'}. The 0DTE ensemble is only ever
-    # meant to be reached through the has_0dte side-path inside a default
-    # engine, which hardcodes its own width/blocks and bounds.
-    #
-    # The crash happened AFTER the full option-chain download, and main() had
-    # no try/except, so every run burned the network fetch and then died
-    # without ever appending to drift_log.jsonl. The entire advertised
-    # drift-detection and auto-retrain mechanism had never executed.
+    # Neural net pricing. The 0DTE ensemble is reached through the has_0dte
+    # side-path of a default PricingEngine, which supplies its width, blocks
+    # and bounds. The 0DTE checkpoint cannot be passed to PricingEngine
+    # directly: __init__ reads meta['width'], 'blocks', 'n_monitoring_steps'
+    # and 'param_ranges', and the 0DTE checkpoint's meta carries none of them.
     engine = PricingEngine()
     if not engine.has_0dte:
         return DriftReport(
@@ -228,7 +218,6 @@ def assess_drift(threshold_bps: float) -> DriftReport:
     )
 
 
-# ── recalibration ─────────────────────────────────────────────────────
 def run_recalibration() -> bool:
     """Run the calibrate + retrain pipeline as a subprocess."""
     rule("RECALIBRATION + RETRAIN")
@@ -243,7 +232,6 @@ def run_recalibration() -> bool:
     return ok
 
 
-# ── test gate ──────────────────────────────────────────────────────────
 def run_tests() -> bool:
     """Run the quant test suite; returns True if all tests pass."""
     rule("TEST GATE")
@@ -257,7 +245,6 @@ def run_tests() -> bool:
     return ok
 
 
-# ── model promotion ───────────────────────────────────────────────────
 def promote_model() -> None:
     """Mark the retrained model as the active deployment.
 
@@ -269,7 +256,6 @@ def promote_model() -> None:
     print(f"  {GN}new model promoted to serving{RS}")
 
 
-# ── orchestrator ───────────────────────────────────────────────────────
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Drift monitor for the neural 0DTE pricing surrogate.")

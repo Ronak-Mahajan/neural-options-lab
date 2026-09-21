@@ -1,14 +1,14 @@
 """Real-world market data adapter (yfinance).
 
 Fetches, for a given equity ticker:
-    spot   - last traded price
-    sigma  - 1-year realized volatility (std of daily log returns x sqrt(252))
-    rate   - risk-free proxy: 13-week T-bill yield (^IRX), falling back to
-             the 10-year Treasury (^TNX); both are quoted in percent on Yahoo
+    spot    last traded price (previous close when no live quote is available)
+    sigma   1-year realized volatility (std of daily log returns x sqrt(252))
+    rate    risk-free proxy: 13-week T-bill yield (^IRX), falling back to
+            the 10-year Treasury (^TNX); both are quoted in percent on Yahoo
 
-Values are clamped into the surrogate's trained domain and the response says
-so explicitly (`clamped`) - a model should never silently extrapolate.
-Results are cached for 5 minutes to be polite to Yahoo and keep the UI snappy.
+Values are clamped into the surrogate's trained domain, and the response flags
+it (`clamped`) so the model is never asked to extrapolate without the caller
+knowing. Results are cached for 5 minutes to limit requests to Yahoo.
 """
 
 from __future__ import annotations
@@ -67,9 +67,9 @@ def fetch_market_params(ticker: str) -> dict:
         tk = yf.Ticker(ticker)
         closes = _history_close(tk, "1y")
         spot = float(closes.iloc[-1])
-        # Which of the two the spot is matters to a reader: outside market
-        # hours, or whenever fast_info fails, it is the previous session's
-        # close and not a trade. The page cannot say that unless this says it.
+        # Record which of the two the spot is. Outside market hours, or when
+        # fast_info fails, it is the previous session's close, and the page
+        # labels the spot from this field.
         spot_source = "last_close"
         try:  # prefer the live quote when available
             live = float(tk.fast_info["last_price"])
@@ -109,9 +109,8 @@ def fetch_market_params(ticker: str) -> dict:
         "n_return_days": int(len(log_ret)),
         "clamped": bool(sigma != sigma_raw or rate != rate_raw),
         # Stamped in UTC explicitly. time.strftime() with no argument reads the
-        # container's local clock, which happens to be UTC on the host that
-        # serves this but is not something the page can assume; the chip that
-        # renders this labels it UTC, so the stamp has to actually be UTC.
+        # container's local clock, which is UTC on the serving host but is not
+        # guaranteed elsewhere, and the chip that renders this labels it UTC.
         "as_of": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
         "as_of_tz": "UTC",
     }

@@ -1,64 +1,60 @@
 """Static-arbitrage audit of the served Asian pricer, in price space.
 
-What this script does
----------------------
 `artifacts/model.pt` is the 5-member ensemble `PricingEngine` routes every
-maturity above 12/252 to: it outputs the discretely monitored **arithmetic
-average** Asian call price per unit strike as a function of (m = S/K, T, sigma,
-r) over its trained box (`backend.quant.dataset.PARAM_RANGES`, 50 monitoring
-dates).  Nothing in its training constrains that surface to be free of static
-arbitrage.  This script measures how far from arbitrage-free it is, on a dense
-lattice over the trained box, for several (sigma, r) slices.
+maturity above 12/252 to.  It outputs the discretely monitored arithmetic-average
+Asian call price per unit strike as a function of (m = S/K, T, sigma, r) over
+its trained box (`backend.quant.dataset.PARAM_RANGES`, 50 monitoring dates).
+Its loss carries no shape constraint, so this script measures each condition
+below on a dense lattice over the box, for several (sigma, r) slices.  Method,
+results and caveats are in docs/asian_arbitrage_audit.md.
 
-Everything is done in PRICE space.  The 0DTE audit
-(`scripts/no_arbitrage_surface.py`) inverts prices to Black-Scholes implied
-vols and evaluates Durrleman's g; neither step transfers to an arithmetic
-average, whose law is not lognormal and whose Black-Scholes implied vol is not
-a parameter of anything.  The conditions checked here are the ones that survive
-the change of contract:
+The 0DTE audit (`scripts/no_arbitrage_surface.py`) works in Black-Scholes
+implied vol and Durrleman's g.  Neither carries over to an arithmetic average,
+whose law is not lognormal, so every condition here is stated on prices:
 
     dC/dK in [-e^{-rT}, 0]        strike monotonicity and its slope bound
     d2C/dK2 >= 0                  non-negative risk-neutral density of A,
                                   plus a discrete 1%-wide butterfly
-    C >= e^{-rT} (E[A] - K)+      the ASIAN floor (Jensen), not (S - K)+
+    C >= e^{-rT} (E[A] - K)+      the Asian floor (Jensen); the European
+                                  intrinsic (S - K e^{-rT})+ lies above it
     C <= e^{-rT} E[A] <= S        upper bounds
-    C >= 0                        positivity
+    C >= 0                        positivity (imposed by the Softplus head)
     gamma = d2C/dS2 >= 0          convexity in spot
-    vega  = dC/dsigma >= 0        monotonicity in volatility
+    vega  = dC/dsigma >= 0        monotonicity in volatility: a Black-Scholes
+                                  property of this convex payoff; sigma is
+                                  not traded, so no static portfolio bounds it
     delta = dC/dS in [0, e^{-rT} E[A]/S]
 
-E[A] is the engine's own: fixings t_i = i T/n for i = 1..n with n = 50, so
-E[A] = (S/n) sum_i e^{r t_i}, the geometric series
-`_parity_adjustment_torch` and `monte_carlo.expected_arithmetic_average` both
-use.  `expected_average()` below is the vectorised form of exactly that
-expression and `tests/test_asian_audit.py` pins it against all three.
+Every row except vega is model-free given deterministic rates and no dividends
+(the spot-space rows through homogeneity, which C = K f(S/K) builds in).
+E[A] = (S/n) sum_i e^{r t_i} with t_i = i T/n and n = 50 is the forward strip
+of the fixings.  `expected_average()` is the vectorised form of the expression
+`_parity_adjustment_torch` and `monte_carlo.expected_arithmetic_average`
+evaluate, and `tests/test_asian_audit.py` pins it against both and against a
+direct sum over the fixing dates.
 
-Deliberately NOT checked, because they are not no-arbitrage conditions for this
-contract: Black-Scholes implied-vol inversion and the Durrleman function (the
-average is not lognormal); the European intrinsic floor max(S - K e^{-rT}, 0)
-(strictly above the Asian floor, so it manufactures violations); and calendar
-monotonicity dC/dT >= 0 (the averaging window moves with T, so a longer-dated
-contract is a different average, not the same one held longer).
+Three checks are absent because they are not no-arbitrage conditions for this
+contract: implied-vol inversion and Durrleman's g (the average is not
+lognormal); the European intrinsic floor (above the Asian floor, so it would
+flag arbitrage-free prices); and calendar monotonicity dC/dT >= 0 (the
+averaging window moves with T, so a longer maturity is a different contract).
 
 Reference.  Curran (1994) (`backend.quant.asian_approx.curran_call`) prices the
 same contract to 0.104 bps mean / 0.345 bps max error against a 400,000-path
 Monte Carlo on the benchmark grid (`docs/approximation_benchmark.md`).  It is
-evaluated on the whole lattice as an independent arbiter and checked against
-fresh Monte Carlo at the box corners, at every worst-violation location and at
-its own worst disagreement with the network.
+evaluated on the whole lattice and checked against fresh Monte Carlo at the box
+corners, at every worst-violation location and at its own worst disagreement
+with the network.
 
-Resolution.  A shape statistic is only informative where the contract has more
-time value than the surrogate has price error.  Mirroring the vega floor of the
-0DTE audit, every statistic is reported over the full box AND over the region
-where the reference's own vega per unit strike per unit vol - a central
-difference of Curran at sigma +- 1e-3, in which Curran's level bias cancels to
-first order - is at least `VEGA_FLOOR` = 0.02.  At that floor the ensemble's
-measured 1.33 bps price RMSE (`artifacts/eval.json`, 600 held-out contracts
-against 200,000-path references) is worth 0.7 vol points, and below it the
-contract's whole sensitivity to volatility is smaller than the error bar on its
-price.
+Resolution.  Every statistic is reported over the full box and over the region
+where the reference vega (a central difference of Curran at sigma +- 1e-3, in
+which Curran's level bias cancels to first order) is at least `VEGA_FLOOR` =
+0.02 per unit strike per unit vol.  At that floor the ensemble's 1.33 bps price
+RMSE (`artifacts/eval.json`, 600 held-out contracts against 200,000-path
+references) is worth 0.7 vol points; below it the contract's sensitivity to
+volatility is smaller than the error bar on its price.
 
-Outputs: docs/asian_arbitrage_audit.json (the markdown is written from it).
+Output: docs/asian_arbitrage_audit.json, which the markdown quotes.
 
     python -m scripts.asian_arbitrage_audit              # full run
     python -m scripts.asian_arbitrage_audit --quick      # smoke run to a temp dir
@@ -75,7 +71,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import torch
@@ -116,9 +112,7 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-# --------------------------------------------------------------------------- #
-#  The contract: E[A], the Asian floor, and the geometric companion
-# --------------------------------------------------------------------------- #
+# The contract: E[A], the Asian floor and the Curran reference.
 
 def expected_average(spot: np.ndarray | float, maturity: np.ndarray | float,
                      rate: np.ndarray | float,
@@ -150,9 +144,10 @@ def expected_average(spot: np.ndarray | float, maturity: np.ndarray | float,
 
 def asian_floor(spot, strike, maturity, rate,
                 n_steps: int = N_MONITORING_STEPS) -> np.ndarray:
-    """e^{-rT} (E[A] - K)+ : the lower bound Jensen gives for the ARITHMETIC
+    """e^{-rT} (E[A] - K)+ : the lower bound Jensen gives for the arithmetic
     average call.  The European intrinsic max(S - K e^{-rT}, 0) is strictly
-    larger whenever r > 0 and is not a bound on this contract."""
+    larger wherever it is positive and r > 0, and does not bound this
+    contract."""
     ea = expected_average(spot, maturity, rate, n_steps)
     strike = np.asarray(strike, dtype=np.float64)
     maturity = np.asarray(maturity, dtype=np.float64)
@@ -177,12 +172,12 @@ def curran_batch(m: np.ndarray, T: np.ndarray, sigma: np.ndarray,
 
 def curran_vega(m, T, sigma, rate, n_steps: int = N_MONITORING_STEPS,
                 h: float = VEGA_STEP) -> np.ndarray:
-    """dC/dsigma of the ARITHMETIC contract, per unit strike per unit vol.
+    """dC/dsigma of the arithmetic contract, per unit strike per unit vol.
 
     A central difference of Curran at sigma +- h.  Curran's own level error is
     a smooth function of sigma (0.104 bps mean, 0.345 bps max against a
     400,000-path Monte Carlo on the benchmark grid), so it cancels to first
-    order in the difference: what survives is h^2 d3C/dsigma3 plus the
+    order in the difference.  The remainder is h^2 d3C/dsigma3 plus the
     derivative of the bias, both far below the 0.02 this is thresholded at.
     """
     sigma = np.asarray(sigma, dtype=np.float64)
@@ -191,9 +186,7 @@ def curran_vega(m, T, sigma, rate, n_steps: int = N_MONITORING_STEPS,
     return (up - dn) / (2.0 * h)
 
 
-# --------------------------------------------------------------------------- #
-#  Network evaluation: prices through price_batch, derivatives through autograd
-# --------------------------------------------------------------------------- #
+# Network evaluation: prices through price_batch, derivatives through autograd.
 
 def unit_strike_price(engine: PricingEngine, m: np.ndarray, T: np.ndarray,
                       sigma: np.ndarray, rate: np.ndarray) -> np.ndarray:
@@ -257,9 +250,7 @@ def autograd_derivatives(engine: PricingEngine, m: np.ndarray, T: np.ndarray,
     return out
 
 
-# --------------------------------------------------------------------------- #
-#  Statistics
-# --------------------------------------------------------------------------- #
+# Statistics.
 
 def _loc(coords: dict[str, np.ndarray], i: int) -> dict[str, float]:
     return {"m": float(coords["m"][i]), "T": float(coords["T"][i]),
@@ -269,7 +260,8 @@ def _loc(coords: dict[str, np.ndarray], i: int) -> dict[str, float]:
 
 def _bucket_fractions(viol: np.ndarray, m: np.ndarray, T: np.ndarray,
                       sig: np.ndarray) -> dict[str, Any]:
-    """Where the violations sit: violation rate and share of the total per bucket."""
+    """Violation rate and share of all violations per bucket of maturity,
+    moneyness, sigma sqrt(T) and sigma."""
     out: dict[str, Any] = {}
     root = sig * np.sqrt(T)
     groups = {
@@ -327,11 +319,10 @@ def region_stats(margin: np.ndarray, mask: np.ndarray,
     return out
 
 
-# --------------------------------------------------------------------------- #
-#  The audit
-# --------------------------------------------------------------------------- #
+# The audit.
 
-#: (key, statement, units, margin builder).  Every margin must be >= 0.
+#: Report order of the conditions.  `audit()` writes each one as a margin that
+#: must be >= 0; CONDITION_META holds its statement and units.
 CONDITION_ORDER = (
     "monotone_dC_dK_le_0",
     "slope_dC_dK_ge_-discount",
@@ -536,9 +527,7 @@ def curran_summary(err_bps: np.ndarray, resolved: np.ndarray,
     return out
 
 
-# --------------------------------------------------------------------------- #
-#  Monte Carlo arbiter
-# --------------------------------------------------------------------------- #
+# Monte Carlo arbiter.
 
 MC_SEEDS = (11, 12, 13, 14)
 
@@ -568,9 +557,9 @@ def mc_vega(m: float, T: float, sigma: float, rate: float, n_paths: int,
 
     The same seeds price sigma + h and sigma - h, so the path noise cancels in
     the difference and the standard error of the derivative is orders of
-    magnitude below the standard error of either price.  This is the check that
-    the resolution measure - a Curran central difference at the same step - is
-    the contract's vega and not Curran's bias.
+    magnitude below the standard error of either price.  The result measures
+    how closely the resolution measure, a Curran central difference at the same
+    step, tracks the contract's vega where Curran's price is biased.
     """
     up = _mc_prices(m, T, sigma + h, rate, n_paths, n_steps, seeds)
     dn = _mc_prices(m, T, max(sigma - h, 1e-8), rate, n_paths, n_steps, seeds)
@@ -607,10 +596,10 @@ def butterfly_arbitration(engine: PricingEngine, points: list[dict[str, Any]],
                           h: float = BUTTERFLY_WIDTH) -> list[dict[str, Any]]:
     """The network's 1%-wide butterfly against a common-random-number MC one.
 
-    The three strikes are priced on the same paths, so the butterfly's Monte
-    Carlo standard error is far smaller than any one leg's: a second
-    difference of prices that share their noise.  This is what decides whether
-    a butterfly the network prices negative is negative in the model.
+    The three strikes are priced on the same paths, so the legs share their
+    noise and the butterfly's Monte Carlo standard error is far smaller than
+    any one leg's.  The comparison decides whether a butterfly the network
+    prices negative is negative under the model.
     """
     out = []
     for p in points:
@@ -659,9 +648,7 @@ def corner_points() -> list[dict[str, Any]]:
     return pts
 
 
-# --------------------------------------------------------------------------- #
-#  Driver
-# --------------------------------------------------------------------------- #
+# Driver.
 
 def _sha256(path: Path) -> str:
     hsh = hashlib.sha256()

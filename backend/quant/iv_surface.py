@@ -1,16 +1,14 @@
 """No-arbitrage implied-volatility surface for the 0DTE regime, and a static-arbitrage
 audit of the served 0DTE price surrogate.
 
-Two objects live here.
-
 1. ``TeacherSurface`` wraps ``PricingEngine`` (the served 5-member ensemble in
-   ``artifacts/model_0dte.pt``, which outputs European call PRICES per unit strike as a
+   ``artifacts/model_0dte.pt``, which outputs European call prices per unit strike as a
    function of (S/K, T, sigma, r)) and exposes it as a differentiable total-variance
    surface w(k, T; sigma, r) = sigma_imp^2 T.  The price is inverted to a Black-Scholes
    implied vol by a vectorised bisection (no gradient) followed by two Newton steps
-   that ARE differentiated: at a converged root the Newton map has zero derivative
+   that are differentiated: at a converged root the Newton map has zero derivative
    with respect to its starting point, so autograd through two steps returns the
-   exact implicit first AND second derivatives of sigma_imp with respect to k and T
+   exact implicit first and second derivatives of sigma_imp with respect to k and T
    (one step is exact only to first order; see ``_newton_refine``).
 
 2. ``IVSurface`` is a small MLP that models the total variance directly, following
@@ -33,7 +31,7 @@ Two objects live here.
 
 Conventions
 -----------
-* k = ln(K / F) is FORWARD log-moneyness, F = S e^{rT} (the engine drifts the spot at
+* k = ln(K / F) is forward log-moneyness, F = S e^{rT} (the engine drifts the spot at
   the rate with no dividend).  This is the variable in which the Durrleman butterfly
   function and the calendar condition dw/dT >= 0 are stated (Gatheral & Jacquier
   2014).  The engine's moneyness is m = S/K = exp(-(k + rT)); with r <= 0.10 and
@@ -48,12 +46,13 @@ Conventions
   risk-neutral density in k is g(k) exp(-d_-^2 / 2) / sqrt(2 pi w), so g < 0 is a
   negative density.  Calendar-spread arbitrage is absent iff dw/dT >= 0 at fixed k.
 * "Resolved" points: a price error dP moves the implied vol by dP / vega.  The
-  served surrogate's own accuracy is 1.33 bps of strike (artifacts/eval.json,
-  ensemble price RMSE over 600 held-out points), so where the BS vega per unit
-  strike per unit vol falls below ``VEGA_FLOOR`` = 0.02 that error is already
+  reference price error is 1.33 bps of strike, the main pricer's ensemble price
+  RMSE over 600 held-out points (artifacts/eval.json; that report does not
+  cover the 0DTE ensemble).  Where the BS vega per unit strike per unit vol
+  falls below ``VEGA_FLOOR`` = 0.02, an error of that size is already
   0.67 vol points and the implied vol of the price surrogate carries no
   information about the smile.  Every statistic below is reported on the full box
-  AND on the resolved sub-region.
+  and on the resolved sub-region.
 
 Nothing here imports matplotlib; the figure is drawn by scripts/no_arbitrage_surface.py.
 """
@@ -95,9 +94,7 @@ _SQRT2 = math.sqrt(2.0)
 _SQRT2PI = math.sqrt(2.0 * math.pi)
 
 
-# --------------------------------------------------------------------------- #
-#  Black-Scholes in torch (all per unit strike)
-# --------------------------------------------------------------------------- #
+# Black-Scholes in torch (all per unit strike)
 
 def _ncdf(x: torch.Tensor) -> torch.Tensor:
     return 0.5 * (1.0 + torch.erf(x / _SQRT2))
@@ -118,7 +115,7 @@ def bs_call_unit(m: torch.Tensor, T: torch.Tensor, sigma: torch.Tensor,
 
 def bs_vega_unit(m: torch.Tensor, T: torch.Tensor, sigma: torch.Tensor,
                  r: torch.Tensor) -> torch.Tensor:
-    """d(C/K)/d sigma  (per unit vol, so a vol POINT is 0.01 of this)."""
+    """d(C/K)/d sigma  (per unit vol, so a vol point is 0.01 of this)."""
     sd = sigma.clamp_min(1e-12) * torch.sqrt(T)
     d1 = (torch.log(m) + (r + 0.5 * sigma * sigma) * T) / sd
     return m * _npdf(d1) * torch.sqrt(T)
@@ -189,9 +186,7 @@ def _newton_refine(price: torch.Tensor, m: torch.Tensor, T: torch.Tensor,
     return s
 
 
-# --------------------------------------------------------------------------- #
-#  Durrleman / calendar diagnostics by autograd
-# --------------------------------------------------------------------------- #
+# Durrleman / calendar diagnostics by autograd
 
 def durrleman_g(w: torch.Tensor, w_k: torch.Tensor, w_kk: torch.Tensor,
                 k: torch.Tensor) -> torch.Tensor:
@@ -238,10 +233,6 @@ def svi_total_variance(k: torch.Tensor, a: float, b: float, rho: float,
     return a + b * (rho * x + torch.sqrt(x * x + sigma * sigma))
 
 
-# --------------------------------------------------------------------------- #
-#  The served price surrogate as a total-variance surface
-# --------------------------------------------------------------------------- #
-
 class TeacherSurface:
     """The served 0DTE ensemble, viewed as an implied-volatility surface.
 
@@ -268,7 +259,6 @@ class TeacherSurface:
         self.highs = self.engine._0dte_highs.to(dtype)
         self.meta = dict(self.engine.meta_0dte)
 
-    # -- price ---------------------------------------------------------------
     def price_m(self, m: torch.Tensor, T: torch.Tensor, sigma: torch.Tensor,
                 r: torch.Tensor) -> torch.Tensor:
         """C/K as a function of moneyness m = S/K (mirrors engine._zero_dte_call)."""
@@ -282,7 +272,6 @@ class TeacherSurface:
         m = torch.exp(-(k + r * T))
         return self.price_m(m, T, sigma, r)
 
-    # -- implied vol / total variance ----------------------------------------
     def implied_vol(self, k: torch.Tensor, T: torch.Tensor, sigma: torch.Tensor,
                     r: torch.Tensor, *, differentiable: bool = True
                     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -308,18 +297,18 @@ class TeacherSurface:
         s, _ = self.implied_vol(k, T, sigma, r)
         return s * s * T.to(self.dtype)
 
-    # -- price-space conditions, directly through the network ----------------
     def price_space_conditions(self, k: torch.Tensor, T: torch.Tensor,
                                sigma: torch.Tensor, r: torch.Tensor,
                                butterfly_width: float = 0.01) -> dict[str, torch.Tensor]:
         """dC/dK, d2C/dK2, d(C/S)/dT at fixed k, plus a discrete 1%-wide butterfly.
 
+        The derivatives are taken by autograd directly through the network.
         Prices are for S = 1 so K = e^{k + rT}; C(K) = K f(1/K).  Returned:
           dC_dK      : must lie in [-e^{-rT}, 0]
           d2C_dK2    : must be >= 0 (equals the density)
-          dc_dT      : d/dT of C/S at FIXED forward moneyness k; must be >= 0
-                       (this is exactly the calendar condition dw/dT >= 0)
-          dC_dT_fixK : d/dT of C at fixed STRIKE (the classical call-calendar check)
+          dc_dT      : d/dT of C/S at fixed forward moneyness k; must be >= 0
+                       (equivalent to the calendar condition dw/dT >= 0)
+          dC_dT_fixK : d/dT of C at fixed strike (the classical call-calendar check)
           butterfly  : [C(K(1-h)) - 2 C(K) + C(K(1+h))] / K, in units of K (>= 0)
           below_intrinsic, above_spot : price outside the no-arbitrage bounds, as
                        positive shortfalls per unit strike
@@ -360,9 +349,7 @@ class TeacherSurface:
                 "above_spot": above, "price": p}
 
 
-# --------------------------------------------------------------------------- #
-#  The constrained surface
-# --------------------------------------------------------------------------- #
+# The constrained surface
 
 _C0 = math.log(math.e - 1.0)      # softplus(_C0) == 1 exactly
 
@@ -373,8 +360,8 @@ class IVSurfaceNet(nn.Module):
     Features: affine-normalised (k, T, sigma, r) plus asinh(k / (sigma sqrt T)) / 3.
     The standardised moneyness z = k / (sigma sqrt T) is the coordinate in which a
     stochastic-volatility smile is nearly stationary; without it a 1-day, 5%-vol
-    smile is 0.003 wide in k and a width-64 MLP in raw k cannot resolve it.  asinh
-    (not tanh) so the feature stays monotone and never saturates.
+    smile is 0.003 wide in k and a width-64 MLP in raw k cannot resolve it.  The
+    squashing function is asinh because it stays monotone and never saturates.
     """
 
     def __init__(self, width: int = 64, depth: int = 4,
@@ -436,7 +423,6 @@ class IVSurface:
     def save(self, path: Path | str = SURFACE_CHECKPOINT) -> None:
         torch.save({"state_dict": self.net.state_dict(), "meta": self.meta}, path)
 
-    # -- torch surface -------------------------------------------------------
     def total_variance(self, k, T, sigma, r) -> torch.Tensor:
         return self.net(k.float(), T.float(), sigma.float(), r.float())
 
@@ -447,7 +433,6 @@ class IVSurface:
         return bs_call_from_w(k.float(), T.float(),
                               self.total_variance(k, T, sigma, r), r.float())
 
-    # -- numpy conveniences --------------------------------------------------
     @staticmethod
     def _bcast(*arrs) -> list[torch.Tensor]:
         b = np.broadcast_arrays(*[np.asarray(a, dtype=np.float64) for a in arrs])
@@ -495,9 +480,7 @@ class IVSurface:
                 "calendar_min_at": np.array([T_axis[ic[0]], k_axis[ic[1]]])}
 
 
-# --------------------------------------------------------------------------- #
-#  Audit
-# --------------------------------------------------------------------------- #
+# Audit
 
 def default_k_axis(n: int = 149) -> np.ndarray:
     return np.linspace(K_BOX[0], K_BOX[1], n)
@@ -515,7 +498,7 @@ def _loc(T: float, k: float, sigma: float, rate: float) -> dict[str, float]:
 
 def _bucket_fractions(viol: np.ndarray, k: np.ndarray, T: np.ndarray, sig: np.ndarray
                       ) -> dict[str, Any]:
-    """Where the violations sit: share of violated points per bucket."""
+    """Share of violated points per maturity, log-moneyness and sigma bucket."""
     out: dict[str, Any] = {}
     Td = T * TRADING_DAYS
     tb = {"1-2d": (Td < 2), "2-4d": (Td >= 2) & (Td < 4),
@@ -548,8 +531,8 @@ def arbitrage_audit(engine_or_surface: PricingEngine | TeacherSurface | IVSurfac
     ``IVSurface``.  Returns a JSON-serialisable summary:
 
       iv_space.butterfly / .calendar : fraction of grid points violating, worst
-          magnitude (min g, min dw/dT) and its location, on the IV-DEFINED points
-          and on the vega-RESOLVED sub-region, with where-they-sit buckets;
+          magnitude (min g, min dw/dT) and its location, on the IV-defined points
+          and on the vega-resolved sub-region, with per-bucket shares;
       price_space (engine only): fractions and worst values for dC/dK in
           [-e^{-rT}, 0], d2C/dK2 >= 0, the 1%-wide butterfly in bps of strike,
           calendar monotonicity of C/S at fixed k and of C at fixed K, and the
@@ -709,9 +692,7 @@ def arbitrage_audit(engine_or_surface: PricingEngine | TeacherSurface | IVSurfac
     return report
 
 
-# --------------------------------------------------------------------------- #
-#  Training
-# --------------------------------------------------------------------------- #
+# Training
 
 def _sample_box(n: int, gen: torch.Generator, *, k_box=K_BOX, T_box=T_BOX,
                 sigma_box=SIGMA_BOX, rate_box=RATE_BOX, z_share: float = 0.5,
@@ -760,8 +741,8 @@ def train_iv_surface(teacher: TeacherSurface, *, n_train: int = 262_144,
 
     `threads`: torch intra-op threads for the run (restored afterwards).  Measured on
     the 16-thread CPU this was developed on, a 4096 + 4096 step costs 58 ms at 8
-    threads and 925 ms at 16 - the third-order autograd on a width-64 MLP is all
-    small matmuls and the extra threads only synchronise.
+    threads and 925 ms at 16.  The third-order autograd on a width-64 MLP is all
+    small matmuls, and the extra threads only synchronise.
     """
     t0 = time.perf_counter()
     prev_threads = torch.get_num_threads()
@@ -822,11 +803,11 @@ def _train(teacher: TeacherSurface, t0: float, *, n_train, n_val, steps, batch,
         with torch.no_grad():
             m = torch.exp(-(kb + rb * Tb))
             vega = bs_vega_unit(m, Tb, torch.sqrt(w / Tb), rb).clamp_min(vf)
-        # Huber on the vega-normalised residual (calibrate.py's convention): where
-        # the teacher is wrong by more than `huber_delta` vol-point-equivalents -
-        # its below-intrinsic kink region at low sigma sqrt(T) - the label gets
-        # linear, not quadratic, influence.  2 * Huber equals the squared residual
-        # inside the delta, so `fit` reads as a mean squared vol-point error there.
+        # Huber on the vega-normalised residual (calibrate.py's convention).  Where
+        # the teacher is wrong by more than `huber_delta` vol-point-equivalents
+        # (its below-intrinsic kink region at low sigma sqrt(T)), the label's
+        # influence is linear.  2 * Huber equals the squared residual inside the
+        # delta, so `fit` reads as a mean squared vol-point error there.
         fit = 2.0 * _huber((Pn - Pb) / vega, huber_delta).mean()
 
         kp, Tp, sp, rp = (t.float() for t in _sample_box(penalty_batch, gen, **pen_boxes))
@@ -856,7 +837,8 @@ def _train(teacher: TeacherSurface, t0: float, *, n_train, n_val, steps, batch,
                     f"({rec['elapsed_s']:.0f}s)")
 
     surface = IVSurface(net)
-    # fit metrics on the held-out sample, in the units the write-up uses
+    # fit metrics on the held-out sample, in the units of
+    # docs/no_arbitrage_surface.md (vol points and bps of strike)
     val = _fit_metrics(surface, labv, kv, Tv, sv, rv, vega_floor)
     train_m = _fit_metrics(surface, lab, *(t.double() for t in (k, T, s, r)), vega_floor,
                            defined_mask=torch.ones(n_keep, dtype=torch.bool),

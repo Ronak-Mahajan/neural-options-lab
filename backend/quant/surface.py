@@ -4,30 +4,29 @@ This is the only place in the repository where a volatility number comes from a
 real two-sided order book instead of a simulator. Everything here operates on a
 `deribit.Snapshot`, so it runs offline and deterministically.
 
-===========================================================================
-1. THE CONVENTION TRAP: a Deribit option premium is not a price in dollars
-===========================================================================
+1. Premium convention
+---------------------
 Deribit BTC options are European, cash-settled against the Deribit BTC index at
-08:00 UTC on the expiry date, and **inverse** - the API calls them
-``instrument_type: "reversed"``. Contract size is 1.0 BTC, and both the premium
+08:00 UTC on the expiry date, and inverse (the API calls them
+``instrument_type: "reversed"``). Contract size is 1.0 BTC, and both the premium
 and the settlement are denominated in BTC. A call struck at K settles for
 
         max(S_T - K, 0) / S_T   BTC,
 
-which is exactly the USD payoff ``max(S_T - K, 0)`` delivered in coin. So the
-economics are a plain USD vanilla; only the numeraire of the *quote* is unusual.
+which is the USD payoff ``max(S_T - K, 0)`` delivered in coin. The economics
+are a plain USD vanilla; only the numeraire of the quote is unusual.
 
-The trap: the quoted premium ``p`` is a fraction of ONE COIN, not a dollar
-price and not a fraction of the strike. Measured on the committed snapshot,
-feeding ``p`` straight into a Black inversion as if it were a USD price leaves
-428 of 836 instruments with no solution at all - and, far worse, lets the other
-408 return a *plausible-looking* implied vol (median 12.19%, range 0.04% to
-63.3%) against a true median near 50%. It fails silently on half the chain.
+The quoted premium ``p`` is a fraction of one coin. It is neither a dollar
+price nor a fraction of the strike. On the committed snapshot, feeding ``p``
+into a Black inversion as if it were a USD price leaves 428 of 836 instruments
+with no solution, and the other 408 return a plausible-looking implied vol
+(median 12.19%, range 0.04% to 63.3%) against a true median near 50%. Half the
+chain is therefore mispriced without any error being raised.
 
-Which coin price converts it? Two candidates: the spot index S_0, or the future
-F_T for that expiry (the API gives it as ``underlying_price``). This was settled
-by measurement, not by argument - reproducing Deribit's own published
-``mark_iv`` from ``mark_price`` across all 836 instruments:
+Two coin prices could convert it: the spot index S_0, or the future F_T for
+that expiry (the API gives it as ``underlying_price``). The choice is settled
+by reproducing Deribit's own published ``mark_iv`` from ``mark_price`` across
+all 836 instruments:
 
     conversion                year   n     rms      median    p95|err|
     p x F_T  (expiry future)  365    817   4.7561   +0.0001   0.6481   vol pts
@@ -38,92 +37,90 @@ vega is ~0; restricted to OTM quotes it is 0.0692 vol points, p95 0.0172.)
 Against Deribit's own ``bid_iv``/``ask_iv`` from ``/public/ticker`` on 53 live
 quotes, this module's inversion agrees to a median of -0.0010 vol points.
 
-So the convention implemented here is:
+The convention implemented here is:
 
         forward USD premium  =  p_BTC * F_T
-        forward option value =  Black76(F_T, K, T, sigma)      (UNDISCOUNTED)
+        forward option value =  Black76(F_T, K, T, sigma)      (undiscounted)
 
-Undiscounted is not an approximation: ``interest_rate`` is exactly 0.0 on every
-book-summary row, and multiplying the coin premium by the *forward* rather than
-the spot is precisely what carries the premium to expiry in the BTC numeraire.
-It also makes the no-arbitrage algebra clean - with a discount factor of 1,
-put-call parity in coin terms is simply ``c - p = 1 - K/F``.
+The absence of discounting is exact: ``interest_rate`` is 0.0 on every
+book-summary row, and multiplying the coin premium by the forward carries the
+premium to expiry in the BTC numeraire. With a discount factor of 1, put-call
+parity in coin terms is ``c - p = 1 - K/F``.
 
-Spot versus forward is not cosmetic. Measured on the snapshot, the futures basis
-F/S_0 - 1 runs from +0.004% at the 0.4-day expiry to +3.935% at 323 days;
-converting at the index instead would tilt the whole term structure, shifting
-median OTM implied vol by -0.000 vol points at the front and -0.807 at the back.
+The choice between spot and forward matters at the back of the curve. On the
+snapshot the futures basis F/S_0 - 1 runs from +0.004% at the 0.4-day expiry to
++3.935% at 323 days; converting at the index would tilt the term structure,
+shifting median OTM implied vol by -0.000 vol points at the front and -0.807 at
+the back.
 
-Time to expiry is ACT/365 from the snapshot's exchange-side capture time. That
-too was measured: a 365-day year reproduces ``mark_iv`` with a median error of
-+0.0001 vol points, against +0.0144 on 365.25 and -0.2727 on 360.
+Time to expiry is ACT/365 from the snapshot's exchange-side capture time. The
+day count is chosen by the same ``mark_iv`` reproduction: a 365-day year gives
+a median error of +0.0001 vol points, against +0.0144 on 365.25 and -0.2727 on
+360.
 
-===========================================================================
-2. WHY BID AND ASK, NEVER A MID
-===========================================================================
-A mid is not a price. Nobody can trade it, and on this chain the two sides can
-be far apart: the *quoted* IV bid-ask is a first-class output here, not a
-nuisance. Every quote therefore carries `iv_bid` and `iv_ask`, each inverted
-from an actually-executable price, and `iv_spread = iv_ask - iv_bid`. `iv_mid`
-exists only as a plotting convenience and is never used to declare an arbitrage.
+2. Bid and ask implied vols
+---------------------------
+A mid cannot be traded, and on this chain the two sides can be far apart, so
+the quoted IV bid-ask is an output of this module. Every quote carries `iv_bid`
+and `iv_ask`, each inverted from an executable price, and
+`iv_spread = iv_ask - iv_bid`. `iv_mid` serves plotting and the mid-price form
+of the calendar test; no executable violation is declared from it.
 
-===========================================================================
-3. NO-ARBITRAGE DIAGNOSTICS
-===========================================================================
-Real books violate static no-arbitrage constantly, and the interesting question
-is not *whether* but *by how much, and can you actually lift it*. Each test is
-therefore run twice:
+3. No-arbitrage diagnostics
+---------------------------
+Real books violate static no-arbitrage constantly. The quantities of interest
+are the size of each violation and whether it survives execution, so each test
+is run twice:
 
-  * **mid** - the textbook condition on mid prices. This is what a surface
-    fitter sees and what breaks an interpolator.
-  * **executable** - the same condition with every leg crossed on the side you
-    would actually pay (buy at ask, sell at bid). A violation that survives here
-    is a live, liftable arbitrage, not a quoting artifact.
+  * mid: the textbook condition on mid prices. This is what a surface fitter
+    sees and what breaks an interpolator.
+  * executable: the same condition with every leg crossed on the side a taker
+    pays (buy at ask, sell at bid). A violation that survives here can be
+    traded before fees.
 
-and executable violations are additionally reported net of Deribit's taker fee
+Executable violations are additionally reported net of Deribit's taker fee
 (``taker_commission`` = 0.0003 of the underlying per contract, read from the
-instrument record - see `fee_usd`).
+instrument record; see `fee_usd`).
 
 The four tests, all in undiscounted forward-USD terms:
 
-  (a) **Butterfly** (convexity in strike). For K1 < K2 < K3 and
+  (a) Butterfly (convexity in strike). For K1 < K2 < K3 and
       w1 = (K3-K2)/(K3-K1), w3 = (K2-K1)/(K3-K1), the portfolio
       w1*C(K1) - C(K2) + w3*C(K3) has a non-negative payoff for every S_T, so
       its cost must be >= 0. Executable cost buys the wings at the ask and sells
       the body at the bid. Run on the call chain and the put chain separately;
       convexity is required of both.
 
-  (b) **Vertical spread bounds** (monotonicity and the -1 slope floor). For
+  (b) Vertical spread bounds (monotonicity and the -1 slope floor). For
       K1 < K2:  0 <= C(K1) - C(K2) <= K2 - K1, and the mirror image for puts,
       0 <= P(K2) - P(K1) <= K2 - K1.
 
-  (c) **Calendar** (monotonicity of total variance). Total implied variance
+  (c) Calendar (monotonicity of total variance). Total implied variance
       w(k, T) = sigma(k, T)^2 * T must be non-decreasing in T at fixed
       log-moneyness k = log(K/F_T) [Gatheral & Jacquier 2014]. Checked on a
       common k-grid between adjacent expiries by linear interpolation of w in k
-      over the clean OTM quotes. The executable version asks whether the far
-      expiry's ASK variance still sits below the near expiry's BID variance -
+      over the clean OTM quotes. The executable version tests whether the far
+      expiry's ask variance still sits below the near expiry's bid variance,
       i.e. whether the spread is violated even paying the offer and hitting the
       bid.
 
-  (d) **Put-call parity against the market forward**. In coin terms parity is
+  (d) Put-call parity against the market forward. In coin terms parity is
       c - p = 1 - K/F, which is strictly increasing in F, so every strike pair
       brackets the forward:
             F_lo = K / (1 - (c_bid - p_ask)),  F_hi = K / (1 - (c_ask - p_bid)).
-      The width F_hi - F_lo is the synthetic-forward bid-ask. A genuine
-      arbitrage exists only if the *futures* book sits outside that bracket:
-      sell the future above F_hi and buy the synthetic, or buy the future below
-      F_lo and sell the synthetic. Comparing against the independently quoted
-      BTC-<expiry> future - not against a forward backed out of the same option
-      quotes - is what makes this a real test.
+      The width F_hi - F_lo is the synthetic-forward bid-ask. An arbitrage
+      exists only if the futures book sits outside that bracket: sell the
+      future above F_hi and buy the synthetic, or buy the future below F_lo and
+      sell the synthetic. The comparison is against the independently quoted
+      BTC-<expiry> future, because a forward backed out of the same option
+      quotes would make the test circular.
 
-===========================================================================
-4. QUOTE HYGIENE, AND AN HONEST NOTE ON "STALE"
-===========================================================================
+4. Quote hygiene and the limits of staleness detection
+------------------------------------------------------
 `get_book_summary_by_currency` carries no per-quote timestamp: every row shares
-the summary's own `creation_timestamp`. **True quote age is therefore not
-observable from this endpoint**, and nothing here should be read as claiming to
-measure it. What is observable, and what `build_surface` flags:
+the summary's own `creation_timestamp`. Quote age is therefore not observable
+from this endpoint, and no flag below measures it. `build_surface` flags what
+is observable:
 
     no_bid / no_ask   one side absent (the API returns null, never 0)
     zero_bid          bid of exactly 0.0
@@ -136,15 +133,15 @@ measure it. What is observable, and what `build_surface` flags:
                       identified (a deep-ITM near-expiry quote moves 70 vol
                       points on one tick)
     wide              iv_ask - iv_bid above `max_iv_spread`
-    no_trade          zero 24h volume AND zero open interest - the closest
-                      honest proxy for a stale, untested quote
+    no_trade          zero 24h volume and zero open interest, the closest
+                      available proxy for a stale, untested quote
 
 References
 ----------
 F. Black (1976), "The pricing of commodity contracts", J. Financial Economics.
 J. Gatheral & A. Jacquier (2014), "Arbitrage-free SVI volatility surfaces",
-    Quantitative Finance 14(1) - the total-variance calendar condition.
-M. Roper (2010), "Arbitrage free implied volatility surfaces" - the static
+    Quantitative Finance 14(1): the total-variance calendar condition.
+M. Roper (2010), "Arbitrage free implied volatility surfaces": the static
     butterfly / vertical / calendar conditions in the form used here.
 Deribit API v2 documentation, https://docs.deribit.com/.
 """
@@ -202,16 +199,11 @@ DERIBIT_SETTLEMENT_HOUR_UTC = 8
 _IV_LO, _IV_HI = 1e-6, 10.0
 
 
-# --------------------------------------------------------------------------- #
-#  Instrument names
-# --------------------------------------------------------------------------- #
-
 def parse_instrument_name(name: str) -> tuple[str, tuple[int, int, int], float, Right]:
     """``"BTC-6AUG26-56000-C"`` -> ``("BTC", (2026, 8, 6), 56000.0, "call")``.
 
-    Raises ValueError on anything that is not an option name, which is the point:
-    the futures and the perpetual share the currency prefix and must not be
-    silently parsed as options.
+    Raises ValueError on anything that is not an option name: the futures and
+    the perpetual share the currency prefix and must not be parsed as options.
     """
     match = _NAME_RE.match(name.strip().upper())
     if match is None:
@@ -230,17 +222,15 @@ def parse_instrument_name(name: str) -> tuple[str, tuple[int, int, int], float, 
     return match["currency"], (year, month, day), strike, right
 
 
-# --------------------------------------------------------------------------- #
-#  Black-76 and its inverse
-# --------------------------------------------------------------------------- #
+# Black-76 and its inverse
 
 def black76_price(forward: float, strike: float, tenor: float,
                   sigma: float, right: Right) -> float:
     """Undiscounted Black (1976) forward value of a European option.
 
     Undiscounted because Deribit quotes and settles in the BTC numeraire with
-    ``interest_rate == 0.0``; see the module docstring. Multiply by a discount
-    factor if you ever port this to a venue that pays premium in cash.
+    ``interest_rate == 0.0``; see the module docstring. A venue that pays
+    premium in cash needs a discount factor on top.
     """
     if tenor <= 0.0 or sigma <= 0.0:
         return max(forward - strike, 0.0) if right == "call" else max(strike - forward, 0.0)
@@ -266,11 +256,10 @@ def implied_vol(price: float, forward: float, strike: float, tenor: float,
                 right: Right) -> float:
     """Invert Black-76. Returns NaN when no volatility reproduces `price`.
 
-    Returning NaN rather than clamping is deliberate. A price outside
-    ``[max(F-K,0), F]`` for a call (or ``[max(K-F,0), K]`` for a put) is not a
-    slightly-wrong volatility, it is a static arbitrage - and 19 of the 836
-    marks on the committed snapshot are exactly that. Clamping would launder
-    those into a plausible number and destroy the diagnostic.
+    A price outside ``[max(F-K,0), F]`` for a call (or ``[max(K-F,0), K]`` for
+    a put) is a static arbitrage, and 19 of the 836 marks on the committed
+    snapshot fall there. NaN keeps them visible to the diagnostics; a clamp
+    would turn each into a plausible volatility and hide the violation.
     """
     if not (math.isfinite(price) and math.isfinite(forward)
             and math.isfinite(strike) and tenor > 0.0):
@@ -294,15 +283,15 @@ def fee_usd(forward: float, taker_commission: float, *,
 
     `taker_commission` (0.0003 on every option row of the snapshot) is a
     fraction of the underlying, so the fee is ``0.0003 * F`` ~ 19.4 USD per
-    contract at F = 64,631 - large enough to swallow most apparent edges, which
-    is exactly why the diagnostics report a net-of-fee count.
+    contract at F = 64,631. That is large enough to absorb most apparent edges,
+    so the diagnostics report a net-of-fee count.
 
     Deribit additionally caps the option fee at 12.5% of the premium. That cap
-    is from the exchange's published fee schedule and is NOT present anywhere in
+    is from the exchange's published fee schedule and is not present anywhere in
     the API response, so it is applied only when `premium_usd` is supplied and
-    is exposed as a parameter rather than hard-wired. With `premium_cap=None`
-    the fee is the uncapped 0.0003*F, which over-charges cheap options and
-    therefore makes every net-of-fee violation count a lower bound.
+    is exposed as a parameter. With `premium_cap=None` the fee is the uncapped
+    0.0003*F, which over-charges cheap options and therefore makes every
+    net-of-fee violation count a lower bound.
     """
     gross = taker_commission * forward
     if premium_cap is None or premium_usd is None:
@@ -310,16 +299,12 @@ def fee_usd(forward: float, taker_commission: float, *,
     return min(gross, premium_cap * premium_usd)
 
 
-# --------------------------------------------------------------------------- #
-#  Quotes
-# --------------------------------------------------------------------------- #
-
 @dataclass(frozen=True)
 class OptionQuote:
     """One instrument at one instant: raw coin quote, forward-USD quote, IVs.
 
-    ``*_usd`` fields are UNDISCOUNTED forward USD (coin premium x expiry
-    future), which is the space every no-arbitrage test below operates in.
+    ``*_usd`` fields are undiscounted forward USD (coin premium x expiry
+    future), the space every no-arbitrage test below operates in.
     """
 
     instrument_name: str
@@ -343,8 +328,6 @@ class OptionQuote:
     vega: float                      # at iv_mark, forward USD per 1.0 vol
     flags: tuple[str, ...] = ()
 
-    # -- derived ------------------------------------------------------------ #
-
     @property
     def bid_usd(self) -> float:
         return math.nan if self.bid_btc is None else self.bid_btc * self.forward
@@ -359,7 +342,8 @@ class OptionQuote:
 
     @property
     def mid_usd(self) -> float:
-        """Only for plotting. Never used to declare an arbitrage."""
+        """Mid price, for plotting and for the mid-price form of each test.
+        The executable form of a test uses bid and ask only."""
         if self.bid_btc is None or self.ask_btc is None:
             return math.nan
         return 0.5 * (self.bid_usd + self.ask_usd)
@@ -426,10 +410,6 @@ class OptionQuote:
             "flags": list(self.flags),
         }
 
-
-# --------------------------------------------------------------------------- #
-#  Surface
-# --------------------------------------------------------------------------- #
 
 @dataclass(frozen=True)
 class VolSurface:
@@ -509,20 +489,21 @@ def build_surface(snapshot: Snapshot, *,
                   flag_no_trade: bool = True) -> VolSurface:
     """Turn a `deribit.Snapshot` into a surface of bid/ask implied vols.
 
-    Nothing is dropped: every instrument becomes an `OptionQuote`, and the
-    reasons it should not be trusted land in `flags`. `VolSurface.clean()` is
-    the filtered view; `reject_counts` is the census. Silent dropping is how a
-    market-data pipeline ends up lying about its own coverage.
+    Every instrument with a book row becomes an `OptionQuote`, and the reasons
+    it should not be trusted land in `flags`; an instrument with no book row is
+    counted under `no_book_row`. `VolSurface.clean()` is the filtered view and
+    `reject_counts` is the census, so coverage is reported against the full
+    chain.
 
     Parameters
     ----------
     min_vega_usd
         Reject quotes whose Black-76 vega (forward USD per 1.00 of vol) is below
         this. Default 10.0, i.e. one vol point moves the option by >= 0.10 USD.
-        Not arbitrary: on the committed snapshot, agreement with Deribit's own
-        `mark_iv` improves from rms 4.7561 vol points with no vega floor to
-        0.7366 at 1.0 and 0.3352 at 10.0. Below the floor the quote is a price
-        statement, not a volatility statement.
+        On the committed snapshot, agreement with Deribit's own `mark_iv`
+        improves from rms 4.7561 vol points with no vega floor to 0.7366 at
+        1.0 and 0.3352 at 10.0. Below the floor a quote constrains the price
+        and leaves the volatility unidentified.
     max_iv_spread
         Flag `wide` when iv_ask - iv_bid exceeds this (default 0.25 = 25 vol
         points).
@@ -544,9 +525,9 @@ def build_surface(snapshot: Snapshot, *,
             rejects["no_book_row"] = rejects.get("no_book_row", 0) + 1
             continue
 
-        # The name and the instrument record must agree. They always did on the
-        # committed snapshot; if they ever stop, that is a schema change and
-        # should be loud.
+        # The name and the instrument record must agree. They agree on every
+        # row of the committed snapshot; a disagreement means a schema change,
+        # so it raises.
         _, ymd, name_strike, name_right = parse_instrument_name(name)
         strike = float(instrument["strike"])
         right: Right = "call" if instrument["option_type"] == "call" else "put"
@@ -660,9 +641,7 @@ def _futures_by_expiry(snapshot: Snapshot) -> dict[int, dict[str, float]]:
     return out
 
 
-# --------------------------------------------------------------------------- #
-#  No-arbitrage diagnostics
-# --------------------------------------------------------------------------- #
+# No-arbitrage diagnostics
 
 @dataclass(frozen=True)
 class Violation:
@@ -670,8 +649,9 @@ class Violation:
 
     `magnitude` is always the size of the breach (positive = violated), in the
     units named by `units`. `executable` means the breach survives crossing the
-    spread on every leg; `net_of_fees` means it also survives Deribit's taker
-    fee. Only `net_of_fees` violations are money.
+    spread on every leg; `net_of_fees` means it also survives the taker fees
+    this module models. A violation without that flag is not profitable for a
+    taker.
     """
 
     kind: str
@@ -790,9 +770,9 @@ def calendar_violations(surface: VolSurface, *,
 
     Compares each adjacent pair of expiries on a shared log-moneyness grid,
     restricted to the overlap of the two quoted ranges (and to |k| <= `k_clip`,
-    beyond which the wings are single quotes and the interpolation is fiction).
-    The `executable` flag asks the sharper question: is the far expiry's ASK
-    variance still below the near expiry's BID variance?
+    beyond which the wings are single quotes and linear interpolation has no
+    second point to work from). The `executable` flag is set when the far
+    expiry's ask variance is still below the near expiry's bid variance.
     """
     curves: dict[int, dict[str, np.ndarray]] = {}
     for expiry, rows in surface.by_expiry().items():
@@ -856,10 +836,10 @@ def parity_violations(surface: VolSurface) -> list[Violation]:
     therefore brackets the forward in ``[F_lo, F_hi]``; an arbitrage exists only
     when the futures book itself sits outside that bracket.
 
-    Fees here are four legs (call, put, future, and the future's own commission
-    is charged on notional), so the net-of-fee test subtracts three option-side
-    taker fees as a deliberately conservative stand-in - Deribit's futures fee
-    schedule is not in the API response and is not guessed at here.
+    The trade has three legs (call, put, future). The net-of-fee test subtracts
+    the two option-leg taker fees only: Deribit's futures fee schedule is not
+    in the API response and is not estimated here, so `net_of_fees` on a parity
+    violation is net of option fees and overstates the edge by the futures fee.
     """
     out: list[Violation] = []
     for expiry, rows in surface.by_expiry().items():
@@ -910,8 +890,8 @@ def parity_violations(surface: VolSurface) -> list[Violation]:
 def parity_forward_stats(surface: VolSurface) -> list[dict[str, Any]]:
     """Per-expiry synthetic-forward bracket width and its basis to the future.
 
-    Not a violation report - this is the microstructure summary that says how
-    tightly the options book actually pins the forward.
+    A microstructure summary of how tightly the options book pins the forward.
+    It reports no violations.
     """
     out: list[dict[str, Any]] = []
     for expiry, rows in surface.by_expiry().items():

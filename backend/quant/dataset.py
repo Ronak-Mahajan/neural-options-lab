@@ -1,38 +1,37 @@
 """Training-set generation for the neural Asian-option pricer.
 
-Key design decisions
---------------------
-1. **Moneyness parameterization.** The Asian price is homogeneous of degree 1
-   in (S, K): price(S, K, ...) = K * price(S/K, 1, ...). We therefore train
-   the network on f(m, T, sigma, r) = price(m, 1, T, sigma, r) with
-   m = S/K, collapsing one input dimension and guaranteeing exact
-   generalization across all strike levels.
+Design
+------
+1. Moneyness parameterization. The Asian price is homogeneous of degree 1
+   in (S, K): price(S, K, ...) = K * price(S/K, 1, ...). The network is
+   trained on f(m, T, sigma, r) = price(m, 1, T, sigma, r) with m = S/K,
+   which removes one input dimension and makes generalization across strike
+   levels exact.
 
-2. **Latin Hypercube sampling** of the parameter box gives far better space
-   coverage than i.i.d. uniform draws at the same sample count.
+2. Latin hypercube sampling of the parameter box covers the space more
+   evenly than i.i.d. uniform draws at the same sample count.
 
-3. **Noisy labels are fine.** Each label is a control-variate MC estimate
-   with a modest path budget. The noise is (asymptotically) unbiased, and
-   least-squares regression averages it out across the dataset - so we spend
-   the simulation budget on *many parameter points* rather than ultra-precise
-   labels at few points.
+3. Noisy labels. Each label is a control-variate MC estimate with a modest
+   path budget. The noise is (asymptotically) unbiased and least-squares
+   regression averages it out across the dataset, so the simulation budget
+   goes to many parameter points at moderate precision.
 
-4. **Chunked, fully vectorized simulation.** Paths for a whole chunk of
-   parameter sets are generated in one (chunk, paths, steps) tensor,
-   amortizing numpy overhead.
+4. Chunked, vectorized simulation. Paths for a whole chunk of parameter sets
+   are generated in one (chunk, paths, steps) tensor, amortizing numpy
+   overhead.
 
-5. **Pathwise differentials (Differential ML).** Alongside each price label
-   we compute the *pathwise* sensitivities of the discounted payoff
-   X = e^{-rT}(A - K)+ on the same paths - essentially free once the paths
-   exist (Huge & Savine, "Differential Machine Learning", 2020):
+5. Pathwise differentials (differential ML). Alongside each price label the
+   pathwise sensitivities of the discounted payoff X = e^{-rT}(A - K)+ are
+   computed on the same paths with no additional draws (Huge & Savine,
+   "Differential Machine Learning", 2020):
 
        dX/dS0    = e^{-rT} 1{A>K} A/S0            (S_i is linear in S0)
        dX/dsigma = e^{-rT} 1{A>K} (1/n) sum_i S_i (-sigma t_i + sqrt(dt) W_i)
 
    where W_i is the cumulated Gaussian driver up to t_i. Both estimators are
    unbiased because the payoff is Lipschitz in A. Training the network to
-   match these differentials (via a combined loss) teaches it the *shape*
-   of the pricing function, not just point values.
+   match them through a combined loss fits the shape of the pricing function
+   as well as its level.
 """
 
 from __future__ import annotations
@@ -61,9 +60,9 @@ def _simulate_chunk(params: np.ndarray, n_paths: int, n_steps: int,
     chunk of (m, T, sigma, r).
 
     Prices the unit-strike call at spot=m. Antithetic everywhere; the
-    geometric control variate is applied to the *price* estimator (the
-    differential estimators are left plain - their noise is averaged out by
-    the differential regression, per Huge & Savine).
+    geometric control variate is applied to the price estimator only. The
+    differential estimators are left plain: their noise is averaged out by
+    the differential regression (Huge & Savine).
     Returns (price, dprice/dm, dprice/dsigma), each shape (B,).
     """
     m, mat, sig, r = (params[:, i][:, None] for i in range(4))
@@ -87,7 +86,7 @@ def _simulate_chunk(params: np.ndarray, n_paths: int, n_steps: int,
     disc = np.exp(-r * mat)                                # (B, 1)
     in_money = arith > 1.0                                 # (B, P)
 
-    # -- pathwise differentials -------------------------------------------
+    # Pathwise differentials.
     delta = (disc * np.where(in_money, arith, 0.0) / m).mean(axis=1)
 
     t_grid = dt[:, :, None] * np.arange(1, n_steps + 1)    # t_i, (B, 1, S)
@@ -97,7 +96,7 @@ def _simulate_chunk(params: np.ndarray, n_paths: int, n_steps: int,
     del paths, dlnS_dsig, cum_z
     vega = (disc * np.where(in_money, dA_dsig, 0.0)).mean(axis=1)
 
-    # -- control-variate price --------------------------------------------
+    # Control-variate price.
     x = disc * np.maximum(arith - 1.0, 0.0)
     y = disc * np.maximum(geo - 1.0, 0.0)
     ey = np.array([
@@ -118,7 +117,7 @@ def generate_dataset(n_samples: int = 40_000, n_paths: int = 2_000,
                      chunk_size: int = 64, verbose: bool = True
                      ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return (X, y, dydx): LHS parameters (N, 4), CV-MC call prices/K (N,)
-    and pathwise differentials (N, 2) - columns (dprice/dm, dprice/dsigma).
+    and pathwise differentials (N, 2) with columns (dprice/dm, dprice/dsigma).
     """
     lows = np.array([lo for lo, _ in PARAM_RANGES.values()])
     highs = np.array([hi for _, hi in PARAM_RANGES.values()])

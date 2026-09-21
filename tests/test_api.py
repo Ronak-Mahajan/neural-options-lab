@@ -1,35 +1,31 @@
 """HTTP-surface tests for backend/api/main.py, run offline against the
-shipped checkpoints.
+shipped checkpoints. Each behaviour here exists only at the boundary the
+browser sees, so the quant-layer tests cannot cover it:
 
-Everything the dashboard reads is checked here at the boundary the browser
-actually sees, because three of these behaviours are invisible from the quant
-layer:
+  * /api/model-info publishes the 0DTE checkpoint's own provenance
+    (calibrated flag, eta/rho/H, kernel stamp, calibration note). The block
+    is built once at import, so no request runs the git lookup and a
+    container without git still answers.
+  * /api/price and /ws/stream report the European no-arbitrage floor next to
+    the served 0DTE price. The price is compared against the engine call the
+    handler makes, so a change that clamps it fails here.
+  * /api/surface takes the one-at-a-time simulation gate, and the websocket
+    prices without it, so the two cannot deadlock.
+  * The request boundary: non-finite numbers and malformed desk-note inputs
+    are 422s in the JSON error shape, oversized bodies are 413s, every
+    pricing route applies the trained-domain gate, and both job gates refuse
+    with 503 and Retry-After when their queue is full.
+  * /api/health answers 503 without the pricing checkpoint, and /api/hedge
+    answers 503 for a dynamics whose served policy is missing.
 
-  (a) /api/model-info republishes the 0DTE checkpoint's OWN provenance - the
-      calibrated flag, eta/rho/H, the Volterra kernel stamp and the note
-      naming the fit. Those fields have been inside artifacts/model_0dte.pt
-      since the live SPY calibration was adopted; until the endpoint returned
-      them the site could not state which parameters it was serving. The block
-      is resolved once at import, so these tests also pin that no request
-      re-runs the git lookup, and that a container without git still answers.
-  (b) /api/price and /ws/stream report the EUROPEAN no-arbitrage floor for the
-      0DTE regime (discounted intrinsic) next to the served price. The price
-      itself is never touched: the tests compare it against the engine call
-      the handler makes, so a future "fix" that clamps the price fails here.
-  (c) /api/surface holds the same one-at-a-time gate as the Monte Carlo
-      endpoints - up to 6,400 rows through a 5-member ensemble is not a free
-      request on a 512 MB container. `test_surface_takes_the_heavy_job_gate`
-      is the evidence it is gated; it saturates the gate and expects a 503
-      rather than an unbounded queue. `test_stream_prices_while_the_heavy_gate
-      _is_held` is the other half: the websocket prices off the gate entirely,
-      so adding /api/surface to it introduced no cycle.
-
-No test here needs the network: every route is served in-process by
-fastapi.testclient against the committed artifacts, so the module carries no
-`network` marker and CI's `-m "not network"` runs all of it.
+Every route is served in-process by fastapi.testclient against the committed
+artifacts, so the module carries no `network` marker and CI's
+`-m "not network"` runs all of it.
 """
 from __future__ import annotations
 
+import inspect
+import json
 import math
 import subprocess
 import sys
@@ -66,13 +62,11 @@ def body(**kw) -> dict:
     return out
 
 
-# ---------------------------------------------------------------- provenance
-
 def test_model_info_publishes_the_0dte_checkpoint_provenance(client):
     z = client.get("/api/model-info").json()["zero_dte"]
     assert z["available"] is True
-    # The three rough-Bergomi parameters and the kernel stamp must come from
-    # the checkpoint, not from the API's pre-calibration fallback constants.
+    # eta, rho, H and the kernel stamp are the checkpoint's own values. The
+    # API's fallback constants (1.5, -0.7, 0.1) differ from all three.
     meta = api.ENGINE.meta_0dte
     for key in ("eta", "rho", "H", "kernel"):
         assert z[key] == meta[key]
@@ -91,7 +85,7 @@ def test_model_info_publishes_the_0dte_checkpoint_provenance(client):
 def test_provenance_is_resolved_once_not_per_request(client, monkeypatch):
     """The git stamp shells out. If it ran per request, breaking it would
     break the endpoint; here it cannot, because the block is already built."""
-    def explode(*a, **k):  # pragma: no cover - must never be called
+    def explode(*a, **k):  # pragma: no cover
         raise AssertionError("git lookup ran on a request path")
 
     monkeypatch.setattr(api, "_checkpoint_git_stamp", explode)
@@ -104,7 +98,7 @@ def test_provenance_is_resolved_once_not_per_request(client, monkeypatch):
 
 def test_git_stamp_degrades_to_nulls_without_git(monkeypatch, tmp_path):
     """The served container ships the artifacts but no .git and no git
-    binary. Provenance then reports nulls instead of failing the endpoint."""
+    binary. Provenance then reports nulls and the endpoint still answers."""
     def no_git(*a, **k):
         raise FileNotFoundError("git")
 
@@ -112,8 +106,6 @@ def test_git_stamp_degrades_to_nulls_without_git(monkeypatch, tmp_path):
     assert api._checkpoint_git_stamp(tmp_path / "model_0dte.pt") == {
         "commit": None, "commit_date": None}
 
-
-# ------------------------------------------------------------- intrinsic floor
 
 def test_intrinsic_fields_flag_a_price_under_the_european_floor():
     """Unit-pins the arithmetic: the flag and the shortfall in bps of strike."""
@@ -135,9 +127,9 @@ def test_intrinsic_fields_flag_a_price_under_the_european_floor():
 
 # The last two rows sit in the ITM corner the arbitrage audit measured: at one
 # trading day the ensemble prices a 1.05- and 1.10-moneyness call about 1 bp of
-# strike UNDER discounted intrinsic. The assertions below are on the arithmetic
-# and on the price being untouched, not on the flag's value, so they keep
-# holding when a future checkpoint clears that corner.
+# strike under discounted intrinsic. The assertions cover the arithmetic and
+# the unchanged price and leave the flag's value free, so they hold when a
+# future checkpoint clears that corner.
 @pytest.mark.parametrize("spot,maturity,option_type", [
     (100.0, ZERO_DTE_T, "call"),
     (113.0, ZERO_DTE_T, "call"),
@@ -196,8 +188,6 @@ def test_stream_frames_omit_the_floor_in_the_asian_regime(client):
         assert "intrinsic" not in frame
 
 
-# ----------------------------------------------------------------- domain gate
-
 @pytest.mark.parametrize("kw,why", [
     ({"maturity": 0.5 / 252}, "below the 0DTE surrogate's 1-day floor"),
     # The uncovered band is narrow: (12/252 = 0.047619, 0.05).
@@ -219,7 +209,85 @@ def test_domain_gate_closes_the_websocket_too(client):
         assert "error" in ws.receive_json()
 
 
-# --------------------------------------------------------- put-call parity
+@pytest.mark.parametrize("route", ["/api/explain", "/api/benchmark"])
+@pytest.mark.parametrize("kw,why", [
+    ({"sigma": 0.02}, "sigma below the trained floor of 0.05"),
+    ({"maturity": 0.001}, "below the 0DTE surrogate's 1-day floor"),
+    ({"maturity": 0.048}, "the band above 12/252 and below 0.05"),
+    ({"spot": 250.0}, "Asian moneyness above 2.0"),
+])
+def test_domain_gate_covers_explain_and_benchmark(client, route, kw, why):
+    """The attribution and latency panels refuse the contracts /api/price
+    refuses, and refuse before any simulation runs."""
+    params = {k: v for k, v in body(**kw).items() if k != "mc_paths"}
+    resp = client.post(route, json=params)
+    assert resp.status_code == 422, why
+    assert isinstance(resp.json()["detail"], str)
+
+
+def test_surface_rejects_sigma_below_trained_floor(client):
+    """The surface grid sits inside the Asian box; sigma is the one input a
+    caller can push out of it."""
+    assert client.post("/api/surface", json={"sigma": 0.02,
+                                             "resolution": 10}).status_code == 422
+    assert client.post("/api/surface", json={"sigma": 0.05,
+                                             "resolution": 10}).status_code == 200
+
+
+def test_domain_messages_print_distinct_operands(client):
+    """A value a hair outside a bound is printed at full precision, so the
+    message cannot read `sigma 0.05 outside [0.05, 0.8]`."""
+    detail = client.post("/api/price",
+                         json=body(sigma=0.0499999)).json()["detail"]
+    assert "0.0499999" in detail
+    detail = client.post("/api/price",
+                         json=body(maturity=1 / 252 - 1e-9)).json()["detail"]
+    assert repr(1 / 252 - 1e-9) in detail and "1/252" in detail
+
+
+NON_FINITE = [
+    ("/api/price", b'{"spot": NaN}', "spot"),
+    ("/api/price", b'{"strike": Infinity}', "strike"),
+    ("/api/price", b'{"sigma": 1e400}', "sigma"),
+    ("/api/implied-vol", b'{"price": NaN}', "price"),
+    ("/api/convergence", b'{"rate": NaN}', "rate"),
+    ("/api/surface", b'{"sigma": NaN}', "sigma"),
+    ("/api/iv-surface", b'{"rate": -Infinity}', "rate"),
+    ("/api/benchmark", b'{"maturity": NaN}', "maturity"),
+    ("/api/hedge", b'{"cost": NaN}', "cost"),
+    ("/api/explain", b'{"spot": NaN}', "spot"),
+    ("/api/risk-report", b'{"nn_price": NaN, "bs_cvar": 1, "deep_cvar": 1,'
+                         b' "attributions": {}}', "nn_price"),
+]
+
+
+@pytest.mark.parametrize("route,payload,field", NON_FINITE)
+def test_non_finite_numbers_are_422(client, route, payload, field):
+    """Python's JSON parser admits NaN and Infinity. Every request model
+    rejects them, and the error body carries no echo of the input, which
+    could not be serialised."""
+    resp = client.post(route, content=payload,
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 422
+    assert resp.headers["content-type"].startswith("application/json")
+    errors = resp.json()["detail"]
+    assert {"loc": ["body", field], "type": "finite_number",
+            "msg": "Input should be a finite number"} in errors
+    assert all(set(e) == {"loc", "msg", "type"} for e in errors)
+
+
+def test_validation_error_omits_request_body(client):
+    marker = "echo-marker-7f3a"
+    resp = client.post("/api/risk-report", json={"contract": marker})
+    assert resp.status_code == 422
+    assert marker not in resp.text
+
+
+def test_spot_and_strike_are_bounded(client):
+    """At 1e308 the float32 price overflows to inf, which is not JSON."""
+    resp = client.post("/api/price", json=body(spot=1e308, strike=1e308))
+    assert resp.status_code == 422
+
 
 def test_put_call_parity_zero_dte(client):
     """European parity: C - P = S - K e^{-rT}. The 0DTE regime prices a
@@ -249,8 +317,6 @@ def test_put_call_parity_asian(client):
     assert call - put == pytest.approx(math.exp(-r * t) * (ea - k), abs=1e-2)
 
 
-# ------------------------------------------------------------------- surface
-
 @pytest.mark.parametrize("resolution", [10, 23, 40])
 def test_surface_honours_the_requested_resolution(client, resolution):
     d = client.post("/api/surface", json={"sigma": 0.25, "rate": 0.04,
@@ -272,9 +338,8 @@ def test_surface_resolution_is_bounded(client):
 
 
 def test_surface_takes_the_heavy_job_gate(client, monkeypatch):
-    """Evidence that /api/surface is queued with the Monte Carlo endpoints
-    rather than running unbounded alongside them: with the single gate held,
-    the request is refused with the gate's own 503 instead of piling on."""
+    """/api/surface queues with the Monte Carlo endpoints: with the single
+    gate held, the request times out with the gate's own 503."""
     monkeypatch.setattr(api, "HEAVY_JOB_TIMEOUT_S", 0.05)
     assert api._HEAVY_JOB_GATE.acquire(timeout=5.0)
     try:
@@ -286,28 +351,18 @@ def test_surface_takes_the_heavy_job_gate(client, monkeypatch):
 
 
 def test_stream_prices_while_the_heavy_gate_is_held(client, monkeypatch):
-    """The gate /api/surface now takes cannot deadlock against the stream.
+    """The stream prices through `anyio.to_thread.run_sync` and never takes
+    `_HEAVY_JOB_GATE`, so a job holding the gate leaves frames flowing.
 
-    The websocket prices through `anyio.to_thread.run_sync` and never touches
-    `_HEAVY_JOB_GATE`, so a surface (or Monte Carlo) job holding the gate
-    leaves the stream delivering frames. Held here for the whole exchange:
+    The gate is held for the whole exchange. A frame is priced while it is
+    still held, and a /api/surface request in the same window is refused
+    with 503, so the held gate is the contended one. A stream that took the
+    gate would wait HEAVY_JOB_TIMEOUT_S and send an error frame, and the
+    `"error" not in frame` assertion would fail.
 
-      * the gate is confirmed still held while the frame is priced, so the
-        stream demonstrably did not get it by the holder letting go;
-      * a /api/surface request issued in the same window is refused 503, so
-        the gate really is the contended one;
-      * were the stream ever changed to take the gate, this blocks for
-        HEAVY_JOB_TIMEOUT_S and then fails instead of hanging the suite.
-        Checked, not assumed: wrapping the handler's pricing call in
-        heavy_job() off-tree and re-running this made the frame arrive after
-        73 ms as {'tick': 1, 'spot': 99.9992, 'error': 'out of domain'}, so
-        the `"error" not in frame` assertion below is the one that fires.
-
-    What this does NOT claim: Starlette dispatches sync handlers on anyio's
-    default thread limiter (40 tokens) and the websocket's pricing call draws
-    on the same pool, so enough handlers queued on the gate can still make a
-    frame wait for a thread. That is bounded starvation - every gate holder
-    finishes and releases - not a cycle.
+    Scope: the stream's pricing call shares anyio's 40-token thread limiter
+    with the sync handlers, so a frame can wait for a thread. The capped
+    queues in main.py bound that wait.
     """
     monkeypatch.setattr(api, "HEAVY_JOB_TIMEOUT_S", 0.05)
     assert api._HEAVY_JOB_GATE.acquire(timeout=5.0)
@@ -326,3 +381,222 @@ def test_stream_prices_while_the_heavy_gate_is_held(client, monkeypatch):
                                json={"resolution": 10}).status_code == 503
     finally:
         api._HEAVY_JOB_GATE.release()
+
+
+def test_full_simulation_queue_refuses_at_once(client, monkeypatch):
+    """Every waiter holds a pool thread, so the queue is capped. With the cap
+    at zero the request is refused without waiting for the timeout."""
+    monkeypatch.setattr(api, "HEAVY_QUEUE_MAX", 0)
+    monkeypatch.setattr(api, "HEAVY_JOB_TIMEOUT_S", 60.0)
+    resp = client.post("/api/surface", json={"resolution": 10})
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "5"
+    assert api._HEAVY_QUEUE.waiting == 0
+
+
+@pytest.mark.parametrize("route,payload", [
+    ("/api/explain", {}),
+    ("/api/implied-vol", {"price": 5.0}),
+])
+def test_inference_gate_bounds_explain_implied_vol(client, monkeypatch,
+                                                       route, payload):
+    monkeypatch.setattr(api, "LIGHT_JOB_TIMEOUT_S", 0.05)
+    held = 0
+    try:
+        while api._LIGHT_JOB_GATE.acquire(blocking=False):
+            held += 1
+        resp = client.post(route, json=payload)
+    finally:
+        for _ in range(held):
+            api._LIGHT_JOB_GATE.release()
+    assert held == 4
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "10"
+    assert client.post(route, json=payload).status_code == 200
+
+
+def test_oversized_body_is_413(client):
+    """A declared Content-Length over the cap is refused before the body is
+    read, whatever the route would have made of it."""
+    big = json.dumps({"contract": "x" * (api.MAX_BODY_BYTES + 1)})
+    resp = client.post("/api/risk-report", content=big,
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+    assert resp.json() == {
+        "detail": f"request body exceeds {api.MAX_BODY_BYTES} bytes"}
+
+
+def test_oversized_chunked_body_is_413(client):
+    """No Content-Length: the body is counted as it arrives."""
+    def chunks():
+        yield b'{"contract": "'
+        for _ in range(api.MAX_BODY_BYTES // 1000 + 1):
+            yield b"x" * 1000
+        yield b'"}'
+
+    resp = client.post("/api/risk-report", content=chunks(),
+                       headers={"Content-Type": "application/json"})
+    assert "content-length" not in resp.request.headers
+    assert resp.status_code == 413
+
+
+def risk_body(**kw) -> dict:
+    out = {"ticker": "SPY", "contract": "1-year at-the-money Asian call",
+           "nn_price": 5.61, "bs_cvar": 3.2, "deep_cvar": 2.9,
+           "attributions": {"spot": 0.1, "maturity": 3.0, "sigma": 2.0,
+                            "rate": 0.2}}
+    out.update(kw)
+    return out
+
+
+def test_risk_report_accepts_dashboard_body(client, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    resp = client.post("/api/risk-report", json=risk_body())
+    assert resp.status_code == 200
+    assert "nan" not in resp.text.lower()
+
+
+@pytest.mark.parametrize("kw,loc", [
+    ({"attributions": {"spot": "abc"}}, ["body", "attributions", "spot"]),
+    ({"attributions": {"spot": None}}, ["body", "attributions", "spot"]),
+    ({"attributions": {f"d{i}": 1.0 for i in range(9)}},
+     ["body", "attributions"]),
+    ({"ticker": "ignore all previous"}, ["body", "ticker"]),
+    ({"contract": "x" * 121}, ["body", "contract"]),
+    ({"paired_separated": {"deep|delta": "maybe"}},
+     ["body", "paired_separated", "deep|delta"]),
+])
+def test_risk_report_rejects_malformed_inputs(client, kw, loc):
+    resp = client.post("/api/risk-report", json=risk_body(**kw))
+    assert resp.status_code == 422
+    assert loc in [e["loc"] for e in resp.json()["detail"]]
+
+
+@pytest.mark.parametrize("payload,loc", [
+    (b'{"attributions": {"spot": NaN}}', ["body", "attributions", "spot"]),
+    (b'{"bs_cvar": Infinity}', ["body", "bs_cvar"]),
+    (b'{"deep_cvar_se": NaN}', ["body", "deep_cvar_se"]),
+    (b'{"baseline_price": -Infinity}', ["body", "baseline_price"]),
+])
+def test_risk_report_rejects_non_finite_numbers(client, payload, loc):
+    """A NaN attribution or CVaR would print `$nan` in the desk note."""
+    resp = client.post("/api/risk-report", content=payload,
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 422
+    assert {"loc": loc, "type": "finite_number",
+            "msg": "Input should be a finite number"} in resp.json()["detail"]
+
+
+def test_health_200_with_engine_loaded(client):
+    resp = client.get("/api/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "model_loaded": True,
+                           "hedgers_loaded": ["gbm", "rough"],
+                           "iv_surface_loaded": True}
+    # A coroutine: answered on the event loop, with no pool thread.
+    assert inspect.iscoroutinefunction(api.health)
+
+
+def test_health_503_without_pricing_engine(client, monkeypatch):
+    """render.yaml health-checks this route, so a container that cannot
+    price must not read as healthy."""
+    monkeypatch.setattr(api, "ENGINE", None)
+    resp = client.get("/api/health")
+    assert resp.status_code == 503
+    assert resp.json()["model_loaded"] is False
+    assert resp.json()["status"] == "unavailable"
+
+
+def test_hedgers_are_served_checkpoints():
+    """Each dynamics is served by the policy trained under its measure."""
+    assert set(api.HEDGERS) == {"rough", "gbm"}
+    for key, spec in api.HEDGE_DYNAMICS.items():
+        assert api.HEDGERS[key].meta["train_measure"] == spec["measure"]
+
+
+def test_hedger_loading_has_no_fallback(tmp_path):
+    """artifacts/hedger.pt is the GAN-measure policy and serves neither
+    dynamics. A directory without the served checkpoints loads nothing."""
+    assert (api.ARTIFACTS / "hedger.pt").exists()
+    assert api.load_hedgers(tmp_path) == {}
+
+
+def test_hedge_503_for_missing_policy(client, monkeypatch):
+    monkeypatch.setattr(api, "HEDGERS", {"rough": api.HEDGERS["rough"]})
+    resp = client.post("/api/hedge", json={"dynamics": "gbm"})
+    assert resp.status_code == 503
+    assert "hedger_gbm.pt" in resp.json()["detail"]
+
+
+class CountingHedger:
+    """Stands in for a HedgingEngine: compare() is a few seconds of Monte
+    Carlo, and these tests are about the handler around it."""
+
+    def __init__(self, meta: dict) -> None:
+        self.meta = meta
+        self.calls: list[tuple] = []
+
+    def compare(self, sigma, rate, cost, primary, measures):
+        self.calls.append((sigma, rate, cost))
+        block = {"deep": {"cvar95": -0.01, "pnl": [0.0, 0.1]}, "note": "n"}
+        return {"cost": cost, "measure": primary, "deep": block["deep"],
+                "by_measure": {primary: block}}
+
+
+def test_hedge_reply_is_memoised(client, monkeypatch):
+    """compare() is seeded, so one run serves every repeat of a question.
+    Under the rough dynamics sigma and rate come from the calibration, and
+    the sliders do not enter the key."""
+    rough = CountingHedger({"train_measure": "rbergomi_jumps",
+                            "measure_params": {"xi": 0.04, "rate": 0.03}})
+    gbm = CountingHedger({"train_measure": "gbm"})
+    monkeypatch.setattr(api, "HEDGERS", {"rough": rough, "gbm": gbm})
+    monkeypatch.setattr(api, "_HEDGE_CACHE", api._ResponseCache(max_entries=2))
+
+    first = client.post("/api/hedge", json={"dynamics": "rough", "sigma": 0.2})
+    again = client.post("/api/hedge", json={"dynamics": "rough", "sigma": 0.6})
+    assert first.status_code == 200 and first.content == again.content
+    assert rough.calls == [(pytest.approx(0.2), 0.03, 0.01)]
+    d = first.json()
+    assert d["sigma_source"] == "SPY calibration"
+    assert d["policy_trained_on"] == "rbergomi_jumps"
+    # by_measure keeps the statistics and drops its copy of the P&L array.
+    assert d["deep"]["pnl"] == [0.0, 0.1]
+    assert d["by_measure"]["rbergomi_jumps"]["deep"] == {"cvar95": -0.01}
+
+    # Under Black-Scholes the sliders are the question.
+    client.post("/api/hedge", json={"dynamics": "gbm", "sigma": 0.2})
+    client.post("/api/hedge", json={"dynamics": "gbm", "sigma": 0.2})
+    client.post("/api/hedge", json={"dynamics": "gbm", "sigma": 0.3})
+    assert [c[0] for c in gbm.calls] == [0.2, 0.3]
+
+    # Two entries: the rough reply was evicted by the two gbm ones.
+    client.post("/api/hedge", json={"dynamics": "rough"})
+    assert len(rough.calls) == 2
+
+
+def test_stream_refuses_beyond_client_cap(client, monkeypatch):
+    monkeypatch.setattr(api, "MAX_STREAM_CLIENTS", 0)
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_json({"spot": 100, "strike": 100})
+        assert ws.receive_json() == {
+            "error": "stream capacity reached; try again shortly"}
+    assert api._stream_clients == 0
+
+
+@pytest.mark.parametrize("config", [
+    '{"spot": NaN}', '{"sigma": 0.9}', '{"spot": null}', '{"hz": "fast"}',
+    "[1, 2]", '"hi"', "null", "not json",
+])
+def test_stream_config_errors_fixed_messages(client, config):
+    """The refusal names the offending fields and the expected shape. The
+    validator's own text (library name, version, documentation URL) and
+    Python exception text stay on the server."""
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_text(config)
+        error = ws.receive_json()["error"]
+    assert error == "config must be a JSON object" or (
+        error.startswith("invalid config (")
+        and error.endswith(api.STREAM_CONFIG_HELP))
+    for leak in ("pydantic", "http", "object has no attribute", "float()"):
+        assert leak not in error

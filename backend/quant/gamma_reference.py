@@ -1,70 +1,62 @@
 """High-precision gamma for the discrete arithmetic-average call.
 
-Price and the first-order Greeks have pathwise Monte Carlo estimators, which
-is why `dataset._simulate_chunk` returns delta and vega alongside the price
-and why `evaluate.py` can report their held-out error. Gamma has no pathwise
-estimator: differentiating the pathwise delta a second time differentiates an
-indicator, which produces a Dirac mass rather than something you can average.
-So gamma was the one served Greek with no accuracy number anywhere in the
-project. This module supplies the reference that closes that.
+Price, delta and vega have pathwise Monte Carlo estimators
+(`dataset._simulate_chunk`). Gamma has none: differentiating the pathwise
+delta again differentiates an indicator and leaves a Dirac mass, which cannot
+be averaged. This module supplies the gamma reference that `evaluate.py`
+measures the surrogate against.
 
-The construction rests on one exact fact about this contract. The arithmetic
-average is LINEAR in the spot:
+The arithmetic average is linear in the spot,
 
-    A = (1/n) sum_i S_i,   S_i = m exp(sum_{j<=i} (drift + vol z_j))
+    A = (1/n) sum_i S_i,   S_i = m exp(sum_{j<=i} (drift + vol z_j)),
 
 so A = m * Atilde with Atilde independent of m. All of the spot dependence
-therefore sits in the payoff, and for the unit-strike call
+sits in the payoff, and for the unit-strike call
 
     C(m)  = e^{-rT} E[(m Atilde - 1)^+]
     dC/dm = e^{-rT} E[Atilde 1{Atilde > 1/m}]
     d2C/dm2 = e^{-rT} p(1/m) / m^3
 
 where p is the density of Atilde. Gamma is the discounted density of the
-scaled average AT the strike, so measuring gamma is estimating one density at
-one point - and that is a problem with an exact, bandwidth-free answer.
+scaled average at the strike.
 
-CONDITIONAL DENSITY (the estimator used here). The FIRST increment is the one
-to integrate out, because every fixing is proportional to S_1:
+Conditional density (the estimator used here). Every fixing is proportional
+to S_1, so the first increment is the one to integrate out:
 
     Atilde = exp(drift + vol z_1) * G,
     G = (1/n) sum_{i=1..n} exp(sum_{2<=j<=i} (drift + vol z_j)),
 
-with G a function of z_2..z_n alone. Conditioning on those, Atilde is a
-strictly increasing lognormal function of z_1 with full support, its
-conditional density is closed-form, and z_1 integrates out exactly:
+with G a function of z_2..z_n alone. Given those, Atilde is a strictly
+increasing lognormal function of z_1 with full support, its conditional
+density is closed-form, and z_1 integrates out exactly:
 
     p(a) = E[ phi(z*) ] / (vol a),   z* = (log(a/G) - drift) / vol,
-
-so gamma reduces to a bounded average:
-
     d2C/dm2 = e^{-rT} E[phi(z*)] / (vol m^2).
 
-There is no kernel and no bandwidth, only a Monte Carlo average of an exact
-conditional density, so the estimator is unbiased for the density of the
-DISCRETE average the surrogate was trained on - the same n fixings, the same
-discretisation, no continuous-time approximation anywhere.
+The estimator is a Monte Carlo average of an exact conditional density, with
+no kernel and no bandwidth. It is unbiased for the density of the discrete
+average the surrogate is trained on: the same n fixings and no
+continuous-time approximation. Every path contributes and the integrand is
+bounded by phi(0).
 
-Conditioning on the LAST increment instead is the obvious first attempt and
-is much worse: the final fixing carries only 1/n of the average, so only the
-paths whose partial average already sits within one fixing of the strike
-contribute anything, and the standard error on a 200,000-path run comes out
-near 3 % of the estimate. Conditioning on the first increment moves the whole
-distribution, every path contributes, the integrand is bounded by phi(0), and
-the same budget gives a standard error two orders of magnitude smaller.
+Conditioning on the last increment is also unbiased but less efficient. The
+final fixing carries 1/n of the average, so only paths whose partial average
+sits within one fixing of the strike contribute. At n = 50 on 200,000 paths
+(seed 0) with m = 1, T = 1, sigma = 0.25, r = 0.04, its standard error is
+2.7% of the estimate against 0.4% for the first increment, and the ratio is
+6x to 9x over three contracts across the box
+(`tests/test_quant_core.py` holds the comparison).
 
-It is also checkable against a closed form with no Monte Carlo error at all.
-At n = 1 the average IS the terminal spot, the contract is a European call,
-and the estimator collapses to the exact lognormal density: every path gives
-the identical value and it equals the Black-Scholes gamma to machine
-precision. `tests/test_gamma_reference.py` pins that, which is a stronger
-check than any convergence study.
+At n = 1 the average is the terminal spot and the contract is a European
+call. G is identically 1, every path returns the same lognormal density, and
+the estimate equals the Black-Scholes gamma to machine precision with no
+Monte Carlo error. `tests/test_gamma_reference.py` pins that identity.
 
-CROSS-CHECK. `gamma_finite_difference` differences the pathwise delta in the
-spot on the SAME paths (common random numbers). It is a histogram estimate of
-the same density with bin width tied to the step, so it is biased at O(h^2)
-and noisier, but it is built from a different identity and agreeing with it
-rules out an algebra error in the conditional derivation.
+Cross-check. `gamma_finite_difference` differences the pathwise delta in the
+spot on common random numbers. It is a histogram estimate of the same density
+with bin width tied to the step, so it is biased at O(h^2) and noisier. It
+rests on a different identity, so agreement with it rules out an algebra
+error in the conditional derivation.
 """
 from __future__ import annotations
 
@@ -79,7 +71,13 @@ PATH_BLOCK = 20_000
 
 
 def _blocks(n_paths: int, block: int):
-    """Antithetic-safe path blocks: every block is an even number of paths."""
+    """Path block sizes for antithetic sampling; n_paths must be even.
+
+    The block size is rounded down to an even number, so every block is even
+    when n_paths is. An odd remainder would lose one path to `size // 2` in
+    the caller while its mean still divides by n_paths. `gamma_conditional`
+    rounds n_paths down to even; the other estimators take it as given.
+    """
     block = max(2, (block // 2) * 2)
     done = 0
     while done < n_paths:
@@ -93,8 +91,8 @@ def gamma_conditional(m: float, maturity: float, sigma: float, rate: float,
     """d2C/dm2 for the unit-strike call, by conditional Monte Carlo.
 
     Returns ``{"gamma", "se", "n_paths", "phi_mean"}``. `se` is the standard
-    error across paths of the bounded average E[phi(z*)], carried through the
-    same constant factor as the estimate itself.
+    error of the bounded average E[phi(z*)] over antithetic pairs, carried
+    through the same constant factor as the estimate itself.
     """
     if n_steps < 1:
         raise ValueError("n_steps must be at least 1")
@@ -107,19 +105,19 @@ def gamma_conditional(m: float, maturity: float, sigma: float, rate: float,
     n_paths = (int(n_paths) // 2) * 2          # antithetic pairs, so even
     n_pairs = n_paths // 2
 
-    # The sampling unit is the antithetic PAIR, not the path: z and -z are
-    # dependent draws, so the standard error is the spread of pair means over
-    # n_pairs independent pairs. Treating the two halves as separate samples
-    # would count each pair twice and misstate the error either way.
+    # The sampling unit is the antithetic pair: z and -z are dependent draws,
+    # so the standard error is the spread of pair means over n_pairs
+    # independent pairs. Treating the two halves as separate samples would
+    # count each pair twice and misstate the error in either direction.
     total = 0.0
     total_sq = 0.0
     rng = np.random.default_rng(seed)
     for size in _blocks(n_paths, block):
         half = size // 2
         if n_steps == 1:
-            # G is identically 1: the average is the single fixing. Every
-            # path gives the same exact lognormal density, so one evaluation
-            # is the answer and drawing normals would only add noise.
+            # G is identically 1: the average is the single fixing, there are
+            # no later increments to draw, and every path returns the same
+            # exact lognormal density.
             g = np.ones(size)
         else:
             z = rng.standard_normal((half, n_steps - 1))
@@ -154,17 +152,15 @@ def scaled_average_density(a_grid: np.ndarray, maturity: float, sigma: float,
                            block: int = PATH_BLOCK) -> np.ndarray:
     """The density of the scaled average `Atilde` at each point of `a_grid`.
 
-    Exposes the object `gamma_conditional` actually estimates, evaluated on
-    one shared set of paths. Gamma at moneyness m is
+    This is the quantity `gamma_conditional` estimates, evaluated on one
+    shared set of paths. Gamma at moneyness m is
     ``exp(-rT) * density(1/m) / m**3``.
 
-    This is what makes the reference checkable without a second estimator: a
-    density has two exact properties, and both are closed form here.
-    ``integral p da`` is 1, and ``integral a p(a) da`` is the mean of the
-    scaled average, ``(1/n) sum_i exp(r t_i)`` - the same geometric series
-    the engine's put-call parity adjustment uses. Neither is a convergence
-    study or a comparison against another approximation; they are identities
-    the estimate either satisfies or does not.
+    Two closed-form identities check the reference without a second
+    estimator. ``integral p da`` is 1, and ``integral a p(a) da`` is the mean
+    of the scaled average, ``(1/n) sum_i exp(r t_i)``, the geometric series
+    the engine's put-call parity adjustment uses.
+    `tests/test_gamma_reference.py` checks both.
     """
     dt = maturity / n_steps
     drift = (rate - 0.5 * sigma ** 2) * dt
@@ -200,14 +196,14 @@ def gamma_finite_difference(m: float, maturity: float, sigma: float,
                             n_paths: int = 200_000, seed: int = 0,
                             rel_step: float = 0.01,
                             block: int = PATH_BLOCK) -> dict:
-    """d2C/dm2 by differencing the PATHWISE delta on common random numbers.
+    """d2C/dm2 by differencing the pathwise delta on common random numbers.
 
-    An independent route to the same quantity, used to corroborate
-    `gamma_conditional` rather than to serve numbers. Because the average is
-    linear in the spot, the same draw of `Atilde` prices every spot, so the
-    two deltas differ only through which paths finish in the money - the
-    difference is a histogram count of the density over a bin of width
-    2 h / m^2, biased O(h^2) and much noisier than the conditional estimator.
+    An independent route to the same quantity, used only to corroborate
+    `gamma_conditional`. Because the average is linear in the spot, the same
+    draw of `Atilde` prices every spot, so the two deltas differ only through
+    which paths finish in the money. The difference is a histogram count of
+    the density over a bin of width 2 h / m^2, biased O(h^2) and much noisier
+    than the conditional estimator.
     """
     dt = maturity / n_steps
     drift = (rate - 0.5 * sigma ** 2) * dt
@@ -239,7 +235,7 @@ def gamma_finite_difference(m: float, maturity: float, sigma: float,
 
 def black_scholes_gamma(spot: float, strike: float, maturity: float,
                         sigma: float, rate: float) -> float:
-    """Closed-form gamma, for the n = 1 case where the Asian IS a European."""
+    """Closed-form gamma, for the n = 1 case where the Asian is a European."""
     sd = sigma * math.sqrt(maturity)
     d1 = (math.log(spot / strike) + (rate + 0.5 * sigma ** 2) * maturity) / sd
     return float(norm.pdf(d1) / (spot * sd))

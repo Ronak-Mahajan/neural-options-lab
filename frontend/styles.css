@@ -1,8 +1,9 @@
-/* 
-   NEURAL OPTIONS LAB
-   Apple HIG dark-mode design tokens. Elevation via background shifts,
-   not borders. Single accent (systemBlue). SF Pro via system font stack,
-   Inter as cross-platform fallback. JetBrains Mono for tabular data.
+/*
+   Neural Options Lab
+   Dark-mode design tokens on Apple's HIG elevation ramp. Elevation comes
+   from background shifts and borders are hairlines. Single accent
+   (systemBlue). SF Pro via the system font stack, Inter as cross-platform
+   fallback, JetBrains Mono for tabular data.
 */
 
 :root {
@@ -15,11 +16,21 @@
   --line: rgba(84, 84, 88, 0.36);
   --line-hi: rgba(84, 84, 88, 0.65);
 
-  /* Apple label hierarchy */
+  /* Label hierarchy: four steps, every one used for text under 18px, so
+     every step meets WCAG AA (4.5:1) on every ground it is set on.
+     Contrast on the grounds #000 / --well / --surface / --raised:
+       --ink-hi   19.3 / 16.9 / 15.6 / 12.8
+       --ink      11.7 / 10.7 / 10.0 /  8.4
+       --ink-mid   8.1 /  7.6 /  7.3 /  6.3
+       --ink-low   5.6 /  5.5 /  5.4 /  4.8
+     tests/test_port_frontend.py recomputes these from the values below.
+     --ink-rule is Apple's quaternary label alpha, kept for decorative
+     hairlines that carry no text. */
   --ink-hi: #f5f5f7;
-  --ink: rgba(235, 235, 245, 0.6);
-  --ink-mid: rgba(235, 235, 245, 0.3);
-  --ink-low: rgba(235, 235, 245, 0.18);
+  --ink: rgba(235, 235, 245, 0.82);
+  --ink-mid: rgba(235, 235, 245, 0.68);
+  --ink-low: rgba(235, 235, 245, 0.56);
+  --ink-rule: rgba(235, 235, 245, 0.18);
 
   /* Apple system colors (dark mode) */
   --neural: #0A84FF;
@@ -56,16 +67,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* every numeral in the app: mono + tabular so columns align perfectly */
+/* every numeral in the app: mono + tabular so columns align */
 .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
-
-/* No decorative canvas layers: the background is a flat, quiet gradient.
-   Ambient orbs, dot grids, and drifting glows read as generated design. */
-.canvas-glow, .canvas-grid { display: none; }
 
 /* Command Bar */
 .cmd-bar {
@@ -97,7 +104,7 @@ body {
   color: var(--ink-low); margin-top: 1px; white-space: nowrap;
 }
 
-/* tab nav lives in the chrome; content area stays pure data */
+/* tab nav lives in the chrome, so the content area carries data only */
 .tab-nav {
   display: flex; gap: 1px; padding: 3px;
   background: var(--well);
@@ -173,16 +180,21 @@ body {
 }
 @media (max-width: 1100px) { .shell { grid-template-columns: 1fr; } }
 
-/* Parameter Rail */
+/* Parameter Rail. The rail is taller than most viewports, so it scrolls
+   inside its sticky box and its lower controls (cross-check precision, the
+   ticker box) stay reachable at any page scroll position. The max-height
+   leaves the 70px sticky offset above the rail and 22px below it. */
 .rail {
   position: sticky; top: 70px;
+  max-height: calc(100vh - 92px); overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--line-hi) transparent;
   display: flex; flex-direction: column; gap: 20px;
   padding: 20px 18px;
   background: var(--surface);
   border-radius: var(--r-panel);
 }
-.rail-toggle { display: none; }
-.rail-edit { display: none; }
+.rail-toggle, .rail-edit, .rail-done { display: none; }
 .shell > *, .rail > *, .stage > *, .tab-pane > * { min-width: 0; }
 .rail-section { display: flex; flex-direction: column; gap: 14px; }
 .rail-section + .rail-section { border-top: 1px solid var(--line);
@@ -264,8 +276,11 @@ h3 + p, .kicker + h3 { margin-top: 3px; }
 }
 .param-val.invalid { border-color: var(--rose); }
 
-/* the track fill is painted by app.js via the --fill custom property */
+/* the track fill is painted by app.js via the --fill custom property.
+   The slider stacks above the help ring's hit area, so a press on a thumb
+   that sits under a ring starts a drag. */
 input[type="range"] {
+  position: relative; z-index: 1;
   -webkit-appearance: none; appearance: none;
   width: 100%; height: 4px; border-radius: 2px;
   background: linear-gradient(90deg, var(--neural) var(--fill, 50%),
@@ -314,13 +329,8 @@ input[type="range"]::-moz-range-thumb {
 .solve-controls .btn { flex: none; }
 #iv-solve-note:empty { display: none; }
 
-.rail-scope {
-  padding: 11px 13px; border-radius: var(--r-ctl);
-  background: var(--neural-soft); border: 1px solid rgba(10, 132, 255, 0.20);
-  font-size: 11.5px; line-height: 1.6; color: var(--ink);
-}
 .kicker-note { font-weight: 500; letter-spacing: 0.02em; text-transform: none;
-  color: var(--ink-low); opacity: 0.8; }
+  color: var(--ink-low); }
 .kicker-note::before { content: "("; }
 .kicker-note::after { content: ")"; }
 
@@ -336,17 +346,30 @@ input[type="range"]::-moz-range-thumb {
 .pick.active { color: var(--ink-hi); background: var(--raised);
   border-color: var(--line-hi); }
 
-/* One help affordance, tap or click, used everywhere. */
+/* One help affordance, tap or click, used everywhere. On touch it is the
+   only explanation channel, so the 15px ring carries a 41x41px hit area.
+   The ::after box hit-tests as the button; its inset is measured from the
+   13px padding box inside the 1px border, so -14px gives 13 + 28 = 41. */
 .help {
+  position: relative;
   width: 15px; height: 15px; margin-left: 5px; padding: 0;
   border-radius: 50%; border: 1px solid var(--line-hi);
   background: transparent; color: var(--ink-low);
-  font-family: var(--font-ui); font-size: 9.5px; font-weight: 700;
+  font-family: var(--font-ui); font-size: 11px; font-weight: 700;
   line-height: 1; cursor: pointer; vertical-align: middle;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
+.help::after { content: ""; position: absolute; inset: -14px; }
+/* A slider's press band is as tall as its thumb, and it stacks above the
+   ring's hit area so a drag always starts. At the default spacing that
+   leaves a ring beside a slider 35px of height. Touch devices get 7px more
+   between label and slider and 3px more between rows, which restores 41px. */
+@media (any-pointer: coarse) {
+  .param { gap: 15px; }
+  .rail-section { gap: 17px; }
+}
 .help:hover { color: var(--ink-hi); border-color: var(--ink-mid); }
-.glossary { text-decoration: underline dotted var(--ink-low);
+.glossary { text-decoration: underline dotted var(--ink-rule);
   text-underline-offset: 3px; cursor: pointer; }
 .help-bubble {
   position: absolute; z-index: 60; padding: 11px 13px;
@@ -369,10 +392,11 @@ input[type="range"]::-moz-range-thumb {
   min-width: 0;
 }
 
-/* Page lede: one claim, one sentence, and the explanation one click away. */
+/* Page lede: one claim, one sentence, and the explanation one click away.
+   Reading order on the Quote tab: headline, price, Greeks, then the
+   explanation and the examples, so the quote is on the first screen. */
 .lede { padding: 4px 2px 0; }
 #tab-pricing > .lede { order: 1; }
-#tab-pricing > .preset-row { order: 2; }
 #tab-pricing > .lede-body { order: 8; }
 #tab-pricing > .hero { order: 4; }
 #tab-pricing > .timing-line { order: 5; }
@@ -390,10 +414,14 @@ input[type="range"]::-moz-range-thumb {
   color: var(--ink); max-width: 74ch; }
 .lede-body { display: flex; flex-direction: column; gap: 0; }
 .lede-more {
+  position: relative;
   display: inline; margin-left: 4px; padding: 0; border: none;
   background: none; color: var(--neural); cursor: pointer;
   font-family: var(--font-ui); font-size: 13.5px;
 }
+/* 13px of hit area above and below the one-line link: a tap target of at
+   least 42px for a 16px line box. */
+.lede-more::after { content: ""; position: absolute; inset: -13px -4px; }
 .lede-more:hover { text-decoration: underline; }
 .howto {
   margin-top: 12px; padding: 15px 17px; border-radius: var(--r-panel);
@@ -408,7 +436,7 @@ input[type="range"]::-moz-range-thumb {
   margin-top: 16px; }
 .preset-label { align-self: center; font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-low); }
-/* Examples say what you will see, not which sliders move. */
+/* Each example is named by what it shows. */
 .chip-btn {
   display: flex; flex-direction: column; gap: 2px; text-align: left;
   padding: 8px 13px; border-radius: var(--r-ctl);
@@ -470,9 +498,13 @@ input[type="range"]::-moz-range-thumb {
 .panel-details { margin-top: 10px; border-top: 1px solid var(--line);
   padding-top: 9px; }
 .panel-details > summary {
+  position: relative;
   cursor: pointer; font-size: 11.5px; font-weight: 600; color: var(--ink-mid);
   list-style: none;
 }
+/* The one-line summary is about 17px tall; 12px of hit area above and below
+   makes the tap target 41px without moving the layout. */
+.panel-details > summary::after { content: ""; position: absolute; inset: -12px 0; }
 .panel-details > summary::-webkit-details-marker { display: none; }
 .panel-details > summary::before { content: "▸ "; color: var(--ink-low); }
 .panel-details[open] > summary::before { content: "▾ "; }
@@ -516,7 +548,7 @@ input[type="range"]::-moz-range-thumb {
 .quote-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .quote-actions-note { font-size: 11.5px; color: var(--mint); }
 
-/* Empty states say what will happen, instead of pulsing like a loader. */
+/* Empty states are static and say what pressing the button will do. */
 .empty-state {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 7px; text-align: center;
@@ -529,7 +561,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* a failed re-price: keep the last good numbers visible but clearly stale */
 .errored .price, .errored .greek-val, .errored .speedup { opacity: 0.3; }
-.errored #mc-ci, .errored #nn-latency, .errored #mc-latency { visibility: hidden; }
+.errored #mc-ci { visibility: hidden; }
 
 /* Hero Row: NN price dominates, dial pivots, MC answers */
 .hero { display: grid; grid-template-columns: 1.05fr 1fr 1.3fr; gap: 18px; }
@@ -550,8 +582,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .tag-nn { color: var(--neural); background: var(--neural-soft); }
 .tag-mc { color: var(--classic); background: var(--classic-soft); }
-.meta { font-size: 11px; color: var(--ink-mid); }
-.meta.accent { color: var(--neural); }
 
 .price {
   font-size: 44px; font-weight: 500; letter-spacing: -0.02em;
@@ -563,7 +593,8 @@ input[type="range"]::-moz-range-thumb {
 .card-sub.centered { text-align: center; }
 .agreement-ok { color: var(--mint) !important; }
 /* A gap can sit outside the simulation's interval and still be inside the
-   model's published held-out error: that is neither a pass nor a failure. */
+   model's published held-out error. That state is neither a pass nor a
+   failure, so it takes the neutral colour. */
 .agreement-neutral { color: var(--ink-hi) !important; }
 .agreement-warn { color: var(--rose) !important; }
 
@@ -571,12 +602,13 @@ input[type="range"]::-moz-range-thumb {
   margin-left: 4px; }
 .stage > .contract-line { order: 0; }
 
-/* Inputs a tab does not use are dimmed rather than silently ignored. */
+/* Inputs a tab does not use are dimmed, so it is visible that they have no
+   effect there. */
 .rail-inactive { opacity: 0.4; }
 .rail-inactive-note { font-size: 11px; line-height: 1.6; color: var(--ink-low); }
 
 .greek-unit {
-  display: block; margin-top: 2px; font-size: 9.5px; font-weight: 400;
+  display: block; margin-top: 2px; font-size: 11px; font-weight: 400;
   letter-spacing: 0.02em; text-transform: none; color: var(--ink-low);
 }
 .greek-name { align-items: flex-start; flex-direction: column; }
@@ -584,8 +616,6 @@ input[type="range"]::-moz-range-thumb {
 /* speedup: a plain centered statistic, no ornament */
 .hero-vs { display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 6px; }
-.dial { display: grid; place-items: center; }
-.dial-ring { display: none; }
 .dial-core { display: flex; flex-direction: column; align-items: center;
   gap: 2px; }
 .dial-label {
@@ -701,9 +731,9 @@ input[type="range"]::-moz-range-thumb {
 }
 .hedge-stat .v.good { color: var(--mint); }
 
-/* Live Stream Stats */
+/* Live Stream Stats: nine chips, so three columns fill a 3x3 grid */
 .stream-stats {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
   margin: 8px 0 14px;
 }
 @media (max-width: 980px) { .stream-stats { grid-template-columns: repeat(2, 1fr); } }
@@ -729,7 +759,7 @@ input[type="range"]::-moz-range-thumb {
   color: var(--mint) !important;
 }
 
-/* AI Risk Report: A reading surface, not a chart */
+/* Desk note: a reading surface */
 .report-panel { min-height: 420px; }
 .report-body {
   margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line);
@@ -748,13 +778,15 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1.7; padding: 6px 0 2px;
 }
 .colophon-links { display: block; margin-top: 4px; }
-.colophon a { color: var(--ink-mid); text-decoration: none; border-bottom: 1px dotted var(--ink-low); }
+.colophon a { position: relative; color: var(--ink-mid); text-decoration: none;
+  border-bottom: 1px dotted var(--ink-rule); }
+.colophon a::after { content: ""; position: absolute; inset: -13px -5px; }
 .colophon a:hover { color: var(--ink-hi); }
 
-/* ───────────────────────────── responsive ─────────────────────────────
-   Previously nothing reflowed below 800px: the header grid, the 5-column
-   Greek strip and the Plotly scenes all kept desktop widths, so phones got
-   a 1150px-wide page to pan around. */
+/* Responsive. Below 1100px the shell is one column with the rail above the
+   stage, so the rail collapses behind a one-line summary and the quote stays
+   on the first screen. Below 800px the header grid, the five-column Greek
+   strip and the Plotly scenes reflow to the phone's width. */
 @media (max-width: 1100px) {
   .cmd-bar {
     display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 16px;
@@ -769,37 +801,38 @@ input[type="range"]::-moz-range-thumb {
   }
   .tab-nav::-webkit-scrollbar { display: none; }
   .tab-btn { flex: 1 0 auto; padding: 8px 14px; white-space: nowrap; }
-  /* single column: the rail sits above the results, so keep it short */
+  /* One column: the rail sits above the results. It is static and unclipped
+     here, a two-column grid when open and a single summary row when
+     collapsed. app.js sets .collapsed and remembers the choice. */
   .rail {
-    position: static;
+    position: static; max-height: none; overflow: visible;
     display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px;
     align-items: start;
   }
   .rail-section + .rail-section { border-top: none; padding-top: 0; }
   .rail-note { grid-column: 1 / -1; }
-}
-@media (max-width: 800px) {
-  .shell { padding: 14px 12px 36px; gap: 14px; }
-  .rail { padding: 16px 14px; gap: 16px; grid-template-columns: 1fr; }
   .rail-toggle {
+    grid-column: 1 / -1;
     display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0;
     padding: 6px 0; border: none; background: transparent; cursor: pointer;
     color: var(--ink-hi); text-align: left; min-height: 44px;
   }
   .rail-summary { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.45;
     color: var(--ink-hi); }
-  .rail-edit {
+  .rail-edit, .rail-done {
     flex: none; padding: 7px 14px; border-radius: 999px;
     border: 1px solid var(--line-hi); background: var(--raised);
     font-size: 12px; font-weight: 600; color: var(--ink-hi);
   }
+  .rail.collapsed .rail-edit, .rail:not(.collapsed) .rail-done { display: block; }
   .rail.collapsed > .rail-section, .rail.collapsed > .rail-note { display: none; }
   .rail.collapsed { gap: 0; padding: 12px 14px; }
+}
+@media (max-width: 800px) {
+  .shell { padding: 14px 12px 36px; gap: 14px; }
+  .rail { padding: 16px 14px; gap: 16px; grid-template-columns: 1fr; }
   .lede h1 { font-size: 19px; }
   .lede-body > p { font-size: 13px; }
-  /* Lead with the answer: headline, what it is, the price. The explanation
-     and the examples follow it instead of pushing it off the screen. */
-  .rail-edit { display: block; }
   .preset-row { gap: 7px; }
   .preset-label { flex: 1 0 100%; }
   .chip-btn { flex: 1 1 100%; }

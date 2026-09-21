@@ -1,13 +1,11 @@
-"""Classical fast approximations for the arithmetic Asian, and why the surrogate earns its keep.
+"""Levy (1992) moment matching for the discretely monitored arithmetic Asian.
 
-The obvious objection
----------------------
-A neural surrogate that replaces Monte Carlo is only interesting if Monte Carlo is
-the relevant alternative. It usually isn't. Arithmetic Asian options have had fast
-closed-form approximations since the early 1990s, and any quant will ask why a
-133k-parameter network beats a formula that runs in microseconds. This module
-implements the standard one so the question has a measured answer rather than a
-hand-wave.
+Arithmetic Asian options have had fast closed-form approximations since the
+early 1990s, so a surrogate has two baselines to be measured against: the Monte
+Carlo it replaces and a formula that runs in microseconds. This module
+implements the standard formula. asian_approx.py adds Curran (1994), and
+scripts/benchmark_approximations.py scores both and the served ensemble against
+control-variate Monte Carlo.
 
 Levy (1992) / Turnbull & Wakeman (1991) moment matching
 -------------------------------------------------------
@@ -24,34 +22,17 @@ lognormal with variance v = ln M2 - 2 ln M1 and apply a Black-Scholes-shaped for
     d1 = (ln(M1/K) + v/2)/sqrt(v),  d2 = d1 - sqrt(v)
 
 The approximation is exact in the first two moments and degrades where the true
-distribution of A is far from lognormal, which is precisely the high-volatility,
-long-maturity corner of the parameter box.
+distribution of A is far from lognormal: the high-volatility, long-maturity
+corner of the parameter box.
 
-Measured result
----------------
-300 Latin-hypercube points over the trained box, referenced against 200,000-path
-control-variate Monte Carlo (all figures in bps of strike):
-
-                        RMSE     MAE     bias    p95|e|   max|e|   latency
-    neural ensemble     1.551   1.258   +1.102    2.743    8.032   714 us p50
-    Levy moment-match  44.105  21.330  +19.793  101.672  227.006    56 us
-    MC 200k paths           (reference)                            357,000 us
-
-By true price magnitude, the surrogate wins everywhere except the near-worthless
-bucket:
-
-    true price [0,1) bps      Levy 0.077  vs  NN 1.050   -> Levy
-    true price [1,10)         Levy 1.078  vs  NN 1.024   -> NN
-    true price [10,100)       Levy 4.504  vs  NN 1.108   -> NN
-    true price [100,1000)     Levy 6.522  vs  NN 1.311   -> NN
-    true price [1000,inf)     Levy 53.243 vs  NN 1.690   -> NN
-
-So the surrogate is ~28x more accurate than the closed form and ~500x faster than
-Monte Carlo: a genuine point on the speed/accuracy frontier that neither alternative
-occupies. The single regime where Levy wins is where the true price is essentially
-zero - Levy returns ~0 correctly, while the Softplus output floor of the surrogate
-cannot. That is the same architectural bias documented in scripts/fullscale_ablation.py,
-observed here from an independent direction.
+Measured accuracy
+-----------------
+`python scripts/benchmark_approximations.py --lhs` scores this formula on 300
+Latin-hypercube points over the trained box against 200,000-path
+control-variate references, with a fixed seed. RMSE, bias, tail error and
+latency, and RMSE by volatility band and by price level, are stored in
+docs/approximation_benchmark.json under "box_lhs" and rendered in
+docs/approximation_benchmark.md.
 """
 
 from __future__ import annotations
@@ -64,7 +45,7 @@ __all__ = ["levy_asian_call", "levy_asian_price"]
 
 def levy_asian_call(spot: float, strike: float, maturity: float, sigma: float,
                     rate: float, n_steps: int = 50) -> float:
-    """Moment-matched arithmetic Asian CALL price (Levy 1992).
+    """Moment-matched arithmetic Asian call price (Levy 1992).
 
     Discrete monitoring at t_i = i*T/n, i = 1..n, matching the convention used
     everywhere else in this package.

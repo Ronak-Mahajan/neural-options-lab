@@ -1,8 +1,8 @@
-"""Measure true surrogate error against high-precision Monte Carlo references.
+"""Measure surrogate error against high-precision Monte Carlo references.
 
-Validation RMSE during training is computed against *noisy* MC labels, so it
-overstates the model's real error. This script draws an independent LHS test
-set and, for each point, runs a 200k-path Monte Carlo that produces four
+Validation RMSE during training is computed against noisy MC labels, so it
+overstates the model's error. This script draws an independent LHS test set
+and, for each point, runs a 200k-path Monte Carlo that produces four
 references:
 
     price  - control-variate estimator (SE well under 1 bp over most of box)
@@ -21,9 +21,8 @@ served to the dashboard's error-distribution chart. The gamma reference is
 itself a Monte Carlo estimate; its RMS standard error is recorded alongside
 so the reported gamma error can be read against the noise floor.
 
-The report records the SHA-256 of the checkpoint it measured, so a report and
-the model it describes can never quietly come apart; the regression suite
-checks the two against each other.
+The report records the SHA-256 of the checkpoint it measured, and the
+regression suite fails when that hash and the served model.pt differ.
 
 Usage (from the repo root, after training):
     python -m backend.quant.evaluate                # 600 points, ~25 min on 8 cores
@@ -56,17 +55,11 @@ SERVED_CHECKPOINT = ARTIFACTS / "model.pt"
 def checkpoint_fingerprint(path: Path) -> dict:
     """Byte identity of the checkpoint a report was measured against.
 
-    Without it a report cannot be told apart from a stale one. That is not
-    hypothetical here: eval.json was committed once, model.pt was retrained
-    and promoted four weeks later, and the dashboard went on quoting the
-    retired head's error because nothing in either file could contradict the
-    other. The hash ties them together, and
     tests/test_regression.py::test_eval_report_matches_the_served_checkpoint
-    turns the drift into a failing test instead of a slide nobody can defend.
-
-    Hashing the bytes rather than reading a git stamp is deliberate: the
-    container that serves the site carries the artifacts but no .git, and a
-    checkpoint retrained in place never moves the git stamp at all.
+    fails when model.pt changes without this report being regenerated. The
+    identity is a hash of the bytes because the serving container carries the
+    artifacts but no .git, and a checkpoint retrained in place keeps the
+    commit that last touched it.
     """
     data = path.read_bytes()
     return {
@@ -158,20 +151,18 @@ def main() -> None:
         "ref_paths": args.ref_paths,
         "n_members": engine.n_members,
         "checkpoint": checkpoint_fingerprint(SERVED_CHECKPOINT),
-        # What the checkpoint records about its own training, not a guess.
-        # The served checkpoint was promoted out of scripts/fullscale_ablation.py,
-        # whose meta block omits this key although both of its arms optimise
-        # dml_loss (price MSE + pathwise delta and vega MSE, lam = 1.0). None
-        # therefore means "the checkpoint does not say"; defaulting it to False
-        # would publish a claim about the training recipe that the training
-        # script contradicts.
+        # Read from the checkpoint meta. The served model.pt carries no such
+        # key; checkpoints written by scripts/fullscale_ablation.py as it
+        # stands do (both arms optimise dml_loss: price MSE + pathwise delta
+        # and vega MSE, lam = 1.0). None means "the checkpoint does not say".
+        # A False default would contradict that training script.
         "differential_ml": (bool(engine.meta["differential_ml"])
                             if "differential_ml" in engine.meta else None),
         "training_arm": engine.meta.get("arm"),
-        # The gamma reference is itself a Monte Carlo estimate; this is the
+        # The gamma reference is itself a Monte Carlo estimate. This is the
         # RMS of its per-point standard error, in the same 1e-4 units as the
-        # gamma error statistics, so a reader can see how much of the
-        # reported gamma error is the reference's own noise.
+        # gamma error statistics: the noise floor under the reported gamma
+        # error.
         "gamma_reference_se_rms_bps": float(
             np.sqrt(np.mean((gamma_ref_se * 1e4) ** 2))),
         "single": {met: summarize(errors[met]["single"]) for met in metrics},

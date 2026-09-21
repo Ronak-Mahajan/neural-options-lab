@@ -7,19 +7,20 @@ measure:
 
     dS_t = r S_t dt + sigma S_t dW_t
 
-The option pays on the *discrete arithmetic average* of the spot observed at
+The option pays on the discrete arithmetic average of the spot observed at
 n equally spaced monitoring dates t_i = i * T / n, i = 1..n:
 
     Asian call payoff:  max(A - K, 0),   A = (1/n) * sum_i S(t_i)
     Asian put  payoff:  max(K - A, 0)
 
-There is no closed form for the arithmetic Asian, but the *geometric* Asian
+There is no closed form for the arithmetic Asian, but the geometric Asian
 (G = (prod_i S(t_i))^(1/n)) is lognormal and admits a Black-Scholes-style
-closed form (Kemna & Vorst, 1990; discrete-monitoring variant). Because G is
-highly correlated with A, it makes an excellent control variate: we simulate
-both payoffs on the same paths and correct the arithmetic estimate by the
-known geometric bias. Combined with antithetic sampling this typically cuts
-the standard error by 1-2 orders of magnitude at the same path budget.
+closed form (Kemna & Vorst, 1990; discrete-monitoring variant). G is highly
+correlated with A, so it serves as a control variate: both payoffs are
+simulated on the same paths and the arithmetic estimate is adjusted by the
+known error of the geometric one. Combined with antithetic sampling this
+typically cuts the standard error by 1-2 orders of magnitude at the same
+path budget.
 """
 
 from __future__ import annotations
@@ -31,16 +32,14 @@ import numpy as np
 from scipy.stats import norm
 
 
-# ---------------------------------------------------------------------------
 # Closed-form building blocks
-# ---------------------------------------------------------------------------
 
 def expected_arithmetic_average(spot: float, rate: float, maturity: float,
                                 n_steps: int) -> float:
     """E[A] for the discrete arithmetic average under the risk-neutral measure.
 
-    E[A] = (S0 / n) * sum_{i=1..n} exp(r * t_i), which telescopes to a
-    geometric series. This powers exact Asian put-call parity:
+    E[A] = (S0 / n) * sum_{i=1..n} exp(r * t_i), a geometric series summed
+    in closed form. Exact Asian put-call parity follows from it:
         C - P = exp(-rT) * (E[A] - K)
     """
     if abs(rate) < 1e-12:
@@ -74,9 +73,7 @@ def geometric_asian_price(spot: float, strike: float, maturity: float,
     return disc * (strike * norm.cdf(-d2) - fwd * norm.cdf(-d1))
 
 
-# ---------------------------------------------------------------------------
 # Monte Carlo pricer
-# ---------------------------------------------------------------------------
 
 @dataclass
 class MCResult:
@@ -89,11 +86,10 @@ class MCResult:
 
 
 # Half-paths (antithetic pairs) simulated per block. At 25,000 the block's
-# (25000, 50) float64 working set peaks around 40 MB; only the 1-D per-path
-# payoffs outlive a block, so peak memory no longer scales with n_paths. The
-# one-shot version held three full (n_paths, n_steps) matrices alive at once
-# (~480 MB at the 400k-path reference run), which is what OOM-killed the
-# 512 MB free-tier container serving this.
+# (25000, 50) float64 working set peaks around 40 MB, and only the 1-D
+# per-path payoffs outlive a block, so peak memory is independent of n_paths.
+# Unblocked, a 400k-path reference run holds three full (n_paths, n_steps)
+# matrices at once (~480 MB), which the 512 MB serving container cannot hold.
 _CHUNK_HALF_PATHS = 25_000
 
 
@@ -104,15 +100,15 @@ def price_asian_mc(spot: float, strike: float, maturity: float, sigma: float,
     """Price a discrete arithmetic Asian option by Monte Carlo.
 
     Uses antithetic variates always, and the geometric Asian control variate
-    unless disabled (the plain estimator is kept around for benchmarking the
-    variance reduction itself).
+    unless disabled (the plain estimator is kept for benchmarking the
+    variance reduction).
 
-    Paths are simulated in blocks of _CHUNK_HALF_PATHS pairs. Seeded results
-    are bit-identical to the previous one-shot implementation: sequential
-    standard_normal calls consume the same Generator bit stream as a single
-    (half, n_steps) draw, each path's payoff depends only on its own row, and
-    the payoff vector is reassembled in the same +z-then--z order before the
-    identical control-variate and standard-error math runs on it.
+    Paths are simulated in blocks of _CHUNK_HALF_PATHS pairs. A seeded result
+    does not depend on the block size: sequential standard_normal calls
+    consume the same Generator bit stream as a single (half, n_steps) draw,
+    each path's payoff depends only on its own row, and the payoff vector is
+    reassembled in +z-then--z order before the control-variate and
+    standard-error math runs on it.
     """
     rng = np.random.default_rng(seed)
     half = max(n_paths // 2, 1)
@@ -148,22 +144,11 @@ def price_asian_mc(spot: float, strike: float, maturity: float, sigma: float,
         beta = cov[0, 1] / max(cov[1, 1], 1e-16)
         x = x - beta * (y - ey)
 
-    # Standard error from ANTITHETIC PAIRS, not individual paths.
-    #
-    # The sampler builds the path set as concat(z, -z), so path i and path
-    # i+half are negatively correlated by construction - that is the entire
-    # point of antithetic sampling. Treating all n paths as independent, as
-    # this previously did with x.std(ddof=1)/sqrt(n), therefore misstates the
-    # error: measured against the empirical spread of the estimator over 400
-    # seeded replications, it overstated the true standard error by ~45%
-    # (ratio 1.44 at 5,000 paths, 1.49 at 20,000) with the control variate off.
-    #
-    # That inflated figure also propagated into the project's advertised
-    # variance-reduction factor: the honest, empirically measured value is
-    # 23.8x, not the ~30x previously claimed.
-    #
-    # The half independent pair means are i.i.d., so the textbook formula
-    # applies to them.
+    # Standard error over antithetic pairs. Paths i and i + half are built
+    # from z and -z, so x.std(ddof=1) / sqrt(n) over all n paths overstates
+    # the error: by ~45% with the control variate off (ratio 1.44 at 5,000
+    # paths, 1.49 at 20,000, against the empirical spread over 400 seeded
+    # replications). The pair means are i.i.d., so the formula applies to them.
     n = x.shape[0]
     pairs = 0.5 * (x[:half] + x[half:]) if n == 2 * half else x
     price = float(x.mean())

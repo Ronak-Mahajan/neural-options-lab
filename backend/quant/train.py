@@ -2,7 +2,7 @@
 
 The loss follows Huge & Savine (2020): alongside the price MSE, the
 network's own input gradients (obtained by differentiating the forward pass)
-are regressed onto the *pathwise* Monte Carlo differentials computed during
+are regressed onto the pathwise Monte Carlo differentials computed during
 simulation:
 
     L = MSE(f, y) / Var(y)
@@ -11,7 +11,8 @@ simulation:
 
 Each term is variance-normalized so lambda = 1 balances them regardless of
 units. Matching differentials teaches the network the shape of the pricing
-function between sample points - better Greeks *and* better prices per label.
+function between sample points, which improves both the Greeks and the price
+accuracy per label.
 
 Usage (from the repo root):
     python -m backend.quant.train --ensemble 5    # full DML ensemble
@@ -21,6 +22,15 @@ Usage (from the repo root):
 Artifacts land in ./artifacts:
     dataset.npz   cached MC training set incl. pathwise differentials
     model.pt      best-validation checkpoints + normalization + metadata
+
+The checkpoint written here has the plain Softplus head of AsianPricerNet and
+no `output_scale` field, which PricingEngine reads as a scale of 1.0. The
+served artifacts/model.pt is the conditioned-head arm of
+scripts/fullscale_ablation.py, adapted and gated by scripts/promote_model.py,
+and records its output scale in the metadata. Running this script overwrites
+artifacts/model.pt; artifacts/eval.json then has to be regenerated with
+backend.quant.evaluate, because tests/test_regression.py compares the
+checkpoint fingerprint that report records.
 """
 
 from __future__ import annotations
@@ -72,7 +82,7 @@ def main() -> None:
 
     ARTIFACTS.mkdir(exist_ok=True)
 
-    # ------------------------------------------------------------------ data
+    # Dataset: cached Monte Carlo labels, regenerated when the cache key differs.
     cache = ARTIFACTS / "dataset.npz"
     key = {"samples": args.samples, "paths": args.paths, "seed": args.seed,
            "fmt": 2}  # fmt 2 = includes pathwise differentials
@@ -140,10 +150,9 @@ def main() -> None:
     member_val_rmse: list[float] = []
     t_all = time.perf_counter()
 
-    # ---------------------------------------------------------- deep ensemble
-    # Members share the data but differ in initialization and batch order -
-    # the standard deep-ensembles recipe. Averaging N members shrinks the
-    # (decorrelated part of the) approximation error roughly like 1/sqrt(N).
+    # Deep ensemble: members share the data and differ in initialization and
+    # batch order. Averaging N members shrinks the decorrelated part of the
+    # approximation error roughly like 1/sqrt(N).
     for member in range(args.ensemble):
         torch.manual_seed(args.seed + 1000 * (member + 1))
         model = AsianPricerNet(width=args.width, n_blocks=args.blocks)
@@ -201,7 +210,7 @@ def main() -> None:
         print(f"member {member + 1} done: val price rmse {best_val:.3e} "
               f"({best_val * 1e4:.1f} bps of strike)", flush=True)
 
-    # ------------------------------------------------- ensemble validation
+    # Ensemble validation: the mean of the members on the shared split.
     with torch.no_grad():
         preds = []
         probe = AsianPricerNet(width=args.width, n_blocks=args.blocks)
@@ -211,11 +220,10 @@ def main() -> None:
             preds.append(probe(Xva))
         ens_rmse = math.sqrt(loss_fn(torch.stack(preds).mean(0), yva).item())
 
-    # ------------------------------------------------------------ checkpoint
-    # Validation RMSE is on price/K; multiply by 1e4 to read it in
-    # basis points of strike. Val labels are themselves MC-noisy, so this is
-    # an upper bound - run backend.quant.evaluate for error vs high-precision
-    # references.
+    # Checkpoint. Validation RMSE is on price/K; multiply by 1e4 to read it in
+    # basis points of strike. The validation labels carry MC noise, so this
+    # figure is an upper bound on the model error. backend.quant.evaluate
+    # measures the error against high-precision references.
     meta = {
         "width": args.width,
         "blocks": args.blocks,

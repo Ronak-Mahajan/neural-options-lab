@@ -56,7 +56,7 @@ a variance-matched non-Gaussian measure is worth slightly less than Black-Schole
 now prices the premium by Monte Carlo **under the measure being simulated**, so it is
 self-consistent either way.
 
-*Honest limitation:* only the terminal variance is pinned. Intermediate variances
+*Limitation:* only the terminal variance is pinned. Intermediate variances
 Var[log S_i], i < N, are not separately constrained; doing so would require fixing the full covariance structure and would destroy the dependence the generator exists to provide.
 
 ### 1.2 The baseline has to see the same realized volatility
