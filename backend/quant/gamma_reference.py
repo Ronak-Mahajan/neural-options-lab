@@ -104,7 +104,13 @@ def gamma_conditional(m: float, maturity: float, sigma: float, rate: float,
     if vol <= 0.0:
         raise ValueError("gamma is a density and needs a positive volatility")
     a = 1.0 / m                      # the strike, in units of the scaled average
+    n_paths = (int(n_paths) // 2) * 2          # antithetic pairs, so even
+    n_pairs = n_paths // 2
 
+    # The sampling unit is the antithetic PAIR, not the path: z and -z are
+    # dependent draws, so the standard error is the spread of pair means over
+    # n_pairs independent pairs. Treating the two halves as separate samples
+    # would count each pair twice and misstate the error either way.
     total = 0.0
     total_sq = 0.0
     rng = np.random.default_rng(seed)
@@ -126,12 +132,13 @@ def gamma_conditional(m: float, maturity: float, sigma: float, rate: float,
 
         z_star = (np.log(a / g) - drift) / vol
         phi = norm.pdf(z_star)
-        total += float(phi.sum())
-        total_sq += float((phi ** 2).sum())
+        pair_mean = 0.5 * (phi[:half] + phi[half:])
+        total += float(pair_mean.sum())
+        total_sq += float((pair_mean ** 2).sum())
 
-    mean = total / n_paths
-    var = max(total_sq / n_paths - mean ** 2, 0.0)
-    se_phi = math.sqrt(var / n_paths)
+    mean = total / n_pairs
+    var = max(total_sq / n_pairs - mean ** 2, 0.0)
+    se_phi = math.sqrt(var / n_pairs)
     scale = math.exp(-rate * maturity) / (vol * m ** 2)
     return {
         "gamma": scale * mean,

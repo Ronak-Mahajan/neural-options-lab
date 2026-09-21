@@ -180,6 +180,11 @@ def main() -> None:
         "errors": {met: {name: np.round(errors[met][name] * 1e4, 3).tolist()
                          for name in ("single", "ensemble")}
                    for met in metrics},
+        # Per-point gamma reference and its standard error, at unit strike, so
+        # any relative-error or noise-floor statistic quoted for gamma can be
+        # recomputed from this file.
+        "gamma_ref": np.round(ref[:, 3], 6).tolist(),
+        "gamma_ref_se": np.round(gamma_ref_se, 6).tolist(),
         "params": {
             "moneyness": np.round(X[:, 0], 4).tolist(),
             "maturity": np.round(X[:, 1], 4).tolist(),
