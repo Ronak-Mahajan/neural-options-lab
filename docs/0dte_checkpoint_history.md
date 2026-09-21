@@ -48,8 +48,8 @@ quotes with known truth that convention inflated sqrt(xi) by 21% and moved H by 
 The served checkpoint was then rebuilt through the `calibrate --retrain` path on live
 fits, twice on 2026-08-20: first on the accepted 2026-08-10 fit (eta 2.688, rho -0.328,
 H 0.104; 677 quotes, 8 expiries, 1.553 vol points; ensemble validation RMSE 3.8 bps,
-commit `65e67c4`), then on the accepted 2026-08-20 15:47 EDT fit (eta 3.657, rho -0.628,
-H 0.255; 618 quotes, 1.568 vol points; ensemble validation RMSE 3.3 bps, commit `82c54bb`).
+commit `36d0bfb`), then on the accepted 2026-08-20 15:47 EDT fit (eta 3.657, rho -0.628,
+H 0.255; 618 quotes, 1.568 vol points; ensemble validation RMSE 3.3 bps, commit `03cbc88`).
 
 ## 3. Deep hedging
 
