@@ -26,7 +26,7 @@ Both were replaced by the exact joint-Gaussian scheme now in `rough_vol.py`, ver
 against quadrature to 5.4e-08 and against 400,000 draws.
 
 `artifacts/model_0dte.pt` was regenerated against the corrected driver on 2026-08-05, and
-the wrong-kernel checkpoint is kept as `model_0dte_legacy_wrong_kernel.pt`. An earlier
+the wrong-kernel checkpoint is kept as `model_0dte_v1_type_i_kernel.pt`. An earlier
 README figure of "about 2 basis points against its rough Bergomi teacher" described
 agreement with the Type-I teacher. The 2026-08-05 checkpoint measured 1.48 bps of strike
 RMSE, +0.13 bps bias and 2.76 bps p95 on 400 held-out points against 500,000-path

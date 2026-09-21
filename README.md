@@ -141,7 +141,7 @@ The conditioned head is now the served checkpoint. Promotion is gated:
 `scripts/promote_model.py` re-prices a fresh 1,500-point test set against
 200,000-path references on a seed used by neither training nor the ablation, and
 writes `model.pt` only if the candidate beats the incumbent on **both** RMSE and
-|bias|. The previous checkpoint is kept as `model_legacy_unconditioned_head.pt`.
+|bias|. The prior checkpoint ships alongside it as `model_v1_unconditioned_head.pt`.
 The gate is measured against fresh references rather than a training-time
 validation number, because a validation loss does not resolve a bias of this
 size: the head being replaced carried +0.99 bps while its own loss looked
@@ -277,7 +277,7 @@ Factorising C alone forces `corr(Z_1, W̃_t1) = 1` where the truth is
 `√(2H)/(H+½) = 0.7844`, which applies the leverage correlation ρ to the wrong object and
 over-correlates spot and vol precisely at the short end where a 0DTE skew fit is
 identified. An ensemble trained on Type-I paths is kept beside the served weights as
-`model_0dte_legacy_wrong_kernel.pt`, so the two drivers can be priced against each other.
+`model_0dte_v1_type_i_kernel.pt`, so the two drivers can be priced against each other.
 
 **The calibration.** The served checkpoint is built through the `calibrate --retrain`
 path on live fits, behind a quality gate that tests RMSE, bound-pinning and session

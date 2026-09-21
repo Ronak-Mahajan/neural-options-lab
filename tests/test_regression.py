@@ -384,7 +384,7 @@ def test_output_scale_is_loaded_and_legacy_checkpoints_default_to_one(engine):
     from pathlib import Path
     from backend.quant.engine import ARTIFACTS
     assert engine._output_scale > 0.0
-    legacy = ARTIFACTS / "model_legacy_unconditioned_head.pt"
+    legacy = ARTIFACTS / "model_v1_unconditioned_head.pt"
     if legacy.exists():
         assert PricingEngine(legacy)._output_scale == 1.0
 
@@ -812,7 +812,7 @@ def test_the_fingerprint_separates_the_served_head_from_the_retired_one():
     from backend.quant.evaluate import (SERVED_CHECKPOINT,
                                         checkpoint_fingerprint)
 
-    legacy = ARTIFACTS / "model_legacy_unconditioned_head.pt"
+    legacy = ARTIFACTS / "model_v1_unconditioned_head.pt"
     if not legacy.exists():
         pytest.skip("the retired checkpoint is not shipped")
     served = checkpoint_fingerprint(SERVED_CHECKPOINT)

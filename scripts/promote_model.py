@@ -188,7 +188,7 @@ def main() -> int:
         print("candidate wins. Re-run with --write to promote.")
         return 0
 
-    legacy = ARTIFACTS / "model_legacy_unconditioned_head.pt"
+    legacy = ARTIFACTS / "model_v1_unconditioned_head.pt"
     if not legacy.exists():
         shutil.copy2(served, legacy)
         print(f"kept the incumbent as {legacy.name}")

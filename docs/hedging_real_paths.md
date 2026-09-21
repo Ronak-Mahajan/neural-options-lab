@@ -10,7 +10,7 @@ adds the rows the commit body summarised in words.
 `artifacts/hedger.pt`, the default `HedgingEngine` checkpoint. It is neither of the two
 checkpoints the dashboard serves (`backend/api/main.py` maps the rough regime to
 `hedger_rbergomi_jumps.pt` and GBM to `hedger_gbm.pt`), and it is byte-identical to the
-retracted `hedger_legacy_broken_measure.pt`; §4 gives the hashes and what follows from
+retracted `hedger_v1_unconstrained_measure.pt`; §4 gives the hashes and what follows from
 them. The served policies have not been replayed on history, so every comparison below
 between this page and a simulated result is a comparison across two different policies as
 well as two different measures.
@@ -127,7 +127,7 @@ Paired deep minus delta: −0.0027 at 10 bp (deep better on 47% of windows); +0.
   serves: `backend/api/main.py` maps the rough regime to `hedger_rbergomi_jumps.pt` and
   the GBM regime to `hedger_gbm.pt`, and reaches for `hedger.pt` only if one of those
   files is missing. `hedger.pt` is also byte-identical to
-  `artifacts/hedger_legacy_broken_measure.pt` (both MD5 `36a6296bab32831f77c38840d0b2067b`),
+  `artifacts/hedger_v1_unconstrained_measure.pt` (both MD5 `36a6296bab32831f77c38840d0b2067b`),
   the retracted checkpoint: its meta carries no `train_measure` and no
   `martingale_enforced`, and `backend/quant/hedging.py` records that the measure it was
   trained under was neither a martingale nor correctly scaled. So these tables are a
