@@ -437,11 +437,34 @@ function renderContractLine() {
 
 // Under rough volatility the hedging run supplies its own volatility and
 // rate, so those two sliders are marked inactive on that tab.
+// The Hedge tab runs its own 30-day at-the-money book, so the contract,
+// the position, the premium solver, the cross-check precision and the
+// ticker do not reach it; under the rough dynamics neither do volatility and
+// rate. Controls a tab ignores are dimmed and taken out of the tab order.
 function paintRailScope() {
-  const idle = currentTab === "hedging" && state.hedgeDynamics === "rough";
+  const hedging = currentTab === "hedging";
+  const rough = hedging && state.hedgeDynamics === "rough";
+  const market = $("in-sigma").closest(".rail-section");
+  const offTab = (el, on) => {
+    if (!el) return;
+    el.classList.toggle("rail-offtab", on);
+    if (on) el.setAttribute("inert", ""); else el.removeAttribute("inert");
+  };
+  for (const section of document.querySelectorAll("#controls .rail-section"))
+    if (section !== market) offTab(section, hedging);
+  for (const sel of [".solve-row", "#iv-solve-note", ".readout-row", "#domain-warning"])
+    offTab(market.querySelector(sel), hedging);
   for (const id of ["in-sigma", "in-rate"])
-    $(id).closest(".param").classList.toggle("rail-inactive", idle);
-  $("rail-inactive-note").hidden = !idle;
+    offTab($(id).closest(".param"), rough);
+  const note = $("rail-inactive-note");
+  note.hidden = !hedging;
+  note.textContent = rough
+    ? "The hedge bench trades its own 30-day at-the-money call, and the "
+      + "rough-volatility market takes its volatility and rate from the "
+      + "calibration, so nothing in this panel reaches it. Switch to "
+      + "Black-Scholes to drive volatility and rate from here."
+    : "The hedge bench trades its own 30-day at-the-money call; only "
+      + "volatility and rate reach it from this panel.";
 }
 
 function refreshReadouts() {
@@ -526,6 +549,10 @@ async function updatePrice(isCurrent = () => true) {
     if (!isCurrent()) return;
 
     lastNNPrice = d.nn.price;
+    // The solver's hint is the current price, so an empty field suggests a
+    // premium this contract can actually reach.
+    const target = $("in-target-price");
+    if (target) target.placeholder = d.nn.price.toFixed(2);
     renderReportInputs();
     animateNumber($("nn-price"), d.nn.price, fmtMoney);
     animateNumber($("mc-price"), d.mc.price, fmtMoney);
@@ -575,7 +602,7 @@ async function updatePrice(isCurrent = () => true) {
     } else {
       agr.textContent = "$" + diff.toFixed(4) + " from the simulation, wider " +
         "than its 95% error bar and wider than " + measured + ". Treat this " +
-        "price as indicative, or raise the cross-check precision in the sidebar.";
+        "price as indicative, or raise the cross-check precision in the contract panel.";
       agr.className = "card-sub agreement-warn";
     }
     $("hero-error").hidden = true;
@@ -2091,9 +2118,9 @@ async function runHedge() {
       (d.sigma_source === "SPY calibration"
         ? "Volatility (" + (d.sigma * 100).toFixed(1) + "%) and rate (" +
           (d.rate * 100).toFixed(1) + "%) are those of the SPY calibration " +
-          "this market was fitted to. Neither is read from the sidebar."
+          "this market was fitted to. Neither is read from the contract panel."
         : "Volatility " + (d.sigma * 100).toFixed(1) + "% and rate " +
-          (d.rate * 100).toFixed(1) + "%, from the sidebar.") +
+          (d.rate * 100).toFixed(1) + "%, from the contract panel.") +
       (d.clamped ? " Inputs were clamped to the policy's trained range." : "");
 
     const allPnl = [...d.deep.pnl, ...d.delta.pnl,
@@ -2140,7 +2167,11 @@ async function runHedge() {
       ...PLOT_BASE, barmode: "overlay",
       xaxis: { title: { text: "profit or loss at expiry ($, strike " + K + ")" },
                gridcolor: COLORS.grid, zeroline: false },
-      yaxis: { title: { text: "paths" }, gridcolor: COLORS.grid, zeroline: false },
+      // Log counts: the worst-5% tail that CVaR measures holds a few dozen
+      // paths per bin against a thousand at the mode, so a linear axis draws
+      // it as a flat line.
+      yaxis: { title: { text: "paths (log scale)" }, type: "log", dtick: 1,
+               gridcolor: COLORS.grid, zeroline: false },
       shapes: [
         guide(d.delta, COLORS.mc),
         guide(d.deep, COLORS.nn),
@@ -2148,8 +2179,7 @@ async function runHedge() {
       ],
     }, PLOT_CONFIG);
 
-    // Holdings along the illustrative path. The band's holdings are drawn
-    // when the response carries them.
+    // Holdings of all three hedgers along one illustrative path.
     const days = d.example_path.deep_holdings.map((_, i) => i + 1);
     const bandHoldings = d.example_path.whalley_wilmott_holdings;
     Plotly.react("plot-holdings", [
@@ -2321,28 +2351,31 @@ function wsConnect() {
     ws.send(JSON.stringify({
       spot: state.spot, strike: state.strike, sigma: state.sigma,
       rate: state.rate, maturity: state.maturity,
-      option_type: state.optionType, hz: 20,
+      option_type: state.optionType, hz: 15,
     }));
 
-    // Initialize the streaming chart
+    // Spot and model price move almost in lockstep, so on one pair of
+    // overlaid axes each auto-scales onto the other and one line vanishes.
+    // Two stacked panels on a shared tick axis keep both readable.
     Plotly.newPlot("plot-stream", [
       {
-        y: [], mode: "lines", name: "Spot",
-        line: { color: "rgba(255,255,255,0.5)", width: 1.5 },
+        x: [], y: [], mode: "lines", name: "Spot",
+        line: { color: "rgba(235,235,245,0.75)", width: 1.5 },
       },
       {
-        y: [], mode: "lines", name: "NN Price",
-        line: { color: COLORS.nn, width: 2 }, yaxis: "y2",
+        x: [], y: [], mode: "lines", name: "Model price",
+        line: { color: COLORS.nn, width: 2 }, xaxis: "x", yaxis: "y2",
       },
     ], {
       ...PLOT_BASE,
-      margin: { l: 52, r: 60, t: 12, b: 42 },
+      showlegend: false,
+      margin: { l: 64, r: 16, t: 12, b: 42 },
       xaxis: { title: { text: "tick" }, gridcolor: COLORS.grid,
-               zeroline: false },
+               zeroline: false, anchor: "y2" },
       yaxis: { title: { text: "spot ($)" }, gridcolor: COLORS.grid,
-               zeroline: false },
-      yaxis2: { title: { text: "NN price ($)" }, overlaying: "y",
-                side: "right", showgrid: false,
+               zeroline: false, domain: [0.56, 1] },
+      yaxis2: { title: { text: "model price ($)" }, gridcolor: COLORS.grid,
+                zeroline: false, domain: [0, 0.44],
                 tickfont: { color: COLORS.nn } },
     }, PLOT_CONFIG);
   };
@@ -2394,7 +2427,7 @@ function wsConnect() {
     // The chart is extended on every second tick to limit layout work.
     if (d.tick % 2 === 0) {
       Plotly.extendTraces("plot-stream",
-        { y: [[d.spot], [d.price]] }, [0, 1],
+        { x: [[d.tick], [d.tick]], y: [[d.spot], [d.price]] }, [0, 1],
         WS_MAX_POINTS);
     }
   };

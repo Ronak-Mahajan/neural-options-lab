@@ -90,7 +90,7 @@
 
       <div class="param">
         <div class="param-head"><label for="in-spot">Spot <i class="sym">S₀</i>
-          <button type="button" class="help" data-help="Today's price of the underlying stock. The price is proportional to the strike and otherwise depends on spot only through the ratio of spot to strike. That ratio has to stay inside the model's range (0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below), and a warning appears in the sidebar when it is outside.">?</button></label>
+          <button type="button" class="help" data-help="Today's price of the underlying stock. The price is proportional to the strike and otherwise depends on spot only through the ratio of spot to strike. That ratio has to stay inside the model's range (0.5 to 2 above 12 trading days, 0.85 to 1.15 at or below), and a warning appears in the contract panel when it is outside.">?</button></label>
           <input class="param-val mono" id="val-spot" type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="100" aria-label="spot value, type to set exactly"></div>
         <input type="range" id="in-spot" min="55" max="195" step="1" value="100" aria-label="Spot price">
       </div>
@@ -230,7 +230,7 @@
 
       <div class="lede-body">
         <p>
-          Set the contract in the sidebar, or type a ticker to use a real one.
+          Set the contract in the panel, or type a ticker to use a real one.
           Everything reprices as you change it, and a fresh simulation of the
           same model checks the network's price on every change.
           <button type="button" class="lede-more" id="btn-howto" aria-expanded="false" aria-controls="howto">What this tool does</button>
@@ -263,7 +263,7 @@
             short-dated model's rough-volatility parameters and the Hedge tab's
             simulated market are fitted to SPY option quotes captured on
             20 August 2026. Every other input is hypothetical unless you load a
-            ticker in the sidebar. The <strong>Hedge</strong> tab sells a 30-day
+            ticker in the contract panel. The <strong>Hedge</strong> tab sells a 30-day
             at-the-money call and hedges it daily under transaction costs, then
             reports the tail loss of a learned policy and of two textbook rules
             on the same paths.
@@ -288,7 +288,7 @@
       <div class="hero">
         <article class="panel hero-card hero-nn" id="card-nn">
           <header class="panel-tag">
-            <span class="tag tag-nn">Model price<button type="button" class="help" data-help="The five-network ensemble's price for this contract from one forward pass. The Greeks under Risk are derivatives of the same pass by automatic differentiation, so no finite-difference bump is involved. The price is a model value at the volatility and rate set in the sidebar; the page shows no market price for the option. The measured error against simulation is in the accuracy section further down.">?</button></span>
+            <span class="tag tag-nn">Model price<button type="button" class="help" data-help="The five-network ensemble's price for this contract from one forward pass. The Greeks under Risk are derivatives of the same pass by automatic differentiation, so no finite-difference bump is involved. The price is a model value at the volatility and rate set in the contract panel; the page shows no market price for the option. The measured error against simulation is in the accuracy section further down.">?</button></span>
           </header>
           <div class="price mono" id="nn-price">-</div>
           <p class="card-sub" id="nn-sub">per share</p>
@@ -357,7 +357,7 @@
             <header class="chart-head">
               <div>
                 <h3>Price against simulated paths</h3>
-                <p>The simulation's estimate and its 95% band as the path count grows, with the model price as the dashed line. Use it to decide how many paths this quote needs; the count is set in the sidebar.</p>
+                <p>The simulation's estimate and its 95% band as the path count grows, with the model price as the dashed line. Use it to decide how many paths this quote needs; the count is set in the contract panel.</p>
               </div>
             </header>
             <div class="plot" id="plot-convergence"><div class="shimmer"></div></div>
@@ -451,7 +451,7 @@
             <header class="chart-head">
               <div>
                 <h3>Short-dated volatility surface</h3>
-                <p id="ivsurface-sub">A model smile for expiries up to 12 trading days, from a surface trained with butterfly and calendar-spread penalties. Both conditions are re-checked by automatic differentiation at every point shown, and the result is reported below for this grid. The surface is a constrained fit to the short-dated pricing model and is no more accurate than that model. It depends on volatility and rate only, so it does not move with the contract in the sidebar.</p>
+                <p id="ivsurface-sub">A model smile for expiries up to 12 trading days, from a surface trained with butterfly and calendar-spread penalties. Both conditions are re-checked by automatic differentiation at every point shown, and the result is reported below for this grid. The surface is a constrained fit to the short-dated pricing model and is no more accurate than that model. It depends on volatility and rate only, so it does not move with the contract in the contract panel.</p>
               </div>
             </header>
             <div class="hedge-stats" id="ivsurface-stats"></div>
@@ -487,7 +487,7 @@
           <div class="chart-tools">
             <div class="segmented dense" id="hedge-dynamics" title="The simulated market the hedgers are run on">
               <button class="seg-btn active" data-value="rough" title="Rough volatility with jumps, calibrated to SPY. Volatility is itself random and correlated with the spot, so the market is incomplete and no hedge is perfect.">Rough volatility</button>
-              <button class="seg-btn" data-value="gbm" title="Black-Scholes dynamics at the volatility and rate in the sidebar. The market is complete, and without transaction costs a continuously rebalanced delta hedge replicates the option.">Black-Scholes</button>
+              <button class="seg-btn" data-value="gbm" title="Black-Scholes dynamics at the volatility and rate in the contract panel. The market is complete, and without transaction costs a continuously rebalanced delta hedge replicates the option.">Black-Scholes</button>
             </div>
             <div class="cost-slider-row">
               <label for="in-cost">Cost per trade</label>

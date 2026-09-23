@@ -352,7 +352,8 @@ Write amounts with the sign before the currency symbol, e.g. -$5.01.
         f"{verdict_line}{costs_line}"
     )
 
-    note = (f"Risk summary\n\n{para1}\n\n{para2}\n\n{para3} This is a "
+    # The panel that shows the note already carries the "Risk summary" heading.
+    note = (f"{para1}\n\n{para2}\n\n{para3} This is a "
             f"research dashboard, not investment advice.")
 
     return {"note": note, "prompt": prompt, "ranked": ranked,

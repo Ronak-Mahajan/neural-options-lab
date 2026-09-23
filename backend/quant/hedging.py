@@ -840,7 +840,8 @@ class HedgingEngine:
                                                    cost_c, rate_c)
                     acc[name]["pl"].append(pl)
                     acc[name]["costs"].append(cst)
-                    if sd == seeds[0] and name in ("deep", "delta"):
+                    if sd == seeds[0] and name in ("deep", "delta",
+                                                    "whalley_wilmott"):
                         idx = int(np.argsort(spots[:, -1])[n_paths // 2])
                         example.setdefault(measure, {"spot": np.round(
                             spots[idx], 5).tolist()})
@@ -909,6 +910,8 @@ class HedgingEngine:
                 "spot": example[primary]["spot"],
                 "deep_holdings": example[primary]["deep_holdings"],
                 "delta_holdings": example[primary]["delta_holdings"],
+                "whalley_wilmott_holdings":
+                    example[primary]["whalley_wilmott_holdings"],
             },
         }
 

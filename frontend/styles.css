@@ -191,7 +191,13 @@ body {
   scrollbar-width: thin; scrollbar-color: var(--line-hi) transparent;
   display: flex; flex-direction: column; gap: 20px;
   padding: 20px 18px;
-  background: var(--surface);
+  /* Scroll cue: a soft band at the bottom edge while more controls sit below
+     it. The first layer scrolls with the content (local) and covers the band
+     once the end is reached, so the cue appears only when there is more. */
+  background:
+    linear-gradient(transparent, var(--surface) 60%) 0 100% / 100% 44px no-repeat local,
+    linear-gradient(transparent, rgba(235, 235, 245, 0.10)) 0 100% / 100% 36px no-repeat scroll,
+    var(--surface);
   border-radius: var(--r-panel);
 }
 .rail-toggle, .rail-edit, .rail-done { display: none; }
@@ -605,13 +611,19 @@ input[type="range"]::-moz-range-thumb {
 /* Inputs a tab does not use are dimmed, so it is visible that they have no
    effect there. */
 .rail-inactive { opacity: 0.4; }
+.rail-offtab { opacity: 0.35; pointer-events: none; transition: opacity 0.2s ease; }
 .rail-inactive-note { font-size: 11px; line-height: 1.6; color: var(--ink-low); }
 
 .greek-unit {
   display: block; margin-top: 2px; font-size: 11px; font-weight: 400;
   letter-spacing: 0.02em; text-transform: none; color: var(--ink-low);
 }
-.greek-name { align-items: flex-start; flex-direction: column; }
+/* Name and help ring share the first row; the unit takes the full second. */
+.greek-name.greek-name {
+  display: grid; grid-template-columns: auto auto; justify-content: start;
+  align-items: center; row-gap: 2px;
+}
+.greek-name > .greek-unit { grid-column: 1 / -1; }
 
 /* speedup: a plain centered statistic, no ornament */
 .hero-vs { display: flex; flex-direction: column; align-items: center;
