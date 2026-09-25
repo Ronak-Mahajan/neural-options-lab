@@ -39,3 +39,16 @@ overnight.ps1
 calibrate_live.ps1
 handoff_to_claude.md
 claude_prompt.md
+
+# Not read by the server. The API opens only backend/, frontend/, artifacts/
+# and scripts/_fit_jumps_last.json (hedging.py), so the image leaves out the
+# recorded surfaces and training sets under data/ (the surface recorder and
+# the test suite run in GitHub Actions, not in this image), the write-ups
+# under docs/, the tests, and CI metadata. The CI docker job boots the image
+# and prices a request, so a runtime file missing here fails that job.
+data/
+docs/
+tests/
+.github/
+.ci/
+requirements-dev.txt

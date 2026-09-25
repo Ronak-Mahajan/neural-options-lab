@@ -1,6 +1,6 @@
 # Deep hedging under rough volatility, jumps and transaction costs
 
-The tables and win counts are produced by `scripts/deep_hedging_regimes.py` (seeds 17 to 21, 3,000 paths each, 500 bootstrap resamples) and stored in `docs/deep_hedging_regimes.json`; `docs/deep_hedging_regimes.png` is the figure. The decomposition of the CVaR gap and the Black-Scholes booking check are computed from that JSON. The last section, on the served run, comes from `HedgingEngine.compare()` as the dashboard calls it; its numbers are not in the JSON, and that section gives the call that regenerates them.
+The tables and win counts are produced by `scripts/deep_hedging_regimes.py` (seeds 17 to 21, 3,000 paths each, 500 bootstrap resamples) and stored in `docs/deep_hedging_regimes.json`; `docs/deep_hedging_regimes.png` is the figure. The decomposition of the CVaR gap and the Black-Scholes booking check are computed from that JSON. The last section, on the served run, comes from `HedgingEngine.compare()` as the dashboard calls it; its numbers are not in the JSON, and that section gives the call that regenerates them. The training-seed spread after it is produced by `scripts/hedger_seed_spread.py` and stored in `docs/deep_hedging_seed_spread.json`.
 
 ## Question
 
@@ -291,3 +291,40 @@ out["paired_bootstrap"]["pairs"]["deep|delta"]   # diff -0.009416, se 0.001049 (
 
 `tests/test_port_docs_remaining.py` runs this call and checks the served-run column and
 the paired table against it; the offline column is checked against the JSON.
+
+### Training-seed spread
+
+Every ± above is a bootstrap error over evaluation paths for one trained policy
+(training seed 21), so none of them includes the spread from retraining the network.
+`scripts/hedger_seed_spread.py` measures that spread. It retrains the rough-measure
+policy on seeds 22, 23 and 24 with the served checkpoint's recipe (4,000 iterations of
+2,048 paths under `rbergomi_jumps`, the same training box) and scores all four policies
+with the served-run protocol, `HedgingEngine.compare` on `rbergomi_jumps` at the
+measure's forward vol, on the served run's evaluation seeds 17 to 21 and on a second
+set, 1017 to 1021. The output is `docs/deep_hedging_seed_spread.json`; the retrained
+checkpoints are not committed, and the script's `train` step regenerates them.
+
+At 50 bp of cost, CVaR₉₅ in bp of strike with one bootstrap SE; the differences carry
+their paired SE:
+
+| training seed | evaluation seeds | deep | delta | Whalley-Wilmott | deep − delta | deep − Whalley-Wilmott |
+|---|---|---|---|---|---|---|
+| 21 | 17-21 | 406.6 ± 7.3 | 500.7 ± 11.0 | 396.1 ± 8.9 | −94.2 ± 10.5 | +10.5 ± 8.3 |
+| 21 | 1017-1021 | 410.8 ± 7.9 | 475.0 ± 9.1 | 381.6 ± 8.4 | −64.3 ± 9.7 | +29.1 ± 8.9 |
+| 22 | 17-21 | 401.9 ± 7.1 | 500.7 ± 11.0 | 396.1 ± 8.9 | −98.8 ± 10.2 | +5.8 ± 8.0 |
+| 22 | 1017-1021 | 404.9 ± 7.6 | 475.0 ± 9.1 | 381.6 ± 8.4 | −70.2 ± 9.3 | +23.2 ± 8.5 |
+| 23 | 17-21 | 408.5 ± 7.4 | 500.7 ± 11.0 | 396.1 ± 8.9 | −92.3 ± 10.5 | +12.4 ± 8.4 |
+| 23 | 1017-1021 | 411.9 ± 7.8 | 475.0 ± 9.1 | 381.6 ± 8.4 | −63.2 ± 9.6 | +30.2 ± 8.9 |
+| 24 | 17-21 | 421.3 ± 8.0 | 500.7 ± 11.0 | 396.1 ± 8.9 | −79.4 ± 11.3 | +25.3 ± 9.4 |
+| 24 | 1017-1021 | 426.7 ± 8.7 | 475.0 ± 9.1 | 381.6 ± 8.4 | −48.3 ± 10.6 | +45.1 ± 10.0 |
+
+The first row is the served run above. In all eight rows the policy has the lower
+CVaR₉₅ than the delta hedge, by 48 to 99 bp, each more than four paired SEs. In all eight
+the Whalley-Wilmott band has the lower point estimate, by 6 to 45 bp, and by more than two
+paired SEs in five of the eight rows. On the served evaluation seeds the four policies' own
+CVaR₉₅ spans 401.9 to 421.3 bp, a range of 19.4 bp against bootstrap errors of
+7 to 8 bp, so retraining moves the level by more than the single-run error bars show.
+Rows that share evaluation seeds share the baselines' paths, so the delta and
+Whalley-Wilmott columns repeat. At the other costs the point estimates order the
+same way for every policy: at 10 bp the delta hedge is lower than each policy by 11 to
+68 bp, and at 100 and 200 bp each policy is lower than both baselines.

@@ -70,6 +70,7 @@ artifacts/ablation_probe.json
 # deliberately with `git add -f`, not swept in by `git add -A`). Files already
 # tracked are unaffected by these rules.
 data/*
+!data/README.md
 !data/surfaces/
 !data/btc_series/
 !data/pricing_map*/

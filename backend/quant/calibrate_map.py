@@ -66,7 +66,7 @@ class MapPricer:
 
     def __init__(self, path: Path = MAP_FILE):
         from scripts.train_pricing_map import PricingMap, features
-        blob = torch.load(path, map_location="cpu", weights_only=False)
+        blob = torch.load(path, map_location="cpu", weights_only=True)
         self.model = PricingMap(blob["width"], blob["depth"])
         self.model.load_state_dict(blob["state"])
         self.model.eval()

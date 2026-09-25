@@ -34,6 +34,12 @@ const PLOT_BASE = {
   showlegend: true,
   legend: { orientation: "h", x: 0, xanchor: "left", y: 1.02, yanchor: "bottom",
             font: { size: 11 } },
+  // The 2D charts explain one result each, and the page has no reset control,
+  // so a drag neither zooms nor pans them; hover still reads the values. Each
+  // chart spreads PLOT_BASE and replaces its axes, so this has to be the
+  // top-level key. The 3D scenes set their own scene.dragmode and stay
+  // rotatable.
+  dragmode: false,
 };
 const PLOT_CONFIG = { displayModeBar: false, responsive: true, scrollZoom: false };
 // Phone width, where legend entries are shortened so the legend stays compact.
@@ -52,9 +58,11 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) +
 // One request in flight per panel and at most one waiting behind it. The
 // server admits one simulation at a time, and a sync handler runs to its end
 // after a client abort, so the in-flight request is left to finish: its
-// response is the signal that the slot is free. Slider stops superseded while
-// it ran are never sent. fn receives isCurrent(), which turns false once a
-// newer call is waiting, and drops a response that arrives stale.
+// response, or its deadline in api(), is the signal that the slot is free.
+// A request that never answers therefore cannot hold the slot. Slider stops
+// superseded while it ran are never sent. fn receives isCurrent(), which
+// turns false once a newer call is waiting, and drops a response that
+// arrives stale.
 function latestOnly(fn) {
   let running = null, rerun = false;
   const drain = async () => {
@@ -96,19 +104,36 @@ function friendlyError(status, detail) {
   if (status === 413) return "The request is too large.";
   if (status === 503) return "The server is busy with another simulation. Try again in a moment.";
   if (status === 0) return "Could not reach the server.";
+  if (status === -1) return "The server did not answer in time. Try again in a moment.";
   return "This panel is unavailable right now.";
 }
 
-async function api(path, body) {
+// A request that never settles would hold its panel's single-flight slot, and
+// every later change to that panel would wait behind it. Each request is
+// therefore abandoned after a deadline. The server refuses a job that waits
+// more than 30 s for its simulation slot (HEAVY_JOB_TIMEOUT_S), so the default
+// deadline leaves room for that wait plus the job; the hedging run and the
+// timing benchmark pass longer ones.
+const API_TIMEOUT_MS = 90000;
+function timeoutSignal(ms) {
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) return AbortSignal.timeout(ms);
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), ms);
+  return ctl.signal;
+}
+
+async function api(path, body, timeoutMs = API_TIMEOUT_MS) {
   let res;
   try {
     res = await fetch(path, {
       method: body ? "POST" : "GET",
       headers: { "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
+      signal: timeoutSignal(timeoutMs),
     });
-  } catch {
-    throw new Error(friendlyError(0, ""));
+  } catch (e) {
+    const late = e && (e.name === "TimeoutError" || e.name === "AbortError");
+    throw new Error(friendlyError(late ? -1 : 0, ""));
   }
   if (!res.ok) {
     let detail = res.statusText;
@@ -117,7 +142,13 @@ async function api(path, body) {
     err.status = res.status;
     throw err;
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (e) {
+    // The deadline also covers reading the body.
+    const late = e && (e.name === "TimeoutError" || e.name === "AbortError");
+    throw new Error(friendlyError(late ? -1 : 0, ""));
+  }
 }
 
 const fmtMoney = (v) => "$" + v.toFixed(4);
@@ -127,12 +158,14 @@ const fmtMs = (ms) => ms >= 1000 ? (ms / 1000).toFixed(2) + " s"
   : (ms * 1000).toFixed(0) + " µs";
 
 // Tween a numeric readout. The value is set directly when the tab is hidden,
-// where requestAnimationFrame is throttled.
+// where requestAnimationFrame is throttled, and when the visitor asks for
+// reduced motion, so no intermediate figure is ever on screen for them.
 const tweens = new Map();
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 function animateNumber(el, target, format) {
   const start = tweens.has(el) ? tweens.get(el) : target;
   tweens.set(el, target);
-  if (document.hidden) { el.textContent = format(target); return; }
+  if (document.hidden || reduceMotion.matches) { el.textContent = format(target); return; }
   const t0 = performance.now(), dur = 380;
   let finished = false;
   const step = (now) => {
@@ -158,6 +191,9 @@ function panelMessage(plotId, text) {
   if (!el) return;
   clearShimmer(plotId);
   try { Plotly.purge(el); } catch { /* never had a plot */ }
+  // The chart is gone, so its summary goes with it; the message is read.
+  const summary = document.getElementById(plotId + "-summary");
+  if (summary) summary.textContent = "";
   el.querySelector(".panel-message")?.remove();
   const box = document.createElement("div");
   box.className = "empty-state panel-message";
@@ -170,6 +206,60 @@ function panelMessage(plotId, text) {
 function clearPanelMessage(plotId) {
   $(plotId)?.querySelector(".panel-message")?.remove();
 }
+
+// Every chart is a figure with a name in index.html and a one-sentence
+// summary built from the numbers it draws. The drawn SVG reads to a screen
+// reader as loose tick labels, so it is hidden from the accessibility tree and
+// the summary stands in for it. A panel message (a refused contract, a busy
+// server) is not part of the plot container and stays readable.
+function describeChart(plotId, text) {
+  const el = $(plotId);
+  if (!el) return;
+  const summary = document.getElementById(plotId + "-summary");
+  if (summary) summary.textContent = text;
+  el.querySelectorAll(".plot-container").forEach((c) => c.setAttribute("aria-hidden", "true"));
+}
+
+// Polite announcements. Each region stays in the document and only its text
+// changes. Writes are debounced per region, so a slider held on an arrow key
+// announces the price it settles on and not every response on the way, and a
+// repeat of the text already read is skipped.
+const announceTimers = {};
+const announced = {};
+function announce(regionId, text, delay = 600, repeat = false) {
+  clearTimeout(announceTimers[regionId]);
+  const el = document.getElementById(regionId);
+  if (!el) return;
+  // A repeat (the same value refused twice) empties the region first, so the
+  // second write is a change and is read again.
+  if (repeat) { el.textContent = ""; announced[regionId] = ""; }
+  announceTimers[regionId] = setTimeout(() => {
+    if (announced[regionId] === text) return;
+    announced[regionId] = text;
+    el.textContent = text;
+  }, delay);
+}
+
+// A refused typed value: the red border, aria-invalid, and the reason in the
+// field's error line, which the field names with aria-describedby. The reason
+// is also announced, because focus stays in the field and a description is
+// not re-read on its own.
+function markInvalid(box, reason) {
+  box.classList.add("invalid");
+  box.setAttribute("aria-invalid", "true");
+  const slot = document.getElementById(box.getAttribute("aria-describedby") || "");
+  if (slot && reason) slot.textContent = reason;
+  if (reason) announce("rail-status", reason, 80, true);
+}
+function clearInvalid(box) {
+  box.classList.remove("invalid");
+  box.removeAttribute("aria-invalid");
+  const slot = document.getElementById(box.getAttribute("aria-describedby") || "");
+  if (slot && slot.classList.contains("field-error")) slot.textContent = "";
+}
+
+// Two decimals with a true minus sign, for chart summaries.
+const fmt2 = (v) => (v < 0 ? "−" : "") + Math.abs(v).toFixed(2);
 
 function optionBody() {
   return {
@@ -192,11 +282,28 @@ function bindSlider(id, onChange) {
   // strike of 137.42. commit() returns whether the typed value was accepted.
   const box = $("val-" + id);
   if (!box) return;
-  const commit = () => {
+  // The reason a value is refused, in the units the field is typed in. The
+  // bounds are read when the value is refused, because a loaded ticker moves
+  // the spot and strike tracks.
+  const rule = () => {
+    const lo = parseFloat(el.min), hi = parseFloat(el.max);
+    if (id === "spot" || id === "strike") {
+      return "Enter a " + id + " above zero, such as 137.42.";
+    }
+    if (id === "maturity") {
+      return "Enter an expiry from one trading day to " + hi + " years, in years " +
+        "(0.5) or with a unit: 30d, 6w, 3m or 1y.";
+    }
+    if (id === "sigma") return "Enter a volatility from " + lo + "% to " + hi + "%.";
+    return "Enter a rate from " + lo + "% to " + hi + "%.";
+  };
+  // quiet: a blur commits without reporting, since focus has already left.
+  const commit = (quiet = false) => {
+    const refuse = () => { if (!quiet) markInvalid(box, rule()); return false; };
     const raw = box.value.trim().replace(/[%$,\s]/g, "");
     // "1.5y" and "30d" both mean something for maturity.
     const m = /^([0-9]*\.?[0-9]+)\s*([a-z]*)$/i.exec(raw);
-    if (!m) { box.classList.add("invalid"); return false; }
+    if (!m) return refuse();
     let v = parseFloat(m[1]);
     const unit = m[2].toLowerCase();
     if (id === "maturity") {
@@ -225,11 +332,8 @@ function bindSlider(id, onChange) {
     if (id === "maturity" && v < lo && v >= lo - 1e-4) v = lo;
     // Volatility and rate are shown and typed in percent, and their sliders
     // are in percent too; only the state is a fraction.
-    if (!isFinite(v) || v < lo || v > hi) {
-      box.classList.add("invalid");
-      return false;
-    }
-    box.classList.remove("invalid");
+    if (!isFinite(v) || v < lo || v > hi) return refuse();
+    clearInvalid(box);
     // Typed values are exact: widen the step so the browser does not round
     // 137.42 to 137 on its way into the slider.
     el.step = "any";
@@ -239,19 +343,20 @@ function bindSlider(id, onChange) {
     return true;
   };
   box.addEventListener("keydown", (e) => {
-    // A refused value keeps the focus and its red border until it is fixed.
+    // A refused value keeps the focus, its red border and its reason until
+    // it is fixed.
     if (e.key === "Enter") { e.preventDefault(); if (commit()) box.blur(); }
-    if (e.key === "Escape") { box.classList.remove("invalid"); refreshReadouts(); box.blur(); }
+    if (e.key === "Escape") { clearInvalid(box); refreshReadouts(); box.blur(); }
   });
   // While a field has focus, refreshReadouts must not overwrite what is
   // being typed.
   box.addEventListener("focus", () => { box.dataset.editing = "1"; });
   box.addEventListener("blur", () => {
-    commit();
+    commit(true);
     delete box.dataset.editing;
     refreshReadouts();
     // The field shows the last accepted value again, so the flag comes off.
-    box.classList.remove("invalid");
+    clearInvalid(box);
   });
 }
 
@@ -301,7 +406,7 @@ function renderPosition() {
   if (!value) return;
   const n = positionSize();
   if (lastNNPrice == null || !isFinite(n) || n === 0) {
-    value.textContent = "-";
+    value.textContent = "–";
     sub.textContent = "";
   } else {
     value.textContent = fmtSigned(lastNNPrice * n, 2);
@@ -506,8 +611,11 @@ function refreshReadouts() {
     "). Move spot or strike closer together.";
   $("domain-warning").classList.toggle("show", outside);
 
-  document.querySelectorAll("#maturity-quickpick .pick").forEach((b) =>
-    b.classList.toggle("active", Math.abs(+b.dataset.t - state.maturity) < 1e-6));
+  document.querySelectorAll("#maturity-quickpick .pick").forEach((b) => {
+    const on = Math.abs(+b.dataset.t - state.maturity) < 1e-6;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
 
   // The short-dated volatility surface describes contracts of 12 trading days
   // or less, so its group opens when the maturity moves into that regime.
@@ -525,12 +633,22 @@ function refreshReadouts() {
 }
 let wasShortDated = null;
 
+// A segmented control is a group of toggle buttons with one pressed. The
+// pressed state is in the class for the eye and in aria-pressed for
+// assistive technology, and paintSegmented is the only place either is set.
+function paintSegmented(box, value) {
+  box.querySelectorAll(".seg-btn").forEach((b) => {
+    const on = b.dataset.value === String(value);
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+}
+
 function bindSegmented(containerId, onPick) {
   const box = $(containerId);
   box.querySelectorAll(".seg-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      box.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
+      paintSegmented(box, btn.dataset.value);
       onPick(btn.dataset.value);
     });
   });
@@ -561,8 +679,9 @@ async function updatePrice(isCurrent = () => true) {
     $("nn-sub").textContent = nnSubText();
     lastCheck = { price: d.mc.price, n_paths: d.mc.n_paths,
                   half: (d.mc.ci_high - d.mc.ci_low) / 2 };
-    $("mc-ci").textContent = "±$" +
-      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + " at 95%, from " +
+    // The figure is set in the numeral face; the rest of the line is prose.
+    $("mc-ci").innerHTML = "<span class='mono'>±$" +
+      ((d.mc.ci_high - d.mc.ci_low) / 2).toFixed(4) + "</span> at 95%, from " +
       d.mc.n_paths.toLocaleString() + " paths with a fresh seed each run";
 
     // The headline is the network-to-simulation gap in basis points of
@@ -606,6 +725,10 @@ async function updatePrice(isCurrent = () => true) {
       agr.className = "card-sub agreement-warn";
     }
     $("hero-error").hidden = true;
+    // One polite sentence per settled quote: the price, the delta and the
+    // cross-check verdict, read once the slider stops.
+    announce("quote-status", "Model price " + fmtMoney(d.nn.price) +
+      " per share, delta " + d.nn.greeks.delta.toFixed(4) + ". " + agr.textContent);
     $("timing-line").textContent = "On this server: network " +
       fmtMs(d.nn.latency_ms) + " for the price and all five Greeks, " +
       "simulation " + fmtMs(d.mc.latency_ms) + " for " +
@@ -616,17 +739,20 @@ async function updatePrice(isCurrent = () => true) {
     // floor (discounted intrinsic) alongside the price. Where the ensemble
     // prices under that floor the card says by how much and points at the
     // constrained surface, the arbitrage-free view of the same corner. The
-    // price itself is shown unchanged.
+    // price is shown as the ensemble gives it, floored at zero; the shortfall
+    // is measured before that floor.
     const sub = $("nn-sub");
     if (d.nn.below_intrinsic) {
       sub.textContent = d.nn.below_intrinsic_bps_of_strike.toFixed(1) +
-        " bps of strike under the no-arbitrage floor; see the " +
-        "arbitrage-free surface below";
-      sub.title = "Discounted intrinsic, max(S \u2212 Ke^(\u2212rT), 0), is the " +
-        "lowest price a European contract at this maturity can have without " +
-        "an arbitrage. The ensemble price is shown unchanged; the short-dated " +
-        "volatility surface prices the same corner with butterfly and calendar " +
-        "conditions imposed.";
+        " bps of strike under the no-arbitrage floor" +
+        (d.nn.clamped ? ", before the price is floored at zero" : "") +
+        "; see the arbitrage-free surface below";
+      sub.title = "Discounted intrinsic, max(S \u2212 Ke^(\u2212rT), 0) for a call " +
+        "and max(Ke^(\u2212rT) \u2212 S, 0) for a put, is the lowest price a " +
+        "European contract at this maturity can have without an arbitrage. " +
+        "The ensemble price is shown as priced, floored at zero; the " +
+        "short-dated volatility surface prices the same corner with butterfly " +
+        "and calendar conditions imposed.";
       sub.className = "card-sub agreement-warn";
     } else {
       sub.title = "";
@@ -643,6 +769,7 @@ async function updatePrice(isCurrent = () => true) {
     const slot = $("hero-error");
     slot.textContent = err.message;
     slot.hidden = false;
+    announce("quote-status", "No new price. " + err.message);
     $("timing-line").textContent = "";
     paintQuoteActions();
   } finally {
@@ -668,6 +795,9 @@ async function updateConvergence(isCurrent = () => true) {
         x: [...xs, ...xs.slice().reverse()],
         y: [...d.mc_points.map((p) => p.ci_high),
             ...d.mc_points.map((p) => p.ci_low).reverse()],
+        // Lines mode: under 20 points Plotly would otherwise add a marker at
+        // every band vertex in the default colourway blue, the model's hue.
+        mode: "lines",
         fill: "toself", fillcolor: "rgba(196,131,92,0.15)",
         line: { width: 0 }, hoverinfo: "skip",
         name: narrow ? "95% band" : "95% confidence interval", showlegend: true,
@@ -707,6 +837,14 @@ async function updateConvergence(isCurrent = () => true) {
       yaxis: { title: { text: "option price" }, gridcolor: COLORS.grid,
                zeroline: false, tickformat: ".3f" },
     }, PLOT_CONFIG);
+    const p0 = d.mc_points[0], p1 = d.mc_points[d.mc_points.length - 1];
+    const halfW = (p) => (p.ci_high - p.ci_low) / 2;
+    describeChart("plot-convergence", "The simulation's estimate is " +
+      fmtMoney(p0.price) + " ± " + halfW(p0).toFixed(4) + " at " +
+      p0.n_paths.toLocaleString() + " paths and " + fmtMoney(p1.price) + " ± " +
+      halfW(p1).toFixed(4) + " at " + p1.n_paths.toLocaleString() +
+      " paths, at 95%. The model price is " + fmtMoney(d.nn.price) +
+      " and the high-precision reference is " + fmtMoney(d.reference.price) + ".");
   } catch (err) {
     if (isCurrent()) panelMessage("plot-convergence", err.message);
   }
@@ -730,7 +868,7 @@ async function updateIVSurface(isCurrent = () => true) {
     $("ivsurface-stats").innerHTML =
       hedgeStatChip("No-arbitrage check",
         okB && okC ? "no violations on this grid" : "violation found on this grid",
-        okB && okC ? "good" : "") +
+        okB && okC ? "text good" : "text") +
       hedgeStatChip("Distance from the pricing model",
         (d.fit && d.fit.iv_rmse_volpts_resolved != null
           ? d.fit.iv_rmse_volpts_resolved.toFixed(2) + " vol points" : "n/a"));
@@ -741,32 +879,84 @@ async function updateIVSurface(isCurrent = () => true) {
       (d.g_min_at[0] * 252).toFixed(1) + " days; calendar slope minimum " +
       d.calendar_min.toExponential(2) + ". Both must stay above zero.";
 
+    // The 3D scene gets a margin so its axis titles are not cut at the box
+    // edge, and short titles at phone width, where the long ones overrun.
+    const narrow = isNarrow();
+    const ivPct = d.iv.map((row) => row.map((v) => v * 100));
     Plotly.react("plot-ivsurface", [{
       type: "surface",
-      x: d.k, y: d.days, z: d.iv.map((row) => row.map((v) => v * 100)),
+      x: d.k, y: d.days, z: ivPct,
       colorscale: [[0, "#0a2a55"], [0.5, "#0A84FF"], [1, "#dbe9ff"]],
       showscale: false,
       contours: { z: { show: true, usecolormap: true, width: 1,
                        highlightcolor: "#fff" } },
-      hovertemplate: "k %{x:.3f}, %{y:.1f}d, IV %{z:.2f}%<extra></extra>",
+      hovertemplate: "k %{x:.3f}, %{y:.1f} days to expiry, IV %{z:.2f}%<extra></extra>",
     }], {
       ...PLOT_BASE, showlegend: false,
-      margin: { l: 0, r: 0, t: 6, b: 0 },
+      margin: { l: 10, r: 10, t: 6, b: 24 },
       scene: {
-        xaxis: { title: { text: "log-moneyness k = ln(K/F)" }, gridcolor: COLORS.grid,
-                 color: COLORS.ink },
-        yaxis: { title: { text: "days to expiry" }, gridcolor: COLORS.grid,
-                 color: COLORS.ink },
-        zaxis: { title: { text: "implied vol (%)" }, gridcolor: COLORS.grid,
-                 color: COLORS.ink },
+        dragmode: "turntable",
+        xaxis: { title: { text: narrow ? "k" : "log-moneyness k = ln(K/F)" },
+                 gridcolor: COLORS.grid, color: COLORS.ink },
+        yaxis: { title: { text: narrow ? "days" : "days to expiry" },
+                 gridcolor: COLORS.grid, color: COLORS.ink },
+        zaxis: { title: { text: narrow ? "IV %" : "implied vol (%)" },
+                 gridcolor: COLORS.grid, color: COLORS.ink },
         bgcolor: "rgba(0,0,0,0)",
         camera: { eye: { x: -1.7, y: -1.5, z: 0.9 } },
       },
     }, PLOT_CONFIG);
+
+    // A smile is read as slices: implied volatility against log-moneyness at
+    // the shortest expiry on the grid, the row nearest five days and the
+    // longest, from the same rows the surface draws.
+    const nearest = (target) => d.days.reduce((best, v, i) =>
+      Math.abs(v - target) < Math.abs(d.days[best] - target) ? i : best, 0);
+    const rows = [...new Set([0, nearest(5), d.days.length - 1])];
+    const dayLabel = (v) => {
+      const r = Math.round(v * 10) / 10;
+      return (Number.isInteger(r) ? r.toFixed(0) : r.toFixed(1)) +
+        (r === 1 ? " day" : " days");
+    };
+    // One hue, lightest for the shortest expiry; every step keeps 3:1 or
+    // more against the panel.
+    const shades = ["#dbe9ff", "#8cc4ff", "#409CFF"];
+    clearShimmer("plot-ivsmile");
+    clearPanelMessage("plot-ivsmile");
+    Plotly.react("plot-ivsmile", rows.map((i, j) => ({
+      x: d.k, y: ivPct[i], mode: "lines", name: dayLabel(d.days[i]),
+      line: { color: shades[j], width: 2 },
+      hovertemplate: "k %{x:.3f}, IV %{y:.2f}%<extra>" + dayLabel(d.days[i]) + "</extra>",
+    })), {
+      ...PLOT_BASE,
+      xaxis: { title: { text: narrow ? "log-moneyness k" : "log-moneyness k = ln(K/F)" },
+               gridcolor: COLORS.grid, zeroline: false },
+      yaxis: { title: { text: "implied vol (%)" }, gridcolor: COLORS.grid,
+               zeroline: false },
+    }, PLOT_CONFIG);
+
+    const atmOf = (i) => {
+      const j = d.k.reduce((b, v, n) => Math.abs(v) < Math.abs(d.k[b]) ? n : b, 0);
+      return ivPct[i][j];
+    };
+    const ivAll = ivPct.flat();
+    describeChart("plot-ivsurface", "Implied volatility over log-moneyness " +
+      fmt2(d.k[0]) + " to " + fmt2(d.k[d.k.length - 1]) + " and " +
+      dayLabel(d.days[0]) + " to " + dayLabel(d.days[d.days.length - 1]) +
+      " to expiry, from " + Math.min(...ivAll).toFixed(1) + "% to " +
+      Math.max(...ivAll).toFixed(1) + "%. The butterfly and calendar checks " +
+      (okB && okC ? "find no violation on this grid." : "find a violation on this grid."));
+    describeChart("plot-ivsmile", "At the forward (k nearest zero) implied volatility is " +
+      rows.map((i) => atmOf(i).toFixed(1) + "% at " + dayLabel(d.days[i])).join(", ") +
+      ". Each line is one expiry's smile across log-moneyness " + fmt2(d.k[0]) +
+      " to " + fmt2(d.k[d.k.length - 1]) + ".");
   } catch (err) {
     // The message goes in the plot area. The panel's description stays, since
     // a later successful draw does not rewrite it.
-    if (isCurrent()) panelMessage("plot-ivsurface", err.message);
+    if (isCurrent()) {
+      panelMessage("plot-ivsurface", err.message);
+      panelMessage("plot-ivsmile", err.message);
+    }
   }
 }
 
@@ -778,7 +968,7 @@ async function updateBenchmark() {
   // into the same div without clearing it.
   $("plot-latency").querySelector(".latency-hint")?.remove();
   try {
-    const d = await api("/api/benchmark", optionBody());
+    const d = await api("/api/benchmark", optionBody(), 240000);
     clearShimmer("plot-latency");
     clearPanelMessage("plot-latency");
 
@@ -803,6 +993,8 @@ async function updateBenchmark() {
                gridcolor: COLORS.grid, zeroline: false },
       yaxis: { gridcolor: "rgba(0,0,0,0)", automargin: true },
     }, PLOT_CONFIG);
+    describeChart("plot-latency", "Wall-clock time on this server, slowest first: " +
+      rows.map((r) => r.label + " " + fmtMs(r.latency_ms)).join("; ") + ".");
   } catch (err) {
     // A refused contract or a busy server is reported in the panel; without
     // this the rejection surfaces only in the console.
@@ -828,28 +1020,37 @@ async function updateSurface(isCurrent = () => true) {
       ",000 prices per second in a batch.";
 
     const norm = d.prices.map((row) => row.map((v) => v / state.strike));
+    const narrow = isNarrow();
     Plotly.react("plot-surface", [{
       type: "surface", x: d.moneyness, y: d.maturity, z: norm,
       colorscale: [[0, "#0e1117"], [0.45, "#2a4a6b"], [0.75, "#5a8cc8"], [1, "#8891a3"]],
       showscale: false,
       contours: { z: { show: true, usecolormap: true,
                        highlightcolor: "#fff", project: { z: true } } },
-      hovertemplate: "S/K %{x:.2f}, T %{y:.2f}y<br>price/K %{z:.4f}"
+      hovertemplate: "S/K %{x:.2f}, time to expiry %{y:.2f}y<br>price/K %{z:.4f}"
         + "<br><i>click to price this contract</i><extra></extra>",
       lighting: { specular: 0.4, roughness: 0.6 },
     }], {
       ...PLOT_BASE, showlegend: false,
-      margin: { l: 0, r: 0, t: 0, b: 0 },
+      margin: { l: 10, r: 10, t: 0, b: 24 },
       scene: {
-        xaxis: { title: "moneyness S/K", gridcolor: COLORS.grid,
+        dragmode: "turntable",
+        xaxis: { title: narrow ? "S/K" : "moneyness S/K", gridcolor: COLORS.grid,
                  color: COLORS.ink, showbackground: false },
-        yaxis: { title: "maturity (y)", gridcolor: COLORS.grid,
-                 color: COLORS.ink, showbackground: false },
+        yaxis: { title: narrow ? "T (years)" : "time to expiry (years)",
+                 gridcolor: COLORS.grid, color: COLORS.ink, showbackground: false },
         zaxis: { title: "price / K", gridcolor: COLORS.grid,
                  color: COLORS.ink, showbackground: false },
         camera: { eye: { x: -1.55, y: -1.6, z: 0.65 } },
       },
     }, PLOT_CONFIG);
+    const flat = norm.flat();
+    describeChart("plot-surface", "Price over strike for a " + state.optionType +
+      " across moneyness " + d.moneyness[0].toFixed(2) + " to " +
+      d.moneyness[d.moneyness.length - 1].toFixed(2) + " and time to expiry " +
+      d.maturity[0].toFixed(2) + " to " + d.maturity[d.maturity.length - 1].toFixed(2) +
+      " years, from " + Math.min(...flat).toFixed(4) + " to " +
+      Math.max(...flat).toFixed(4) + ".");
 
     const surf = $("plot-surface");
     if (!surf.dataset.clickBound) {
@@ -976,6 +1177,11 @@ function renderErrorDistribution() {
                line: { color: "rgba(255,255,255,0.35)", width: 1.5,
                        dash: "dot" } }],
   }, PLOT_CONFIG);
+  describeChart("plot-errors", "Two overlaid histograms of " + QUANTITY[errorMetric] +
+    " error on " + d.n_points.toLocaleString() + " held-out averaged contracts, " +
+    "in " + meta.unit + ofStrike + ": five averaged networks, typical error " +
+    e.rmse_bps.toFixed(1) + ", and one network, typical error " +
+    d.single[errorMetric].rmse_bps.toFixed(1) + ". A dotted line marks zero error.");
 }
 
 async function loadErrorDistribution() {
@@ -1151,17 +1357,18 @@ function paintModelScope() {
   if (!acc) return;
   const z = m.zero_dte;
   const zr = shortDatedRmseBps();
+  // Chips whose value is words take the text face ("text"); figures keep mono.
   acc.innerHTML = is0dte()
-    ? hedgeStatChip("Pricing this contract", "short-dated rough-volatility model") +
-      (z && z.n_members ? hedgeStatChip("Ensemble", z.n_members + " networks") : "") +
+    ? hedgeStatChip("Pricing this contract", "short-dated rough-volatility model", "text") +
+      (z && z.n_members ? hedgeStatChip("Ensemble", z.n_members + " networks", "text") : "") +
       (zr != null ? hedgeStatChip("Typical error, short-dated model",
         zr.toFixed(1) + " bps of strike") : "") +
-      hedgeStatChip("Chart below", "averaged-contract ensemble")
-    : hedgeStatChip("Pricing this contract", "averaged-contract ensemble") +
-      hedgeStatChip("Ensemble", m.n_members + " networks") +
+      hedgeStatChip("Chart below", "averaged-contract ensemble", "text")
+    : hedgeStatChip("Pricing this contract", "averaged-contract ensemble", "text") +
+      hedgeStatChip("Ensemble", m.n_members + " networks", "text") +
       hedgeStatChip("Parameters", m.n_parameters.toLocaleString() + " each") +
       hedgeStatChip("Training set",
-        m.n_samples.toLocaleString() + " Monte Carlo-labelled contracts") +
+        m.n_samples.toLocaleString() + " Monte Carlo-labelled contracts", "text") +
       (m.eval ? hedgeStatChip("Typical error, averaged contract",
         m.eval.ensemble.price.rmse_bps.toFixed(1) + " bps of strike") : "");
 }
@@ -1235,10 +1442,10 @@ const runIVSurface = latestOnly(updateIVSurface);
 let surfacesStale = false;
 function refreshSurfaces() {
   const g = $("group-domain");
-  if (g && !g.open) { surfacesStale = true; return; }
+  if (g && !g.open) { surfacesStale = true; return Promise.resolve(); }
   surfacesStale = false;
-  runSurface();
-  runIVSurface();
+  // One after the other: the server runs one batch job at a time.
+  return runSurface().then(() => runIVSurface());
 }
 
 const refreshFast = debounce(runPrice, 220);
@@ -1290,10 +1497,12 @@ async function solveImpliedVol() {
   const target = parseFloat(box.value.replace(/[$,\s]/g, ""));
   if (!isFinite(target) || target < 0) {
     box.classList.add("invalid");
+    box.setAttribute("aria-invalid", "true");
     note.textContent = "Type the premium you want to match.";
     return;
   }
   box.classList.remove("invalid");
+  box.removeAttribute("aria-invalid");
   btn.disabled = true;
   btn.textContent = "Solving";
   note.textContent = "";
@@ -1354,23 +1563,35 @@ $("in-target-price").addEventListener("keydown", (e) => {
 // Size controls. A whole number of contracts; a negative count is a short.
 function bindSizeField(id, key, { min, max, integer }) {
   const el = $(id);
-  const commit = () => {
+  const reason = (integer ? "Enter a whole number from " : "Enter a number from ") +
+    min.toLocaleString() + " to " + max.toLocaleString() + ".";
+  // quiet: a blur commits without reporting, since focus has already left.
+  // commit() returns whether the typed value was accepted.
+  const commit = (quiet = false) => {
     const v = parseFloat(el.value.replace(/[,\s]/g, ""));
     if (!isFinite(v) || v < min || v > max || (integer && v !== Math.round(v))) {
-      el.classList.add("invalid");
-      return;
+      if (!quiet) markInvalid(el, reason);
+      return false;
     }
-    el.classList.remove("invalid");
+    clearInvalid(el);
     state[key] = v;
     renderPosition();
     renderContractLine();
     syncURL();
+    return true;
   };
   el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); el.blur(); }
-    if (e.key === "Escape") { el.value = state[key]; el.classList.remove("invalid"); el.blur(); }
+    // A refused value keeps the focus, its red border and its reason until
+    // it is fixed.
+    if (e.key === "Enter") { e.preventDefault(); if (commit()) el.blur(); }
+    if (e.key === "Escape") { el.value = state[key]; clearInvalid(el); el.blur(); }
   });
-  el.addEventListener("blur", () => { commit(); el.value = state[key]; });
+  el.addEventListener("blur", () => {
+    commit(true);
+    el.value = state[key];
+    // The field shows the last accepted value again, so the flag comes off.
+    clearInvalid(el);
+  });
 }
 bindSizeField("in-qty", "qty", { min: -100000, max: 100000, integer: true });
 bindSizeField("in-mult", "mult", { min: 1, max: 10000, integer: true });
@@ -1507,8 +1728,7 @@ const syncURL = debounce(() => {
 }, 300);
 
 function setSegmented(containerId, value) {
-  $(containerId).querySelectorAll(".seg-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.value === String(value)));
+  paintSegmented($(containerId), value);
 }
 function setSlider(id, value) {
   const el = $("in-" + id);
@@ -1576,8 +1796,14 @@ function showTab(key) {
   if (currentTab === "ai") renderReportInputs();
   renderContractLine();
   paintRailScope();
-  document.querySelectorAll(".tab-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.tab === id));
+  // Tablist semantics: the selected tab is the one tab stop in the list, and
+  // the arrow keys move between tabs (see the Tabs wiring below).
+  document.querySelectorAll(".tab-btn").forEach((b) => {
+    const on = b.dataset.tab === id;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+    b.tabIndex = on ? 0 : -1;
+  });
   document.querySelectorAll(".tab-pane").forEach((p) =>
     p.style.display = p.id === id ? "flex" : "none");
   // Each pane's content starts at the top, so the scroll position resets
@@ -1599,10 +1825,11 @@ function renderReportInputs() {
   const el = $("report-inputs");
   if (!el) return;
   const ready = (ok) => ok ? "ready" : "will be computed";
+  const cls = (ok) => ok ? "text good" : "text";
   el.innerHTML =
-    hedgeStatChip("Price", ready(lastNNPrice != null), lastNNPrice != null ? "good" : "") +
-    hedgeStatChip("Attribution", ready(!!lastAttributions), lastAttributions ? "good" : "") +
-    hedgeStatChip("Hedging run", ready(!!lastHedge), lastHedge ? "good" : "");
+    hedgeStatChip("Price", ready(lastNNPrice != null), cls(lastNNPrice != null)) +
+    hedgeStatChip("Attribution", ready(!!lastAttributions), cls(!!lastAttributions)) +
+    hedgeStatChip("Hedging run", ready(!!lastHedge), cls(!!lastHedge));
   el.className = "hedge-stats";
 }
 
@@ -1671,14 +1898,37 @@ $("btn-share").addEventListener("click", async () => {
 })();
 
 // One tap-to-reveal help bubble for every [data-help] control. Native title
-// tooltips do not appear on touch screens.
+// tooltips do not appear on touch screens. Each trigger is a named button
+// ("About spot") that reports aria-expanded and, while open, is described by
+// the bubble. The text is also written to a persistent polite region, because
+// a region that appears at the moment its text is set is often not read.
 (() => {
   const bubble = $("help-bubble");
+  const live = $("help-live");
   let anchor = null;
-  const close = () => { bubble.hidden = true; anchor = null; };
+  // Triggers built later (the stat chips) carry the same attributes in their
+  // markup; these are the ones in the page from the start.
+  document.querySelectorAll("button[data-help]").forEach((b) => {
+    b.setAttribute("aria-expanded", "false");
+    b.setAttribute("aria-controls", "help-bubble");
+  });
+  const close = () => {
+    if (anchor) {
+      anchor.setAttribute("aria-expanded", "false");
+      anchor.removeAttribute("aria-describedby");
+    }
+    bubble.hidden = true; anchor = null;
+    live.textContent = "";
+  };
   const open = (el) => {
+    if (anchor) close();
     bubble.textContent = el.dataset.help;
     bubble.hidden = false;
+    el.setAttribute("aria-expanded", "true");
+    el.setAttribute("aria-controls", "help-bubble");
+    el.setAttribute("aria-describedby", "help-bubble");
+    live.textContent = "";
+    setTimeout(() => { if (anchor === el) live.textContent = el.dataset.help; }, 60);
     const r = el.getBoundingClientRect();
     const w = Math.min(300, window.innerWidth - 24);
     bubble.style.width = w + "px";
@@ -1741,7 +1991,7 @@ async function fetchTicker() {
   if (!t) return;
   const btn = $("btn-fetch-ticker");
   const chip = $("market-chip");
-  btn.textContent = "..."; btn.disabled = true;
+  btn.textContent = "Loading…"; btn.disabled = true;
   try {
     const d = await api("/api/market/" + encodeURIComponent(t));
     marketData = d;
@@ -1799,11 +2049,20 @@ $("in-ticker").addEventListener("keydown", (e) => {
   if (e.key === "Enter") fetchTicker();
 });
 
-// Tabs.
-document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const key = Object.keys(TAB_IDS).find((k) => TAB_IDS[k] === btn.dataset.tab);
-    showTab(key || "pricing");
+// Tabs. A click or Enter selects a tab; Left and Right move to the previous or
+// next tab and select it, Home and End jump to the first and last.
+const tabKey = (btn) =>
+  Object.keys(TAB_IDS).find((k) => TAB_IDS[k] === btn.dataset.tab) || "pricing";
+document.querySelectorAll(".tab-btn").forEach((btn, i, all) => {
+  btn.addEventListener("click", () => showTab(tabKey(btn)));
+  btn.addEventListener("keydown", (e) => {
+    const n = all.length;
+    const to = { ArrowRight: (i + 1) % n, ArrowLeft: (i - 1 + n) % n,
+                 Home: 0, End: n - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    showTab(tabKey(all[to]));
+    all[to].focus();
   });
 });
 
@@ -1877,6 +2136,11 @@ async function updateXAI(isCurrent = () => true) {
                zerolinecolor: "rgba(255,255,255,0.25)" },
       yaxis: { gridcolor: "rgba(0,0,0,0)", automargin: true },
     }, PLOT_CONFIG);
+    const signed = (v) => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toFixed(2);
+    describeChart("plot-xai", "Horizontal bars, largest last: " +
+      rows.map((r) => r.name.toLowerCase() + " " + signed(r.v)).join(", ") +
+      ". Added to the baseline option's $" + d.baseline_price.toFixed(2) +
+      " they give this contract's $" + d.target_price.toFixed(2) + ".");
   } catch (err) {
     if (!isCurrent()) return;
     // A refused contract has no attribution. The previous contract's is
@@ -1920,7 +2184,9 @@ const CHIP_HELP = {
 // a "?" button with data-help, so it opens in the tap bubble on touch screens.
 function hedgeStatChip(k, v, cls, sub) {
   const help = CHIP_HELP[k]
-    ? "<button type='button' class='help' data-help='" + esc(CHIP_HELP[k]) + "'>?</button>"
+    ? "<button type='button' class='help' aria-label='" + esc("About " + k.charAt(0).toLowerCase() + k.slice(1)) +
+      "' aria-expanded='false' aria-controls='help-bubble' data-help='" +
+      esc(CHIP_HELP[k]) + "'>?</button>"
     : "";
   return "<div class='hedge-stat'><span class='k'>" + k + help +
     "</span><span class='v" + (cls ? " " + cls : "") + "'>" + v + "</span>" +
@@ -2055,7 +2321,7 @@ function hedgeVerdict(d, K) {
 
 async function runHedge() {
   const btn = $("btn-hedge");
-  btn.textContent = "Simulating...";
+  btn.textContent = "Simulating…";
   btn.disabled = true;
   // The simulation takes seconds (tens of seconds on a small host), so the
   // panel says what is running while it waits.
@@ -2068,7 +2334,7 @@ async function runHedge() {
   try {
     const d = await api("/api/hedge",
       { sigma: state.sigma, rate: state.rate, cost: state.hedgeCost,
-        dynamics: state.hedgeDynamics });
+        dynamics: state.hedgeDynamics }, 240000);
     clearShimmer("plot-hedge");
     clearShimmer("plot-holdings");
     lastHedge = d;
@@ -2094,6 +2360,7 @@ async function runHedge() {
       (ww ? tailChip("Whalley-Wilmott band", "whalley_wilmott", ww) : "");
 
     $("hedge-verdict").textContent = verdict.text;
+    announce("hedge-status", verdict.text, 100, true);
     $("hedge-convention").textContent =
       "Worst-5% loss is the average profit or loss across the worst 5% of " +
       "simulated paths, in dollars per option at a $" + K + " strike. Closer " +
@@ -2178,15 +2445,26 @@ async function runHedge() {
         ...(ww && ww.pnl ? [guide(ww, COLORS.violet)] : []),
       ],
     }, PLOT_CONFIG);
+    const hedgers = [["learned policy", d.deep], ["delta hedge", d.delta],
+                     ...(ww ? [["Whalley-Wilmott band", ww]] : [])];
+    describeChart("plot-hedge", "Overlaid histograms of profit or loss at expiry " +
+      "over " + d.n_paths.toLocaleString() + " paths, on a log count axis, with a " +
+      "dotted line at each hedger's worst-5% loss: " +
+      hedgers.map(([n, s]) => n + " " + $$(-s.cvar95)).join(", ") + ".");
 
-    // Holdings of all three hedgers along one illustrative path.
+    // Holdings of all three hedgers along one illustrative path. Spot and
+    // holdings are on different scales, so they are two stacked panels on
+    // one day axis, as in the Live chart. On overlaid axes a 1% spot move
+    // fills the height and reads as a fourth hedger.
     const days = d.example_path.deep_holdings.map((_, i) => i + 1);
     const bandHoldings = d.example_path.whalley_wilmott_holdings;
+    const spotPath = d.example_path.spot.slice(1).map((s) => s * K);
     Plotly.react("plot-holdings", [
       {
-        x: days, y: d.example_path.spot.slice(1).map((s) => s * K),
-        mode: "lines", name: "spot path ($)", yaxis: "y2",
-        line: { color: "rgba(255,255,255,0.35)", width: 1.5 },
+        x: days, y: spotPath,
+        mode: "lines", name: "spot ($)", yaxis: "y2", showlegend: false,
+        line: { color: "rgba(235,235,245,0.75)", width: 1.5 },
+        hovertemplate: "day %{x}, spot $%{y:.2f}<extra></extra>",
       },
       {
         x: days, y: d.example_path.delta_holdings,
@@ -2205,18 +2483,28 @@ async function runHedge() {
       }] : []),
     ], {
       ...PLOT_BASE,
-      margin: { l: 52, r: 52, t: 12, b: 42 },
+      margin: { l: 58, r: 16, t: 12, b: 42 },
       xaxis: { title: { text: "trading day" }, gridcolor: COLORS.grid,
-               zeroline: false },
-      yaxis: { title: { text: "shares held per option" },
-               gridcolor: COLORS.grid, zeroline: false, range: [0, 1.1] },
-      yaxis2: { title: { text: "spot ($)" },
-                overlaying: "y", side: "right", showgrid: false,
-                tickfont: { color: "rgba(255,255,255,0.4)" } },
+               zeroline: false, anchor: "y" },
+      yaxis: { title: { text: narrow ? "shares held" : "shares held per option" },
+               gridcolor: COLORS.grid, zeroline: false, range: [0, 1.1],
+               domain: [0, 0.62] },
+      yaxis2: { title: { text: "spot ($)" }, gridcolor: COLORS.grid,
+                zeroline: false, domain: [0.72, 1] },
     }, PLOT_CONFIG);
+    const last = days.length - 1;
+    describeChart("plot-holdings", "Two stacked panels over " + days.length +
+      " trading days of one path. Top: spot from $" + spotPath[0].toFixed(2) +
+      " to $" + spotPath[last].toFixed(2) + ". Bottom: shares held per option, " +
+      "ending at " + d.example_path.deep_holdings[last].toFixed(2) +
+      " for the learned policy and " + d.example_path.delta_holdings[last].toFixed(2) +
+      " for the delta hedge" + (bandHoldings
+        ? " and " + bandHoldings[last].toFixed(2) + " for the Whalley-Wilmott band" : "") +
+      ".");
   } catch (e) {
     $("hedge-verdict").textContent = "";
     $("hedge-sub").textContent = e.message;
+    announce("hedge-status", e.message, 100, true);
   } finally {
     btn.textContent = "Run simulation";
     btn.disabled = false;
@@ -2227,20 +2515,20 @@ $("btn-hedge").addEventListener("click", runHedge);
 // Desk note.
 $("btn-risk").addEventListener("click", async () => {
   const btn = $("btn-risk");
-  btn.textContent = "Writing...";
+  btn.textContent = "Writing…";
   btn.disabled = true;
   const out = $("ai-report");
   try {
     // Missing inputs are computed first, in the order the note uses them.
     if (!lastAttributions) {
-      out.textContent = "Working out what drives the price... (1 of 3)";
+      out.textContent = "Working out what drives the price… (1 of 3)";
       await runXAI();
     }
     if (!lastHedge) {
-      out.textContent = "Running the hedging simulation... (2 of 3)";
+      out.textContent = "Running the hedging simulation… (2 of 3)";
       await runHedge();
     }
-    out.textContent = "Writing the summary... (3 of 3)";
+    out.textContent = "Writing the summary… (3 of 3)";
     if (lastNNPrice == null || !lastAttributions || !lastHedge) {
       throw new Error("It needs the price, the attribution and a hedging " +
         "run, and one of them is unavailable for this contract.");
@@ -2281,10 +2569,13 @@ $("btn-risk").addEventListener("click", async () => {
       attributions: lastAttributions,
     };
 
+    // The note streams, and a language model can take a while, so the
+    // deadline is longer than the pricing panels'.
     const response = await fetch("/api/risk-report", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
+      signal: timeoutSignal(180000),
     });
     if (!response.ok) {
       let detail = response.statusText;
@@ -2301,8 +2592,14 @@ $("btn-risk").addEventListener("click", async () => {
       if (firstChunk) { out.textContent = ""; firstChunk = false; }
       out.textContent += decoder.decode(value, { stream: true });
     }
+    // The streamed text is not a live region, which would read every chunk;
+    // one line says the note is complete.
+    announce("note-status", "The risk summary is written.", 100, true);
   } catch (e) {
-    out.textContent = "The summary could not be written. " + e.message;
+    const late = e && (e.name === "TimeoutError" || e.name === "AbortError");
+    out.textContent = "The summary could not be written. " +
+      (late ? friendlyError(-1, "") : e.message);
+    announce("note-status", out.textContent, 100, true);
   } finally {
     out.classList.remove("streaming");
     btn.textContent = "Write summary";
@@ -2327,28 +2624,59 @@ function streamRefusalText(detail) {
   return friendlyError(422, d);
 }
 
+// Every handler below belongs to one socket. It acts only while that socket
+// is the current one and sends on its own socket, so the late close of a
+// socket the visitor has already replaced cannot clear the new one or leave
+// the button saying the opposite of what is running. The button is disabled
+// from a press until the socket opens or closes, so a double click opens one
+// stream, and a socket still closing counts as busy.
+let wsStall = null;
+// With the socket open and the stream accepted, a feed that sends no tick
+// within this long is reported instead of waiting silently.
+const WS_STALL_MS = 5000;
+function wsIdle(btn, text) {
+  clearTimeout(wsStall);
+  btn.textContent = "Connect";
+  btn.disabled = false;
+  btn.classList.remove("btn-stream-active");
+  $("stream-sub").textContent = text;
+  // The price loses its live colour while idle, so every dimmed figure is
+  // ink-hi; the next tick sets it again.
+  $("ws-price").className = "v mono";
+  $("stream-stats").classList.add("idle");
+}
+
 function wsConnect() {
   const btn = $("btn-stream");
-  if (ws && ws.readyState <= WebSocket.OPEN) {
-    ws.close();
+  if (ws) {
+    if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+      btn.disabled = true;
+      ws.closedByVisitor = true;
+      ws.close();
+    }
     return;
   }
 
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(proto + "//" + location.host + "/ws/stream");
+  const sock = new WebSocket(proto + "//" + location.host + "/ws/stream");
+  ws = sock;
+  btn.disabled = true;
   wsSpots = [];
   wsPrices = [];
   wsTicks = [];
   wsRefusal = "";
+  let ticksSeen = 0;
 
-  ws.onopen = () => {
+  sock.onopen = () => {
+    if (ws !== sock) return;
+    btn.disabled = false;
     btn.textContent = "Disconnect";
     btn.classList.add("btn-stream-active");
     $("stream-empty")?.remove();
     $("stream-stats").classList.remove("idle");
-    $("stream-sub").textContent = "Connected. Starting the feed...";
+    $("stream-sub").textContent = "Connected. Starting the feed…";
 
-    ws.send(JSON.stringify({
+    sock.send(JSON.stringify({
       spot: state.spot, strike: state.strike, sigma: state.sigma,
       rate: state.rate, maturity: state.maturity,
       option_type: state.optionType, hz: 15,
@@ -2378,9 +2706,12 @@ function wsConnect() {
                 zeroline: false, domain: [0, 0.44],
                 tickfont: { color: COLORS.nn } },
     }, PLOT_CONFIG);
+    describeChart("plot-stream", "Two stacked panels on one tick axis: spot " +
+      "above, the model price below. No tick has arrived yet.");
   };
 
-  ws.onmessage = (ev) => {
+  sock.onmessage = (ev) => {
+    if (ws !== sock) return;
     const d = JSON.parse(ev.data);
     if (d.error) {
       // An error frame without a tick is a refusal and the socket closes next.
@@ -2398,11 +2729,21 @@ function wsConnect() {
       $("stream-sub").textContent = "Live: " + d.hz +
         " simulated ticks a second. Pricing time is the network's wall-clock " +
         "for the price and all five Greeks on this server.";
+      clearTimeout(wsStall);
+      wsStall = setTimeout(() => {
+        if (ws === sock && ticksSeen === 0) {
+          $("stream-sub").textContent = "No ticks have arrived. Press " +
+            "Disconnect, then Connect to retry.";
+        }
+      }, WS_STALL_MS);
       return;
     }
+    ticksSeen += 1;
 
+    // The spot tile is in the ink colour, like the spot line in the chart;
+    // the accent belongs to the model price.
     $("ws-spot").textContent = "$" + d.spot.toFixed(2);
-    $("ws-spot").className = "v mono live";
+    $("ws-spot").className = "v mono";
     $("ws-price").textContent = "$" + d.price.toFixed(4);
     $("ws-price").className = "v mono live";
     $("ws-delta").textContent = d.delta.toFixed(4);
@@ -2430,21 +2771,32 @@ function wsConnect() {
         { x: [[d.tick], [d.tick]], y: [[d.spot], [d.price]] }, [0, 1],
         WS_MAX_POINTS);
     }
+    // The figure's summary is a description, not a live region, and is
+    // refreshed every couple of seconds of feed.
+    if (ticksSeen === 1 || ticksSeen % 30 === 0) {
+      describeChart("plot-stream", "Two stacked panels on one tick axis over " +
+        "the last " + wsSpots.length + " ticks: spot from $" +
+        Math.min(...wsSpots).toFixed(2) + " to $" + Math.max(...wsSpots).toFixed(2) +
+        " above, the model price from $" + Math.min(...wsPrices).toFixed(4) +
+        " to $" + Math.max(...wsPrices).toFixed(4) + " below. At tick " +
+        d.tick.toLocaleString() + " spot is $" + d.spot.toFixed(2) +
+        " and the model price is $" + d.price.toFixed(4) + ".");
+    }
   };
 
-  ws.onclose = () => {
-    btn.textContent = "Connect";
-    btn.classList.remove("btn-stream-active");
-    $("stream-sub").textContent = wsRefusal || "Disconnected. Press Connect to resume.";
-    $("stream-stats").classList.add("idle");
+  sock.onclose = () => {
+    if (ws !== sock) return;
     ws = null;
+    wsIdle(btn, wsRefusal || "Disconnected. Press Connect to resume.");
   };
 
-  ws.onerror = () => {
-    $("stream-sub").textContent = "The feed could not be reached. Press Connect to retry.";
+  // A socket the visitor closes while it is still connecting also fails, and
+  // that is a disconnect, not an unreachable feed.
+  sock.onerror = () => {
+    if (ws !== sock) return;
     ws = null;
-    btn.textContent = "Connect";
-    btn.classList.remove("btn-stream-active");
+    wsIdle(btn, sock.closedByVisitor ? "Disconnected. Press Connect to resume."
+      : "The feed could not be reached. Press Connect to retry.");
   };
 }
 
@@ -2475,13 +2827,14 @@ loadErrorDistribution();
   // The headline price lands first: /api/price and /api/convergence would
   // otherwise race for the server's single simulation slot, and losing that
   // race leaves the hero card blank while the convergence run finishes.
-  // The surfaces are drawn once here even while their group is collapsed.
-  // After that refreshSurfaces defers them until the group is open.
+  // The two 3D surfaces sit in a group that starts closed, and each draw is a
+  // few hundred milliseconds of main-thread work, so refreshSurfaces draws
+  // them only once the group is open. A short-dated link opens the group
+  // before this runs, and then they draw here.
   await runPrice();
   await runConvergence();
-  await runSurface();
   await runXAI();
-  await runIVSurface();
+  await refreshSurfaces();
   if (currentTab === "hedging" && urlParams.run === "1") runHedge();
 })();
 const latencyShimmer = $("plot-latency").querySelector(".shimmer");

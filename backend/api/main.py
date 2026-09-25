@@ -18,6 +18,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlsplit
 
 import numpy as np
 
@@ -27,6 +28,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match, Mount
 from pydantic import (BaseModel, ConfigDict, Field, ValidationError,
                       field_validator)
 
@@ -209,17 +211,98 @@ class BodySizeLimit:
         await self.app(scope, counted_receive, send)
 
 
-app.add_middleware(BodySizeLimit)
+#: Every source the dashboard and the methodology page load, measured with a
+#: headless Chromium pass over all four tabs, the hedging run, the live stream
+#: and both WebGL surfaces (zero violations):
+#:   * scripts: this origin and the pinned Plotly build on cdn.plot.ly. Plotly
+#:     2.35.2, the gl3d surfaces included, runs without 'unsafe-eval'.
+#:   * styles: 'unsafe-inline' is required. The page carries style attributes,
+#:     the methodology page an inline <style> block, and Plotly writes its own
+#:     <style> element and inline styles at runtime.
+#:   * fonts: the Google Fonts stylesheet and its font files.
+#:   * images: this origin and the data: URI favicon.
+#:   * connect: 'self', which covers fetch and the same-origin ws:// or wss://
+#:     stream socket.
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' https://cdn.plot.ly",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": ("camera=(), microphone=(), geolocation=(), "
+                           "payment=(), usb=()"),
+    # Browsers honour this only over HTTPS, so local http runs are unaffected.
+    "Strict-Transport-Security": "max-age=31536000",
+}
+
+
+# FastAPI's interactive API docs load Swagger UI and ReDoc from
+# cdn.jsdelivr.net and start them with an inline script, which the page policy
+# above blocks. Those pages get every other header and no CSP.
+API_DOC_PATHS = frozenset(p for p in (app.docs_url, app.redoc_url,
+                                      app.swagger_ui_oauth2_redirect_url) if p)
+
+
+class SecurityHeaders:
+    """Add SECURITY_HEADERS to every HTTP response that does not set them.
+
+    The Content-Security-Policy is left off the API doc pages (API_DOC_PATHS).
+    Pure ASGI, like BodySizeLimit, so streamed bodies (the desk note) pass
+    through unbuffered."""
+
+    def __init__(self, app, headers: dict[str, str] = SECURITY_HEADERS,
+                 no_csp_paths: frozenset[str] = API_DOC_PATHS) -> None:
+        self.app = app
+        self.raw = [(k.lower().encode("latin-1"), v.encode("latin-1"))
+                    for k, v in headers.items()]
+        self.raw_no_csp = [h for h in self.raw if h[0] != b"content-security-policy"]
+        self.no_csp_paths = no_csp_paths
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        extra = self.raw_no_csp if scope.get("path") in self.no_csp_paths else self.raw
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                present = {k.lower() for k, _ in headers}
+                headers.extend(h for h in extra if h[0] not in present)
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 # The dashboard is served by this app, so browsers need no cross-origin access.
 # The allow-list is the deployed origin plus localhost, for a frontend dev
 # server on another port. A wildcard would let any third-party page drive its
-# visitors' browsers against the Monte Carlo endpoints. Added last, so CORS is
-# outermost and a 413 carries its headers too.
+# visitors' browsers against the Monte Carlo endpoints. The stream socket
+# applies the same list (CORS does not cover WebSocket handshakes).
+ALLOWED_ORIGINS = ("http://localhost:8000", "http://127.0.0.1:8000",
+                   "https://neural-options-lab.onrender.com")
+
+app.add_middleware(BodySizeLimit)
+# CORS is added after BodySizeLimit, so it wraps it and a 413 carries the CORS
+# headers too. SecurityHeaders is added last and wraps both.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000",
-                   "https://neural-options-lab.onrender.com"],
+    allow_origins=list(ALLOWED_ORIGINS),
     allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+app.add_middleware(SecurityHeaders)
 
 
 @app.exception_handler(RequestValidationError)
@@ -482,11 +565,12 @@ class SurfaceRequest(ApiRequest):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 async def health() -> JSONResponse:
     """Render's health check. A coroutine with no I/O, so it answers from the
     event loop while every pool thread is busy. 503 without the pricing
-    checkpoint, so a container that cannot price fails the check."""
+    checkpoint, so a container that cannot price fails the check. HEAD is
+    answered too, for uptime monitors that probe with it."""
     ready = ENGINE is not None
     body = {"status": "ok" if ready else "unavailable",
             "model_loaded": ready,
@@ -621,7 +705,9 @@ def intrinsic_fields(regime: str, price: float, spot: float, strike: float,
                      maturity: float, rate: float, option_type: str) -> dict:
     """`intrinsic`, `below_intrinsic` and the shortfall in bps of strike for
     the 0DTE (European) regime; None-valued for the Asian regime, whose
-    floor is not the European one. Prices are never altered."""
+    floor is not the European one. `price` is the engine's raw_price, the
+    value before its floor at zero, so a put that is negative before that
+    floor is reported below intrinsic."""
     if regime != "rough_bergomi_european":
         return {"intrinsic": None, "below_intrinsic": None,
                 "below_intrinsic_bps_of_strike": None}
@@ -663,11 +749,12 @@ def price(req: PriceRequest) -> dict:
         mc_ms = (time.perf_counter() - t0) * 1000.0
 
     diff = nn_out["price"] - mc.price
-    nn = {"price": nn_out["price"], "greeks": nn_out["greeks"],
-          "latency_ms": nn_ms}
-    # The 0DTE price is served as the raw ensemble output; the response
-    # carries its no-arbitrage floor and a flag for a price under it.
-    nn.update(intrinsic_fields(regime, nn_out["price"], req.spot, req.strike,
+    nn = {"price": nn_out["price"], "clamped": nn_out["clamped"],
+          "greeks": nn_out["greeks"], "latency_ms": nn_ms}
+    # The served price is floored at zero, and `clamped` says when the floor
+    # acted. The 0DTE response also carries the no-arbitrage floor and a flag
+    # for a price under it, measured on the value before the zero floor.
+    nn.update(intrinsic_fields(regime, nn_out["raw_price"], req.spot, req.strike,
                                req.maturity, req.rate, req.option_type))
     return {
         "regime": regime,
@@ -1064,9 +1151,71 @@ STREAM_CONFIG_HELP = (
     "'put', and an optional hz")
 
 
+# The dashboard's config message is under 200 bytes. A larger message is
+# refused before it is parsed. This guard runs in the app; the frame size
+# uvicorn buffers before the app sees it is set by its --ws-max-size flag.
+MAX_STREAM_MESSAGE_BYTES = 1024
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
+def ws_origin_allowed(ws: WebSocket) -> bool:
+    """Whether a browser on this Origin may open the stream.
+
+    A handshake with no Origin header is not from a browser page and is
+    allowed. Otherwise the origin must be in ALLOWED_ORIGINS, on the host the
+    request was sent to (the dashboard's own page, on any port or scheme the
+    server is reached by), or on a loopback host (a local frontend dev
+    server)."""
+    origin = ws.headers.get("origin")
+    if origin is None:
+        return True
+    if origin in ALLOWED_ORIGINS:
+        return True
+    parsed = urlsplit(origin)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    host = ws.headers.get("host", "")
+    if host and parsed.netloc.lower() == host.lower():
+        return True
+    return (parsed.hostname or "") in _LOOPBACK_HOSTS
+
+
 async def _refuse(ws: WebSocket, message: str, code: int) -> None:
     await ws.send_json({"error": message})
     await ws.close(code=code)
+
+
+#: Returned by _receive_config once the socket is refused or gone. A config
+#: of JSON null parses to None, so None cannot mark this.
+_NO_CONFIG = object()
+
+
+async def _receive_config(ws: WebSocket) -> Any:
+    """The client's one config message, parsed. Returns _NO_CONFIG after a
+    refusal or a disconnect, with the socket already closed."""
+    try:
+        message = await asyncio.wait_for(ws.receive(), timeout=5.0)
+    except asyncio.TimeoutError:
+        await ws.close(code=1008, reason="no configuration received")
+        return _NO_CONFIG
+    if message["type"] == "websocket.disconnect":
+        return _NO_CONFIG
+    text = message.get("text")
+    if text is None:
+        # A binary frame where text is expected.
+        await _refuse(ws, "config must be a JSON object", code=1008)
+        return _NO_CONFIG
+    if (len(text) > MAX_STREAM_MESSAGE_BYTES
+            or len(text.encode("utf-8")) > MAX_STREAM_MESSAGE_BYTES):
+        await _refuse(ws, f"config exceeds {MAX_STREAM_MESSAGE_BYTES} bytes",
+                      code=1009)
+        return _NO_CONFIG
+    try:
+        return json.loads(text)
+    except ValueError:
+        await _refuse(ws, "config must be a JSON object", code=1008)
+        return _NO_CONFIG
 
 
 @app.websocket("/ws/stream")
@@ -1087,24 +1236,24 @@ async def ws_stream(ws: WebSocket) -> None:
     GET /api/health from 1.79 ms to 152.92 ms median (2,050 ms p95) on a
     uvicorn server. hz is capped at MAX_STREAM_HZ and concurrent streams at
     MAX_STREAM_CLIENTS.
+
+    A handshake from a page on another origin is refused before it is
+    accepted (CORS does not cover WebSockets), the config message is capped
+    at MAX_STREAM_MESSAGE_BYTES, and the stream takes that one message: any
+    later message closes it.
     """
     global _stream_clients
+    if not ws_origin_allowed(ws):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     eng = ENGINE
     if eng is None:
         await _refuse(ws, "model not loaded", code=1011)
         return
 
-    try:
-        raw = await asyncio.wait_for(ws.receive_json(), timeout=5.0)
-    except WebSocketDisconnect:
-        return
-    except asyncio.TimeoutError:
-        await ws.close(code=1008, reason="no configuration received")
-        return
-    except (ValueError, KeyError, TypeError):
-        # Malformed JSON, or a binary frame where text is expected.
-        await _refuse(ws, "config must be a JSON object", code=1008)
+    raw = await _receive_config(ws)
+    if raw is _NO_CONFIG:
         return
     if not isinstance(raw, dict):
         await _refuse(ws, "config must be a JSON object", code=1008)
@@ -1131,11 +1280,34 @@ async def ws_stream(ws: WebSocket) -> None:
                       code=1013)
         return
     _stream_clients += 1
+    # The client sends nothing after its config. A reader runs beside the
+    # frame loop so a disconnect ends the stream at once, and a further
+    # message, which would otherwise sit in the server's receive buffer,
+    # closes it.
+    frames = asyncio.ensure_future(_stream_frames(ws, eng, config, regime))
+    reader = asyncio.ensure_future(ws.receive())
     try:
-        await _stream_frames(ws, eng, config, regime)
+        done, _ = await asyncio.wait({frames, reader},
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if reader in done and not frames.done():
+            frames.cancel()
+            try:
+                await frames
+            except (asyncio.CancelledError, WebSocketDisconnect):
+                pass
+            message = reader.result()
+            if message["type"] != "websocket.disconnect":
+                await _refuse(ws, "the stream takes one config message",
+                              code=1008)
+        else:
+            reader.cancel()
+            frames.result()
     except WebSocketDisconnect:
         pass
     finally:
+        for task in (frames, reader):
+            if not task.done():
+                task.cancel()
         _stream_clients -= 1
 
 
@@ -1187,13 +1359,14 @@ async def _stream_frames(ws: WebSocket, eng: PricingEngine,
                 "vega": round(result["greeks"]["vega"], 4),
                 "theta": round(result["greeks"]["theta"], 4),
                 "rho": round(result["greeks"]["rho"], 4),
+                "clamped": result["clamped"],
                 "latency_us": round((time.perf_counter() - t0) * 1e6, 0),
             }
             if regime == "rough_bergomi_european":
                 # The REST path's floor, from the same function (1.12 us per
                 # call against a 13.7 ms pricing call).
                 bound = intrinsic_fields(
-                    regime, result["price"], spot, strike, maturity,
+                    regime, result["raw_price"], spot, strike, maturity,
                     rate, option_type)
                 frame["intrinsic"] = round(bound["intrinsic"], 4)
                 frame["below_intrinsic"] = bound["below_intrinsic"]
@@ -1204,13 +1377,54 @@ async def _stream_frames(ws: WebSocket, eng: PricingEngine,
         await asyncio.sleep(max(dt - elapsed, 0))
 
 
+# The HTML, script and stylesheet names carry no content hash, so a browser
+# revalidates them on every load (the ETag makes that a 304) and a deploy is
+# seen at once. Images change rarely and are cached for an hour.
+REVALIDATE = "no-cache"
+IMAGE_CACHE = "public, max-age=3600"
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"}
+
+
+def cache_control_for(path: str | Path) -> str:
+    return (IMAGE_CACHE if Path(path).suffix.lower() in _IMAGE_SUFFIXES
+            else REVALIDATE)
+
+
+class FrontendFiles(StaticFiles):
+    """StaticFiles with a Cache-Control header on every file it serves."""
+
+    def file_response(self, full_path, *args, **kwargs) -> Response:
+        response = super().file_response(full_path, *args, **kwargs)
+        response.headers["Cache-Control"] = cache_control_for(full_path)
+        return response
+
+
+class FrontendMount(Mount):
+    """The dashboard mount at "/", which leaves /api paths to the router.
+
+    A mount at "/" fully matches every path, so a method the API route does
+    not take (GET /api/price, HEAD on a POST route) would reach StaticFiles
+    and read as a missing file. Declining /api paths here lets the router
+    answer 405 with an Allow header, or 404 for an unknown API path."""
+
+    def matches(self, scope):
+        path = scope.get("path", "")
+        if scope["type"] == "http" and (path == "/api"
+                                        or path.startswith("/api/")):
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
 # The static dashboard is mounted last so the /api routes match first.
-@app.get("/methodology", include_in_schema=False)
+@app.api_route("/methodology", methods=["GET", "HEAD"],
+               include_in_schema=False)
 def methodology() -> FileResponse:
     """Clean URL for the static methodology page. StaticFiles(html=True) only
     maps directories to index.html, so /methodology would otherwise 404."""
-    return FileResponse(FRONTEND / "methodology.html")
+    return FileResponse(FRONTEND / "methodology.html",
+                        headers={"Cache-Control": REVALIDATE})
 
 
-app.mount("/", StaticFiles(directory=str(FRONTEND), html=True),
-          name="frontend")
+app.router.routes.append(
+    FrontendMount("/", app=FrontendFiles(directory=str(FRONTEND), html=True),
+                  name="frontend"))

@@ -411,10 +411,10 @@ class IVSurface:
             raise FileNotFoundError(
                 f"No constrained surface at {path}. Train one with "
                 "'python -m scripts.no_arbitrage_surface'.")
-        try:
-            blob = torch.load(path, map_location="cpu", weights_only=True)
-        except Exception:                                  # pragma: no cover
-            blob = torch.load(path, map_location="cpu", weights_only=False)
+        # Safe loader only. A checkpoint it refuses (pickled code, or meta
+        # outside torch's allowlist) raises here rather than being retried
+        # with the unsafe loader.
+        blob = torch.load(path, map_location="cpu", weights_only=True)
         arch = blob["meta"]["architecture"]
         net = IVSurfaceNet(width=int(arch["width"]), depth=int(arch["depth"]))
         net.load_state_dict(blob["state_dict"])

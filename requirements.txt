@@ -1,12 +1,16 @@
 # Requires Python >=3.12, which the numpy pin below enforces (every numpy 2.5.x
 # declares Requires-Python >=3.12). The README says 3.12; CI tests 3.12 only.
-# Keep those three in step -- they disagreed once, and the resulting CI job
-# failed at dependency install on every commit without ever running a test.
+# Keep those three in step.
 #
 # Pinned with compatible-release bounds (~=) so a patch upgrade is allowed but
-# a minor/major bump cannot silently change numerics. The README claims
-# deterministic, reproducible offline execution; unbounded ">=" pins made that
-# claim false. Versions are those this project is actually tested against.
+# a minor/major bump cannot silently change numerics, which is what the
+# README's deterministic, reproducible offline execution rests on. Versions
+# are those this project is tested against.
+#
+# torch: the Dockerfile, CI and the surface recorder read the torch line below
+# and install that version from the CPU-only index before this file, so keep
+# it a single line starting with "torch" and a bounded specifier. On Linux a
+# plain install of this file takes the CUDA build from PyPI; see DEPLOY.md.
 numpy~=2.5.1
 scipy~=1.17.1
 torch~=2.11.0

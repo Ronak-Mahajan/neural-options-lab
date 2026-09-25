@@ -55,7 +55,7 @@ def load_capture(path: Path) -> tuple[list[Quote], float, str]:
 
 def load_map():
     blob = torch.load(ROOT / "artifacts" / "pricing_map.pt",
-                      map_location="cpu", weights_only=False)
+                      map_location="cpu", weights_only=True)
     model = PricingMap(blob["width"], blob["depth"])
     model.load_state_dict(blob["state"])
     model.eval()

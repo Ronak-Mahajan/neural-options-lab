@@ -48,7 +48,7 @@ from backend.quant.gpu_labels import default_device, simulate_chunk_gpu
 
 def adapt(candidate: Path) -> dict:
     """Convert a `Surrogate` ablation checkpoint into an engine checkpoint."""
-    blob = torch.load(candidate, map_location="cpu", weights_only=False)
+    blob = torch.load(candidate, map_location="cpu", weights_only=True)
     meta = dict(blob["meta"])
     if meta.get("residual"):
         raise SystemExit(

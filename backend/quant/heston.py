@@ -568,8 +568,13 @@ def heston_mc_call(S: float, K, T: float, r: float, q: float, v0: float,
     """Independent check of the COS prices: full-truncation Euler
     (Lord, Koekkoek & van Dijk 2010), where the variance may go negative in
     the state but enters every coefficient as max(v, 0). Returns (price, standard
-    error), each shaped like K. Discretisation bias is O(dt); the tests use
-    enough steps that it sits well inside the statistical error."""
+    error), each shaped like K. The scheme carries a time-step bias. On the
+    Feller-violating Fang & Oosterlee parameters at T = 1, a common-random-
+    numbers study (scripts/heston_step_convergence.py,
+    docs/heston_step_convergence.json) moves the K = 110 price by
+    -0.0036 +- 0.0010 from 200 to 800 steps, about 0.3 of a 200,000-path
+    standard error, and finds no constant observed order, so no asymptotic
+    rate is claimed. The tests run at 400 steps."""
     K = np.atleast_1d(np.asarray(K, dtype=float))
     rng = np.random.default_rng(seed)
     dt = T / n_steps

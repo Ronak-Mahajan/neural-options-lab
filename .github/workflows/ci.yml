@@ -2,33 +2,32 @@ name: CI
 
 on:
   push:
-    # Feature branches run CI too. A branch that only builds once it reaches
-    # main is a branch whose failures are discovered by the merge.
+    # Feature branches run CI too, so a branch's failures surface before the
+    # merge rather than at it.
     branches: [main, master, "fix/**", "rebuild/**"]
   pull_request:
 
-# The failure-log step below commits the tail of a failed run back to the
-# branch. Actions logs are not readable without a token, so that write-back is
-# the only way a failure on a feature branch gets read.
+# Read-only by default. The one job that writes is failure-log, below.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # 3.12 is the FLOOR, not a preference: requirements.txt pins
-        # numpy~=2.5.1, and every numpy 2.5.x requires Python >=3.12. The
-        # matrix used to list 3.10 as well, which meant that job failed at
-        # `pip install -r requirements.txt` on every commit since the pins
-        # landed — it never once reached pytest, so it was reporting an
-        # unsatisfiable config as a test failure and nothing was ever verified
-        # against 3.10. Raise this in step with the pins, not ahead of them.
+        # 3.12 is the floor the pins enforce: requirements.txt pins
+        # numpy~=2.5.1, and every numpy 2.5.x requires Python >=3.12. Raise
+        # this in step with the pins, not ahead of them.
         python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Nothing in this job pushes, so the token is not left in
+          # .git/config while third-party packages install and run.
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -36,20 +35,33 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        # Teed into the same ci.log the failure step writes back. A resolver
-        # failure here used to produce NO readable log at all: ci.log did not
-        # exist yet, so the write-back step's own `tail` failed and the branch
-        # got nothing. That is the failure mode the write-back exists for -
-        # the 3.10 matrix leg died at this step on every commit for weeks.
+        # The same three-step install as the Dockerfile: torch from the CPU
+        # index at the version requirements.txt pins, then requirements.txt
+        # with that exact torch as a constraint, so the second step can keep
+        # the CPU build but never swap in the CUDA wheel from PyPI.
+        #
+        # Teed into ci.log, which failure-log commits back on a feature
+        # branch, so a resolver failure here is readable too.
         run: |
           set -o pipefail
           {
             python -m pip install --upgrade pip
-            # CPU-only torch: the GPU wheel is ~2.5 GB and CI needs none of it.
-            pip install torch --index-url https://download.pytorch.org/whl/cpu
-            pip install -r requirements.txt
+            pip install "$(grep -E '^torch[~=<>!]' requirements.txt | tr -d '\r')" \
+              --index-url https://download.pytorch.org/whl/cpu
+            python -c "import importlib.metadata as m; print('torch==' + m.version('torch'))" \
+              > "$RUNNER_TEMP/torch-pin.txt"
+            pip install -r requirements.txt -c "$RUNNER_TEMP/torch-pin.txt"
             pip install pytest
           } 2>&1 | tee -a ci.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Check the torch build
+        # The suite must run on the build the image serves: the CPU wheel,
+        # with no CUDA, NVIDIA or Triton distributions installed.
+        run: |
+          set -o pipefail
+          python -c "import importlib.metadata as m; v = m.version('torch'); gpu = sorted(str(d.metadata['Name']) for d in m.distributions() if (d.metadata['Name'] or '').lower().startswith(('nvidia-', 'cuda-', 'triton'))); assert v.endswith('+cpu') and not gpu, (v, gpu); print('torch', v, 'CPU build, no GPU packages')" \
+            2>&1 | tee -a ci.log
           exit ${PIPESTATUS[0]}
 
       - name: Show resolved versions
@@ -60,28 +72,151 @@ jobs:
         # everything else must pass, including the shipped-checkpoint load and
         # the API surface (tests/test_api.py runs the app in-process).
         #
-        # tee, then exit on pytest's status rather than tee's: without
-        # PIPESTATUS a failing suite would be reported as a passing step
-        # because tee exited 0.
+        # tee, then exit on pytest's status rather than tee's, so a failing
+        # suite fails the step.
         run: |
           set -o pipefail
           python -m pytest tests/ -v -m "not network" --durations=10 \
             2>&1 | tee -a ci.log
           exit ${PIPESTATUS[0]}
 
-      - name: Commit failure log
-        # main is never written to by CI. On a feature branch the tail of the
-        # failing run is committed so it can be read from the repository.
-        if: failure() && github.ref != 'refs/heads/main'
+      - name: Keep the log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-log-test
+          path: ci.log
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  docker:
+    # Builds the Dockerfile Render deploys and boots it at the Starter plan's
+    # limits (0.5 CPU, 512 MB, no swap), then checks that every model loads
+    # and that a price request succeeds. A build that pulls CUDA wheels fails
+    # the Dockerfile's own guard; a runtime file that .dockerignore drops
+    # fails the boot or the request.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build the image
         run: |
-          mkdir -p .ci
-          # Guard: a failure before any step teed anything (checkout, setup)
-          # must still write back a file rather than failing on a missing one.
-          touch ci.log
-          tail -c 60000 ci.log > .ci/last-failure-test.log
+          set -o pipefail
+          docker build -t neural-options-lab:ci . 2>&1 | tee -a docker.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Report the image size
+        run: |
+          docker image ls neural-options-lab:ci \
+            --format 'image {{.Repository}}:{{.Tag}} {{.Size}}' | tee -a docker.log
+
+      - name: Boot the image and smoke-test it
+        run: |
+          set -o pipefail
+          {
+            docker run -d --name nol \
+              --memory=512m --memory-swap=512m --cpus=0.5 \
+              -e PORT=8000 -p 8000:8000 neural-options-lab:ci
+            ok=0
+            for _ in $(seq 1 150); do
+              if curl -sf -o /dev/null http://127.0.0.1:8000/api/health; then
+                ok=1; break
+              fi
+              if [ "$(docker inspect -f '{{.State.Running}}' nol)" != "true" ]; then
+                break
+              fi
+              sleep 2
+            done
+            docker logs nol
+            if [ "$ok" != 1 ]; then
+              echo "::error::/api/health never returned 200"
+              docker inspect -f 'OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}}' nol
+              exit 1
+            fi
+
+            curl -sf http://127.0.0.1:8000/api/health | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          print('health', d)
+          assert d.get('status') == 'ok', d
+          assert d.get('model_loaded') and d.get('iv_surface_loaded'), d
+          assert d.get('hedgers_loaded'), d
+          "
+            curl -sf -o /dev/null -w 'GET / %{http_code}\n' http://127.0.0.1:8000/
+            curl -sf -o /dev/null -w 'GET /methodology %{http_code}\n' \
+              http://127.0.0.1:8000/methodology
+            curl -sf -X POST http://127.0.0.1:8000/api/price \
+              -H 'Content-Type: application/json' \
+              -d '{"spot":100,"strike":100,"maturity":1,"sigma":0.25,"rate":0.04,"option_type":"call","mc_paths":1000}' \
+              | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['nn']['price'] > 0 and d['mc']['price'] > 0, d
+          print('POST /api/price nn', d['nn']['price'], 'mc', d['mc']['price'])
+          "
+            docker stats --no-stream --format 'memory {{.MemUsage}}' nol
+            test "$(docker inspect -f '{{.State.OOMKilled}}' nol)" = false
+          } 2>&1 | tee -a docker.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f nol >/dev/null 2>&1 || true
+
+      - name: Keep the log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-log-docker
+          path: docker.log
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  failure-log:
+    # Actions logs are not readable without a token, so on a feature branch
+    # the tail of a failed run is committed to .ci/ where it can be read from
+    # the repository. main is never written to, and pull requests never get
+    # a write token. This job runs git and tail only; no dependencies are
+    # installed while it holds write access.
+    needs: [test, docker]
+    if: failure() && github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: ci-log-*
+          path: logs
+          merge-multiple: true
+
+      - name: Commit failure log
+        run: |
+          mkdir -p .ci logs
+          wrote=0
+          if [ -s logs/ci.log ]; then
+            tail -c 60000 logs/ci.log > .ci/last-failure-test.log; wrote=1
+          fi
+          if [ -s logs/docker.log ]; then
+            tail -c 60000 logs/docker.log > .ci/last-failure-docker.log; wrote=1
+          fi
+          if [ "$wrote" = 0 ]; then
+            # A failure before any step wrote a log (checkout, setup).
+            echo "No step wrote a log. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              > .ci/last-failure-test.log
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .ci/last-failure-test.log
+          git add .ci/
           git commit -m "ci: failure log [skip ci]" || exit 0
           git pull --rebase origin "$GITHUB_REF_NAME"
           git push origin "HEAD:$GITHUB_REF_NAME"

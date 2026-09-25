@@ -1,0 +1,22 @@
+Neural Options Lab
+Copyright (c) 2026 Ronak Mahajan
+
+The source code in this repository, and the files it generates, are released under the
+MIT License in LICENSE.
+
+The MIT License does not extend to the third-party market data redistributed in this
+repository. Those files remain subject to their providers' terms and are not relicensed:
+
+  data/surfaces/equity/  (208 files)
+      SPY option quotes, spot and the 13-week T-bill rate (^IRX) from Yahoo Finance,
+      retrieved through the yfinance library, 2026-08-20 to 2026-08-23.
+      Subject to Yahoo's terms of service.
+
+  data/surfaces/deribit/  (418 files)
+  artifacts/deribit_snapshot_btc_20260805T214815Z.json
+      BTC and ETH option, futures and index data from Deribit's public API v2,
+      2026-08-05 and 2026-08-20 to 2026-08-23.
+      Subject to Deribit's terms of use.
+
+data/README.md lists each dataset with its source, capture window, time zone, terms and
+the script that regenerates it.

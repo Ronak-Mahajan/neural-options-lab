@@ -45,7 +45,9 @@ class PricingEngine:
             raise FileNotFoundError(
                 f"No model checkpoint at {checkpoint}. "
                 "Train one first: python -m backend.quant.train")
-        blob = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        # weights_only=True: the checkpoint is tensors plus plain Python meta,
+        # so the safe loader reads it and never runs pickled code.
+        blob = torch.load(checkpoint, map_location="cpu", weights_only=True)
         self.meta = blob["meta"]
         # A checkpoint holds an ensemble under "members" or one "state_dict".
         states = blob["members"] if "members" in blob else [blob["state_dict"]]
@@ -76,7 +78,8 @@ class PricingEngine:
         ckpt_0dte = ARTIFACTS / "model_0dte.pt"
         if ckpt_0dte.exists():
             self.has_0dte = True
-            blob_0dte = torch.load(ckpt_0dte, map_location="cpu", weights_only=False)
+            blob_0dte = torch.load(ckpt_0dte, map_location="cpu",
+                                   weights_only=True)
             # dynamics this surrogate was trained under; the API's MC
             # benchmark must simulate the same measure
             self.meta_0dte = blob_0dte.get("meta", {})
@@ -164,8 +167,19 @@ class PricingEngine:
                           sigma: float, rate: float,
                           option_type: str = "call",
                           member: int | None = None) -> dict:
-        """Price + full first-order Greeks (and gamma) via autograd."""
-        m = torch.tensor(spot / strike, requires_grad=True)
+        """Price + full first-order Greeks (and gamma) via autograd.
+
+        `price` is floored at zero. A put is the call minus a parity term,
+        so where the network prices the call below its parity floor the
+        parity-derived put is negative. `raw_price` is the value before the
+        floor and `clamped` is True when the floor acted. The Greeks are
+        always the derivatives of the unfloored function, including at a
+        clamped point.
+
+        Inputs may be Python or numpy scalars; each is cast to float so the
+        graph is float32, the dtype of the network.
+        """
+        m = torch.tensor(float(spot) / float(strike), requires_grad=True)
         mat = torch.tensor(float(maturity), requires_grad=True)
         sig = torch.tensor(float(sigma), requires_grad=True)
         r = torch.tensor(float(rate), requires_grad=True)
@@ -177,6 +191,7 @@ class PricingEngine:
                 f = f - m + torch.exp(-r * mat)
             else:
                 f = f - self._parity_adjustment_torch(m, mat, r)
+        strike = float(strike)
         price = strike * f
 
         # First-order sensitivities; keep the graph alive for gamma.
@@ -184,8 +199,11 @@ class PricingEngine:
         (d2f_dm2,) = torch.autograd.grad(df_dm, m, retain_graph=True)
         df_dmat, df_dsig, df_dr = torch.autograd.grad(f, (mat, sig, r))
 
+        raw_price = price.item()
         return {
-            "price": max(price.item(), 0.0),
+            "price": max(raw_price, 0.0),
+            "raw_price": raw_price,
+            "clamped": raw_price < 0.0,
             "greeks": {
                 # dC/dS = K * f_m * dm/dS = f_m
                 "delta": df_dm.item(),
@@ -208,7 +226,15 @@ class PricingEngine:
     def price_batch(self, spots: np.ndarray, strikes: np.ndarray,
                     maturities: np.ndarray, sigmas: np.ndarray,
                     rates: np.ndarray, option_type: str = "call",
-                    member: int | None = None) -> np.ndarray:
+                    member: int | None = None, *,
+                    floor_at_zero: bool = True) -> np.ndarray:
+        """Prices for a batch of contracts, floored at zero by default.
+
+        floor_at_zero=False returns the unfloored values, so a caller can
+        count the rows where a parity-derived put came out negative
+        (np.count_nonzero(raw < 0)). The floored output equals
+        np.maximum(raw, 0) element for element.
+        """
         out = np.empty(spots.shape[0], dtype=np.float32)
         for lo in range(0, spots.shape[0], self._BATCH_CHUNK):
             hi = lo + self._BATCH_CHUNK
@@ -229,7 +255,7 @@ class PricingEngine:
                     f = f - self._parity_adjustment_torch(m, mat, r)
             out[lo:hi] = (torch.from_numpy(strikes[lo:hi].astype(np.float32))
                           * f).numpy()
-        return np.maximum(out, 0.0)
+        return np.maximum(out, 0.0) if floor_at_zero else out
 
     def mc_price(self, spot: float, strike: float, maturity: float,
                  sigma: float, rate: float, n_paths: int,

@@ -649,7 +649,7 @@ class HedgingEngine:
             raise FileNotFoundError(
                 f"No hedger checkpoint at {checkpoint}. "
                 "Train one first: python -m backend.quant.hedging")
-        blob = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        blob = torch.load(checkpoint, map_location="cpu", weights_only=True)
         self.meta = blob["meta"]
         self.policy = HedgePolicy()
         self.policy.load_state_dict(blob["policy"])

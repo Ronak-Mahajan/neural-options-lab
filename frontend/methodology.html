@@ -122,8 +122,8 @@ tr.hi td { color: var(--ink-hi); }
 }
 figure.fig { margin: 18px 0 22px; }
 figure.fig img { display: block; width: 100%; height: auto; border-radius: 10px;
-  border: 1px solid rgba(84, 84, 88, 0.36); background: #000; }
-figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; color: rgba(235, 235, 245, 0.45); }
+  border: 1px solid var(--line); background: var(--bg-0); }
+figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; color: var(--ink-mid); }
 </style>
 </head>
 <body>
@@ -254,9 +254,17 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   The reference engine, which generates the training labels and the live comparison price on
   the dashboard, uses antithetic sampling with a geometric-Asian control variate (Kemna and
   Vorst, 1990). The geometric-average option has a closed-form price, so the simulation error
-  on it can be measured and subtracted from the arithmetic estimate. Measured as the ratio of
-  empirical standard deviations across 300 seeded replications, the control variate cuts the
-  standard error by about 24x (24.0x at 5,000 paths, 24.5x at 20,000). On the dashboard the
+  on it can be measured and subtracted from the arithmetic estimate. On an at-the-money one-year
+  contract at 20% volatility and a 5% rate, measured as the ratio of empirical standard deviations
+  across 300 seeded replications with antithetic sampling in both arms, the control variate cuts
+  the standard error by about 24x: 22x to 26x at 5,000 paths and 23x to 24x at 20,000, over two
+  sets of 300 replications. The factor is specific to that contract: the same protocol at 5,000
+  paths gives 48x to 55x on a three-month at-the-money contract at 20% volatility, and 5x to 10x
+  at three other points of the trained box (the one-year contract at 60% volatility; spot 80
+  against a strike of 100 at
+  three months and 30% volatility; spot 130 against a strike of 100 at two years and 70%
+  volatility). <code>scripts/variance_reduction.py</code> reproduces these figures into
+  <code>docs/variance_reduction.json</code>. On the dashboard the
   benchmark switches regime automatically: Asian under geometric Brownian motion above 12
   trading days to expiry, rough Bergomi at or below.
 </p>
@@ -373,16 +381,16 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <p>
   Following Buehler and coauthors (2019), a policy network maps the hedging state to a position
   and is trained to minimize the 95% conditional value at risk of the terminal loss, with
-  transaction costs inside the objective. The Hedging tab simulates 15,000 paths (five seeds of
-  3,000) of hedging a short 30-day at-the-money call to expiry, and shows the learned policy's
+  transaction costs inside the objective. The Hedging tab simulates 15,000 paths (five seeded
+  blocks of 3,000) of hedging a short 30-day at-the-money call to expiry, and shows the learned policy's
   profit-and-loss distribution against a vol-matched Black-Scholes delta hedge and a cost-aware
   Whalley-Wilmott no-trade band on the same paths. On Black-Scholes dynamics the learned policy
   does not beat either baseline on tail risk; under rough volatility with transaction costs it
   reaches a lower tail loss than the delta hedge, mostly by trading less, which is the
   experiment below. Replayed over eight years of real SPY
   and BTC daily history with only ex-ante information, the default <code>hedger.pt</code>
-  checkpoint (neither of the two the dashboard serves, and byte-identical to the
-  retired legacy-measure checkpoint) keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY
+  checkpoint (a policy trained on the GAN market simulator, which the dashboard does not
+  serve) keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY
   windows, trading about half as much as delta) but not its tail advantage. Neither served
   policy has been replayed on history; the paired tables and that provenance are in
   <code>docs/hedging_real_paths.md</code>.
@@ -409,10 +417,17 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   delta hedge is mean and 10.0 bp is tail shape. On demeaned tail alone the
   Whalley-Wilmott band is ahead below 200 bp. The same policy evaluated on Black-Scholes paths
   loses, as it should: the edge is specific to the dynamics it was trained on.
+  The &plusmn; figures are bootstrap standard errors over those 15,000 evaluation paths, for one
+  trained policy per training measure: the policies trained under geometric Brownian motion,
+  rough Bergomi and rough Bergomi with jumps all use training seed 21. They do not include the
+  spread from retraining the network. That spread is measured separately, with the dashboard's
+  own hedge run at 50 bp: policies trained on four seeds and scored on two sets of evaluation
+  paths put the advantage over the delta hedge between 48 and 99 bp of strike
+  (<code>scripts/hedger_seed_spread.py</code>, <code>docs/deep_hedging_seed_spread.json</code>).
 </p>
 <figure class="fig">
   <img src="/assets/deep_hedging_regimes.png" alt="Left: tail loss (CVaR 95) against transaction cost for the deep policy, delta hedge, linear-regression hedge and Whalley-Wilmott band under rough Bergomi with jumps, with error bars. Right: a train-by-evaluate regime matrix of the deep policy's tail loss relative to the delta hedge" loading="lazy">
-  <figcaption>Left: CVaR<sub>95</sub> of the terminal hedging loss against proportional transaction cost under rough Bergomi + jumps, 5 seeds &times; 3,000 paths per point, bars = 2 bootstrap standard errors. Right: median tail-loss ratio deep/delta for each training and evaluation measure. Reproduce with <code>scripts/deep_hedging_regimes.py</code>.</figcaption>
+  <figcaption>Left: CVaR<sub>95</sub> of the terminal hedging loss against proportional transaction cost under rough Bergomi + jumps, 5 seeded path blocks &times; 3,000 paths per point, one trained policy (training seed 21), bars = 2 bootstrap standard errors over those paths. Right: median tail-loss ratio deep/delta for each training and evaluation measure. Reproduce with <code>scripts/deep_hedging_regimes.py</code>.</figcaption>
 </figure>
 
 <h3>Explainability by integrated gradients</h3>
@@ -553,7 +568,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 
 <div class="tbl-wrap">
 <table>
-  <caption>Deep hedging under rough Bergomi + jumps (SPY-calibrated), CVaR<sub>95</sub> of the terminal loss in bp of strike, 5 seeds &times; 3,000 paths per cost, &plusmn; one bootstrap SE. Deep policy trained under the same dynamics.</caption>
+  <caption>Deep hedging under rough Bergomi + jumps (SPY-calibrated), CVaR<sub>95</sub> of the terminal loss in bp of strike, 5 seeded path blocks &times; 3,000 paths per cost, &plusmn; one bootstrap SE over those paths. Deep policy: one training run (seed 21) under the same dynamics.</caption>
   <thead><tr><th>Cost</th><th class="n">Delta hedge</th><th class="n">Whalley-Wilmott</th><th class="n">Linear regression</th><th class="n">Deep policy</th><th class="n">Deep / delta</th></tr></thead>
   <tbody>
     <tr><td>0 bp</td><td class="n">308 &plusmn; 10</td><td class="n">308 &plusmn; 10</td><td class="n">288 &plusmn; 9</td><td class="n">354 &plusmn; 7</td><td class="n">1.15</td></tr>
@@ -649,7 +664,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
   <li>This is a research and portfolio project, not production trading infrastructure. Nothing here is investment advice.</li>
   <li>The Asian pricer takes a single flat volatility rather than a full surface and carries no arbitrage constraint of its own, and the short-dated pricing ensemble is not arbitrage-free by construction either. The short-dated implied-volatility surface on the dashboard is the separately trained constrained network that is, and the two are compared above.</li>
   <li>The rough Bergomi model has constant parameters: &eta;, &rho; and H are fitted jointly to one smile and none of them varies with maturity, so one fit covers the short-dated range and longer expiries would need their own. The served short-dated checkpoint was trained on a single calibration to SPY quotes captured on 20 August 2026 and is not refit as the market moves. Fitting H against the skew term structure as well moves it (see the joint refit above), but the served model was not retrained on that result.</li>
-  <li>The deep hedger's advantage is regime-specific. On Black-Scholes paths the classical baselines win; under rough volatility with transaction costs it beats the delta hedge, and the Whalley-Wilmott band from 100 bp; on eight years of real SPY and BTC daily history it keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY windows) but not its tail advantage. The GAN market simulator used in early training is not a reliable evaluation measure, so no result is reported on it.</li>
+  <li>The deep hedger's advantage is regime-specific. On Black-Scholes paths the classical baselines win; under rough volatility with transaction costs it beats the delta hedge, and the Whalley-Wilmott band from 100 bp; on eight years of real SPY and BTC daily history it keeps its cost efficiency (better mean P&amp;L at 50 bp of cost on 69% of SPY windows) but not its tail advantage. The GAN market simulator used in early training is not a reliable evaluation measure, so no result is reported on it. Each simulated result comes from one trained policy per measure, and its error bars cover the evaluation paths, not retraining.</li>
   <li>The served pricer favours price accuracy: its delta and vega are 5.9% and 1.2% less accurate than an alternative head that prices slightly worse. A service hedging off these Greeks should weigh that differently from a service pricing with them.</li>
   <li>The second-order Greeks are not hedging-grade. An autograd audit of the served Asian ensemble over 120,800 points of its own trained box finds gamma negative on 18.6% of it and vega negative on 28.1%, concentrated where the average is nearly deterministic and the true price is a hinge with no curvature to reproduce; inside the region where a reference vega resolves at all, 0.06% of convexity checks fail and every other condition is clean. Gamma's held-out error against the conditional-density reference is measured above; no hedging experiment in this project runs on the surrogate's own Greeks, since the hedging comparisons use a Black-Scholes delta throughout.</li>
   <li>The absolute price RMSE moves with the test draw (1.301 to 1.488 bps across four independent draws); only paired comparisons on identical points and references are treated as meaningful.</li>
@@ -661,7 +676,7 @@ figure.fig figcaption { margin-top: 8px; font-size: 12.5px; line-height: 1.55; c
 <h2 id="links">5. Links</h2>
 
 <ul>
-  <li><a href="/">The live dashboard</a>: Pricing Lab, Deep Hedging and the AI Risk Analyst, all computed live.</li>
+  <li><a href="/">The live dashboard</a>: Quote, Hedge, Live and Desk note.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab" rel="noopener">Source code on GitHub</a>: the README, the trained checkpoints, and the evaluation scripts.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/deep_hedging_regimes.md" rel="noopener">docs/deep_hedging_regimes.md</a>: the deep hedging experiment under rough volatility, jumps and costs, every cell with standard errors.</li>
   <li><a href="https://github.com/Ronak-Mahajan/neural-options-lab/blob/main/docs/approximation_benchmark.md" rel="noopener">docs/approximation_benchmark.md</a>: the surrogate against the Levy (1992) and Curran (1994) closed forms, cell by cell, with the protocol and the reference standard errors.</li>

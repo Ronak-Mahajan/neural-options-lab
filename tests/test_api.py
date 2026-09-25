@@ -7,8 +7,10 @@ browser sees, so the quant-layer tests cannot cover it:
     is built once at import, so no request runs the git lookup and a
     container without git still answers.
   * /api/price and /ws/stream report the European no-arbitrage floor next to
-    the served 0DTE price. The price is compared against the engine call the
-    handler makes, so a change that clamps it fails here.
+    the served 0DTE price, which is floored at zero with a `clamped` flag. A
+    put is checked against a reconstruction from the call and European
+    put-call parity, and one pinned put that the network prices below zero
+    must come back clamped and flagged below intrinsic.
   * /api/surface takes the one-at-a-time simulation gate, and the websocket
     prices without it, so the two cannot deadlock.
   * The request boundary: non-finite numbers and malformed desk-note inputs
@@ -128,7 +130,7 @@ def test_intrinsic_fields_flag_a_price_under_the_european_floor():
 # The last two rows sit in the ITM corner the arbitrage audit measured: at one
 # trading day the ensemble prices a 1.05- and 1.10-moneyness call about 1 bp of
 # strike under discounted intrinsic. The assertions cover the arithmetic and
-# the unchanged price and leave the flag's value free, so they hold when a
+# the served price and leave the flag's value free, so they hold when a
 # future checkpoint clears that corner.
 @pytest.mark.parametrize("spot,maturity,option_type", [
     (100.0, ZERO_DTE_T, "call"),
@@ -146,16 +148,44 @@ def test_price_reports_the_floor_without_moving_the_price(client, spot,
     assert d["regime"] == "rough_bergomi_european"
     nn = d["nn"]
 
+    # The expected pre-floor value: the network's call, and for a put the
+    # call minus the European parity term S - K e^{-rT}.
+    call_raw = api.ENGINE.price_with_greeks(spot, 100.0, maturity, 0.25, 0.04,
+                                            "call")["raw_price"]
+    raw = (call_raw if option_type == "call"
+           else call_raw - (spot - 100.0 * math.exp(-0.04 * maturity)))
+    assert nn["price"] == pytest.approx(max(raw, 0.0), abs=1e-4)
+    assert nn["clamped"] is (raw < 0.0)
+
     floor = api.discounted_intrinsic(spot, 100.0, maturity, 0.04, option_type)
     assert nn["intrinsic"] == pytest.approx(floor)
-    assert nn["below_intrinsic"] is (nn["price"] < floor - 1e-9 * 100.0)
+    shortfall = max(floor - raw, 0.0)
+    # The reconstruction agrees with the float32 network to about 1e-5, so the
+    # flag is asserted wherever the pre-floor value is clear of the floor.
+    if floor - raw > 1e-3:
+        assert nn["below_intrinsic"] is True
+    elif floor - raw < -1e-3:
+        assert nn["below_intrinsic"] is False
     assert nn["below_intrinsic_bps_of_strike"] == pytest.approx(
-        max(floor - nn["price"], 0.0) / 100.0 * 1e4)
+        shortfall / 100.0 * 1e4, abs=1e-2)
 
-    # The served price is the raw ensemble output, unchanged by the flag.
-    direct = api.ENGINE.price_with_greeks(spot, 100.0, maturity, 0.25, 0.04,
-                                          option_type)["price"]
-    assert nn["price"] == pytest.approx(direct)
+
+def test_price_floors_a_negative_parity_put_and_says_so(client):
+    """A 0DTE point where the call sits under its parity floor, so the
+    parity-derived put is negative before the zero floor (-0.0821 at a
+    $100 strike on the shipped checkpoint). The served price is 0, and the
+    response says the floor acted and that the pre-floor value is under
+    intrinsic."""
+    d = client.post("/api/price", json=body(
+        spot=101.6557, maturity=0.04125, sigma=0.05056, rate=0.03038,
+        option_type="put")).json()
+    assert d["regime"] == "rough_bergomi_european"
+    nn = d["nn"]
+    assert nn["price"] == 0.0
+    assert nn["clamped"] is True
+    assert nn["below_intrinsic"] is True
+    assert nn["intrinsic"] == 0.0
+    assert nn["below_intrinsic_bps_of_strike"] == pytest.approx(8.21, abs=0.05)
 
 
 def test_price_leaves_the_asian_regime_floor_unreported(client):
@@ -177,6 +207,7 @@ def test_stream_frames_carry_the_floor_in_the_0dte_regime(client):
             api.discounted_intrinsic(frame["spot"], 100.0, ZERO_DTE_T, 0.04,
                                      "call"), abs=1e-3)
         assert isinstance(frame["below_intrinsic"], bool)
+        assert isinstance(frame["clamped"], bool)
 
 
 def test_stream_frames_omit_the_floor_in_the_asian_regime(client):
@@ -600,3 +631,295 @@ def test_stream_config_errors_fixed_messages(client, config):
         and error.endswith(api.STREAM_CONFIG_HELP))
     for leak in ("pydantic", "http", "object has no attribute", "float()"):
         assert leak not in error
+
+
+# ---------------------------------------------------------------------------
+# The simulation gate on every heavy route
+# ---------------------------------------------------------------------------
+
+# /api/price, /api/convergence and /api/benchmark in flight together have
+# exhausted the container's memory, so each heavy route must queue on the one
+# gate. The two cached routes get an empty cache, so the request reaches the
+# gate instead of answering from memory.
+HEAVY_ROUTES = [
+    ("/api/price", body()),
+    ("/api/convergence", {"path_counts": [1_000, 2_000]}),
+    ("/api/benchmark", {}),
+    ("/api/hedge", {"dynamics": "gbm", "sigma": 0.3, "cost": 0.02}),
+    ("/api/iv-surface", {"resolution": 11}),
+    ("/api/surface", {"resolution": 10}),
+]
+
+
+@pytest.mark.parametrize("route,payload", HEAVY_ROUTES,
+                         ids=[r for r, _ in HEAVY_ROUTES])
+def test_every_heavy_route_takes_the_simulation_gate(client, monkeypatch,
+                                                     route, payload):
+    """With the single gate held, each route times out with the gate's own
+    503 rather than running its simulation or batch alongside."""
+    monkeypatch.setattr(api, "HEAVY_JOB_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(api, "_CONVERGENCE_CACHE", api._ResponseCache(4))
+    monkeypatch.setattr(api, "_HEDGE_CACHE", api._ResponseCache(4))
+    assert api._HEAVY_JOB_GATE.acquire(timeout=5.0)
+    try:
+        resp = client.post(route, json=payload)
+    finally:
+        api._HEAVY_JOB_GATE.release()
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "10"
+    assert resp.json()["detail"] == "Simulation queue is saturated; retry shortly"
+
+
+# ---------------------------------------------------------------------------
+# Response headers, caching and methods
+# ---------------------------------------------------------------------------
+
+def csp_directives(csp: str) -> dict[str, list[str]]:
+    return {d.split()[0]: d.split()[1:] for d in csp.split("; ")}
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/"), ("GET", "/methodology"), ("GET", "/app.js"),
+    ("GET", "/api/health"), ("HEAD", "/api/health"), ("GET", "/api/nope"),
+    ("GET", "/missing.html"),
+])
+def test_security_headers_on_every_response(client, method, path):
+    resp = client.request(method, path)
+    for name, value in api.SECURITY_HEADERS.items():
+        assert resp.headers.get(name) == value, (path, name)
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/docs/oauth2-redirect"])
+def test_api_doc_pages_carry_every_header_but_the_page_csp(client, path):
+    """Swagger UI and ReDoc load from cdn.jsdelivr.net and start with an
+    inline script, which the dashboard's policy blocks, so their pages get
+    no CSP. Every other header still applies."""
+    resp = client.get(path)
+    assert resp.status_code == 200, path
+    assert "Content-Security-Policy" not in resp.headers
+    for name, value in api.SECURITY_HEADERS.items():
+        if name != "Content-Security-Policy":
+            assert resp.headers.get(name) == value, (path, name)
+    csp = client.get("/openapi.json").headers["Content-Security-Policy"]
+    assert csp == api.CONTENT_SECURITY_POLICY
+
+
+def test_security_headers_on_a_refused_body(client):
+    """The 413 is written by BodySizeLimit, inside the header middleware."""
+    resp = client.post("/api/risk-report",
+                       content=b"x" * (api.MAX_BODY_BYTES + 1),
+                       headers={"Content-Type": "application/json"})
+    assert resp.status_code == 413
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["X-Frame-Options"] == "DENY"
+
+
+def test_content_security_policy_is_enforcing_and_narrow(client):
+    headers = client.get("/").headers
+    csp = headers["Content-Security-Policy"]
+    directives = csp_directives(csp)
+    assert directives["default-src"] == ["'self'"]
+    assert directives["script-src"] == ["'self'", "https://cdn.plot.ly"]
+    assert directives["connect-src"] == ["'self'"]
+    assert directives["frame-ancestors"] == ["'none'"]
+    assert directives["object-src"] == ["'none'"]
+    # The pinned Plotly build, gl3d surfaces included, runs without eval.
+    assert "'unsafe-eval'" not in csp
+    # Inline script is never allowed; inline style is (Plotly writes it).
+    assert "'unsafe-inline'" not in directives["script-src"]
+    assert "Content-Security-Policy-Report-Only" not in headers
+
+
+def test_every_external_source_the_pages_load_is_allowed(client):
+    """Each third-party origin index.html and methodology.html reference sits
+    in the directive that governs it, so a new CDN tag cannot ship without
+    its CSP entry."""
+    import re
+    directives = csp_directives(
+        client.get("/").headers["Content-Security-Policy"])
+    checked = 0
+    for page in ("/", "/methodology"):
+        html = client.get(page).text
+        for src in re.findall(r'<script[^>]+src="(https?://[^"]+)"', html):
+            assert "/".join(src.split("/")[:3]) in directives["script-src"], src
+            checked += 1
+        for tag in re.findall(r"<link[^>]+>", html):
+            href = re.search(r'href="(https?://[^"]+)"', tag)
+            if href and 'rel="stylesheet"' in tag:
+                origin = "/".join(href.group(1).split("/")[:3])
+                assert origin in directives["style-src"], href.group(1)
+                checked += 1
+    assert checked >= 3
+    assert "https://fonts.gstatic.com" in directives["font-src"]
+    # The favicon is a data: URI.
+    assert "data:" in directives["img-src"]
+
+
+@pytest.mark.parametrize("path", ["/", "/index.html", "/app.js",
+                                  "/styles.css", "/methodology",
+                                  "/methodology.html"])
+def test_pages_scripts_and_styles_revalidate_on_every_load(client, path):
+    """No content hash in these names, so a cached copy is revalidated (a 304
+    against the ETag) and a deploy is seen at once."""
+    resp = client.get(path)
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "no-cache"
+
+
+def test_images_are_cached_for_an_hour(client):
+    resp = client.get("/hero.png")
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "public, max-age=3600"
+
+
+def test_revalidation_returns_304_with_the_same_policy(client):
+    first = client.get("/app.js")
+    again = client.get("/app.js",
+                       headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    assert again.headers["Cache-Control"] == "no-cache"
+
+
+def test_api_responses_carry_no_static_cache_policy(client):
+    assert "Cache-Control" not in client.get("/api/health").headers
+
+
+def test_head_methodology_and_health(client):
+    """Link checkers and uptime monitors that probe with HEAD see the page
+    and the service as up."""
+    get = client.get("/methodology")
+    head = client.head("/methodology")
+    assert head.status_code == 200 and head.content == b""
+    assert head.headers["content-length"] == get.headers["content-length"]
+    health = client.head("/api/health")
+    assert health.status_code == 200 and health.content == b""
+
+
+@pytest.mark.parametrize("method,path,allow", [
+    ("GET", "/api/price", "POST"),
+    ("HEAD", "/api/price", "POST"),
+    ("GET", "/api/hedge", "POST"),
+    ("PUT", "/api/price", "POST"),
+    ("POST", "/api/health", "GET, HEAD"),
+])
+def test_method_mismatch_on_an_api_route_is_405(client, method, path, allow):
+    resp = client.request(method, path)
+    assert resp.status_code == 405
+    assert set(resp.headers["Allow"].split(", ")) == set(allow.split(", "))
+    if method != "HEAD":
+        assert resp.json() == {"detail": "Method Not Allowed"}
+
+
+def test_unknown_api_path_is_a_json_404(client):
+    resp = client.get("/api/does-not-exist")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
+
+
+def test_static_site_still_served_beside_the_api_guard(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/methodology.html").status_code == 200
+    assert client.head("/app.js").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# WebSocket handshake origin and message size
+# ---------------------------------------------------------------------------
+
+STREAM_CONFIG = {"spot": 100, "strike": 100, "maturity": ASIAN_T,
+                 "sigma": 0.25, "rate": 0.04, "hz": 15}
+
+
+@pytest.mark.parametrize("origin", [
+    "https://evil.example", "null", "https://testserver.evil.example",
+    "http://evil.example:8000", "file://",
+])
+def test_stream_refuses_a_cross_origin_handshake(client, origin):
+    """CORS does not cover WebSocket handshakes. A page on another origin is
+    refused before the socket is accepted, so it takes no stream slot."""
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws/stream",
+                                      headers={"origin": origin}):
+            pass  # pragma: no cover
+    assert exc.value.code == 1008
+    assert api._stream_clients == 0
+
+
+@pytest.mark.parametrize("origin", [
+    "http://testserver",                        # the request's own host
+    "https://neural-options-lab.onrender.com",  # the deployed site
+    "http://localhost:5173",                    # a local frontend dev server
+    "http://127.0.0.1:8123",
+])
+def test_stream_accepts_same_origin_and_local_dev(client, origin):
+    with client.websocket_connect("/ws/stream",
+                                  headers={"origin": origin}) as ws:
+        ws.send_json(STREAM_CONFIG)
+        assert ws.receive_json()["status"] == "ready"
+
+
+@pytest.mark.parametrize("text", [
+    json.dumps({**STREAM_CONFIG, "pad": [0] * 400}),
+    json.dumps({**STREAM_CONFIG, "pad": "x" * (2 * 1024 * 1024)}),
+    # Under the cap in characters, over it in UTF-8 bytes.
+    json.dumps({"spot": 100, "pad": "€" * 400}, ensure_ascii=False),
+], ids=["padded-array", "2MiB-string", "multibyte"])
+def test_stream_refuses_an_oversized_config_before_parsing(client, text):
+    from starlette.websockets import WebSocketDisconnect
+    assert len(text.encode("utf-8")) > api.MAX_STREAM_MESSAGE_BYTES
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_text(text)
+        assert ws.receive_json() == {
+            "error": f"config exceeds {api.MAX_STREAM_MESSAGE_BYTES} bytes"}
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_json()
+    assert exc.value.code == 1009
+
+
+def test_dashboard_config_fits_the_message_cap():
+    """The dashboard's config at the widest values the schema admits stays
+    well under the cap."""
+    widest = {"spot": 999999.99, "strike": 999999.99, "sigma": 0.8,
+              "rate": 0.1, "maturity": 1.9999999999999998,
+              "option_type": "call", "hz": 15}
+    assert len(json.dumps(widest)) < api.MAX_STREAM_MESSAGE_BYTES // 4
+
+
+def test_stream_refuses_a_binary_config(client):
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_bytes(b'{"spot": 100}')
+        assert ws.receive_json() == {"error": "config must be a JSON object"}
+
+
+def test_stream_closes_on_a_second_message(client):
+    """The stream takes one config message. A later one closes it and frees
+    the slot, so nothing piles up unread in the server's receive buffer."""
+    from starlette.websockets import WebSocketDisconnect
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_json(STREAM_CONFIG)
+        assert ws.receive_json()["status"] == "ready"
+        ws.send_text("x" * 64)
+        closing = None
+        with pytest.raises(WebSocketDisconnect) as exc:
+            for _ in range(200):
+                msg = ws.receive_json()
+                if "tick" not in msg:
+                    closing = msg
+    assert closing == {"error": "the stream takes one config message"}
+    assert exc.value.code == 1008
+    assert api._stream_clients == 0
+
+
+def test_stream_slot_is_freed_when_the_client_leaves(client):
+    import time
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_json(STREAM_CONFIG)
+        assert ws.receive_json()["status"] == "ready"
+        assert ws.receive_json()["tick"] == 1
+        assert api._stream_clients == 1
+    for _ in range(50):
+        if api._stream_clients == 0:
+            break
+        time.sleep(0.05)
+    assert api._stream_clients == 0

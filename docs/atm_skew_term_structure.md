@@ -15,7 +15,11 @@ eta T^H = 0.93 already at one day, and re-running the same model at eta = 0.5
 equal to the first-order prediction (0.0720 vs 0.0723). The SPY market itself, measured
 on 8 trading-hour captures x 7 expiries (2-10 trading days), has exponent
 -0.249 +- 0.033, indistinguishable from H - 1/2 (0.3 sigma) and 1.1-2.1 sigma from the
-model's slope over the same window. BTC (Deribit) does not follow a power law.
+model's slope over the same window. Every SPY model number here uses the project's n_steps = 50
+time grid. Its time-step bias grows with maturity and with eta, from 2% of psi at 1 day
+to 10% at 126 days at the calibrated eta; extrapolated to dt -> 0, the 1-45-day
+two-point slope is -0.309 against -0.319 at 50 steps (Section 5, caveat 4). BTC
+(Deribit) does not follow a power law.
 Two of three snapshots have a positive ATM skew inside two weeks that changes sign
 near 15-25 days, and the committed BTC calibration (rejected, H pinned at 0.5) gives a
 flat skew of -0.047 that is 5-50x too small at the short end.
@@ -146,9 +150,12 @@ day. Re-running the model with only eta changed (same H, rho, xi; 8 seeds x 200k
 
 At eta = 0.5 the slope agrees with H - 1/2 = -0.2387 to 0.6 SE, every local window is
 within about 1 SE of it, and the amplitude matches the first-order coefficient to 0.4%.
-The departure at the calibrated parameters is therefore a finite-vol-of-vol effect of the
-rough Bergomi model itself; the eta = 0.5 run, on the same code and stencil, rules out a
-numerical artefact. The "rough signature" measured from this calibration over listed
+The eta = 0.5 run, on the same code and stencil, rules out an error in the stencil and
+the fit. It does not bound the time-step bias, which grows with eta: at n_steps = 50 that
+bias is 1.8% of psi at 126 d at eta = 0.5 and 9.6% at the calibrated eta (Section 5,
+caveat 4). Extrapolated to dt -> 0 the calibrated model's skew still departs from the
+first-order law (two-point slope over 1-45 d -0.309 against H - 1/2 = -0.239), so the
+departure is a finite-vol-of-vol effect of the rough Bergomi model itself. The "rough signature" measured from this calibration over listed
 maturities is a steeper, curved term structure, where the asymptotic law predicts a
 straight line of slope H - 1/2.
 
@@ -181,7 +188,9 @@ the spread is movement of the exponent between captures.
   model -1.48 at 3 d vs market -1.08 to -1.58 at 2.1-2.8 d; model -0.97 at 12 d and -1.10 at
   8 d vs market -0.86 to -1.01 at 9.7-10.4 d. The level comparison is in-sample, because the
   parameters were calibrated to the 2026-08-21 11:00 surface, which is one of the captures.
-- Slope. Model -0.321 +- 0.007 (1-45 d) vs market -0.249 +- 0.033, 2.1 sigma apart. Like
+- Slope. Model -0.321 +- 0.007 (1-45 d) vs market -0.249 +- 0.033, 2.1 sigma apart. The
+  model SE is Monte Carlo only; the n_steps = 50 time-step bias moves the model's
+  1-45-d slope about +0.010 toward the market (caveat 4). Like
   for like, the model's local exponent over 2-8 d is -0.288 +- 0.011 and over 3-12 d is
   -0.306 +- 0.004, i.e. 1.1 and 1.7 sigma from the market. The market's exponent is
   consistent with H - 1/2. The model's exponent at the calibrated eta is 4.5 sigma from
@@ -238,11 +247,43 @@ carry no term structure to compare with.
    the calibrated eta it is never within reach on listed maturities (Section 2); the eta
    scan is the evidence, and it also shows the fitted amplitude drifting from the
    first-order C as eta grows (0.4%, 8%, 38% below it at eta = 0.5, 1.5, 3.94).
-4. MC noise and truncation. MC SE is <= 0.6% of |psi| everywhere; the central-difference
-   truncation (up to 6%) is the larger numerical error and shifts the 1-45-d slope from
-   -0.321 (raw) to -0.312 (Richardson). Neither changes any conclusion. n_steps = 50 at every
-   maturity is the project protocol; its discretisation error at 126 d (dt = 2.5 days) was
-   not studied.
+4. MC noise, stencil truncation and time step. MC SE is <= 0.6% of |psi| everywhere; the
+   central-difference truncation (up to 6%) shifts the 1-45-d slope from -0.321 (raw) to
+   -0.312 (Richardson in h). n_steps = 50 at every maturity is the project protocol, and
+   its time-step bias is the largest numerical error beyond a few days. It is measured
+   with common random numbers: one exact joint draw of (dW, W~) on a 400-step grid, from
+   the engine's own `_joint_factor_unit`, coarsened to 25, 50, 100 and 200 steps, with
+   the engine's left-point scheme applied at every level (4M paths per maturity, 8M at
+   126 d at the calibrated eta; the doc's stencil h; standard errors over 40 batches).
+   Every consecutive difference in psi is at least 3.5 of its standard errors. The study
+   is `scripts/rb_step_convergence.py`; each run's output and the summary the table
+   below is read from are in `docs/rb_step_convergence/`.
+
+   | T (days) | eta | psi, n = 25 | 50 | 100 | 200 | 400 | extrapolated | bias at 50 | observed order | GCI at 400 | ATM iv bias at 50 (vol pts) |
+   |---|---|---|---|---|---|---|---|---|---|---|---|
+   | 1 | 3.94 | -1.962 | -2.006 | -2.030 | -2.040 | -2.046 | -2.051 | 2.2% | 0.91-1.12 | 0.3% | 0.015 |
+   | 5 | 3.94 | -1.244 | -1.281 | -1.299 | -1.309 | -1.313 | -1.315 | 2.6% | 0.93-1.42 | 0.2% | 0.034 |
+   | 12 | 3.94 | -0.939 | -0.974 | -0.992 | -1.001 | -1.005 | -1.008 | 3.4% | 0.96-1.18 | 0.4% | 0.052 |
+   | 45 | 3.94 | -0.563 | -0.596 | -0.615 | -0.624 | -0.628 | -0.633 | 5.8% | 0.85-1.01 | 1.0% | 0.097 |
+   | 126 | 3.94 | -0.334 | -0.364 | -0.382 | -0.391 | -0.396 | -0.403 | 9.6% | 0.78-0.91 | 2.1% | 0.146 |
+   | 126 | 0.5 | -0.0831 | -0.0845 | -0.0854 | -0.0858 | -0.0859 | -0.0861 | 1.8% | 0.81-1.26 | 0.2% | 0.006 |
+
+   "Extrapolated" is the Richardson value from the 100/200/400 triplet at its observed
+   order; "bias at 50" is psi(50) minus that value as a share of |psi|; the observed order
+   is the range over the three consecutive triplets (about 1, and not constant); GCI uses a
+   safety factor of 1.25. The n = 50 column agrees with the Section 2 table (-2.006 +- 0.011
+   against -1.985 +- 0.012 at 1 d; -0.364 against -0.363 at 126 d). The bias is 4 to 45
+   times the Section 2 MC SE (unrounded SEs from the JSON)
+   and grows with T and with eta, so a clean result at eta = 0.5 says little about its size
+   at the calibrated eta.
+
+   Effect on the exponents: the two-point log-log slope over 1-45 d is -0.3187 at 50 steps
+   and -0.3088 extrapolated (a shift of +0.010, against SE(b) = 0.007), and over 45-126 d
+   it is -0.479 and -0.439 (+0.040, against the 30-126-d window SE of 0.017). The fitted
+   exponents in Section 2 and their SEs carry this shift in addition to the quoted MC error;
+   the qualitative results (a curved term structure, steeper than H - 1/2 at the
+   calibrated eta) hold at the extrapolated values. At 126 d the time-step bias in psi
+   (0.039) exceeds the stencil truncation (0.022) that the Richardson column corrects.
 5. Quote resolution. The book is tight: inside the
    |k| <= 2 atm_iv sqrt(tau) band the per-(capture, expiry) median half-spread runs
    0.022-0.072 vol points across the 56 rows (`half_spread_iv` as

@@ -19,9 +19,10 @@ Protocol, chosen to be attackable in the right places:
     a desk quoting off this forecast would actually have collected - so P&L
     includes the vol-forecast error, as it does on a real desk;
   - windows overlap with a 5-day stride. Overlap inflates the effective
-    sample: consecutive windows share 25 of 30 days, so the CVaR standard
-    errors printed here are OPTIMISTIC and the honest unit of independence is
-    closer to n_windows/6. Both counts are printed.
+    sample: consecutive windows share 25 of 30 days, so the i.i.d. CVaR
+    standard errors printed here understate the sampling error.
+    scripts/hedge_real_paths_block.py resamples with a moving-block bootstrap
+    that respects the overlap; docs/hedging_real_paths.md quotes its intervals.
 
 What this cannot show: one historical path per asset is a single draw - a
 strategy can lose on a draw and still be right. The value here is the PAIRED
@@ -141,7 +142,7 @@ def main() -> None:
         premiums = bs_call_price(1.0, 1.0, MATURITY, sigs, rate)
 
         print(f"\n=== {ticker}: {n} windows from {len(closes)} closes "
-              f"(stride {STRIDE}; ~{n // 6} independent), ex-ante vol "
+              f"(stride {STRIDE}; overlapping, see the block bootstrap), ex-ante vol "
               f"median {np.median(sigs_raw):.1%}"
               + (f", {clipped} clipped into the training box" if clipped
                  else "") + f", cost {args.cost:.4f} ===")

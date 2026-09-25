@@ -35,6 +35,14 @@
   /* Apple system colors (dark mode) */
   --neural: #0A84FF;
   --neural-soft: rgba(10, 132, 255, 0.12);
+  /* The accent as text. #0A84FF on its own 12% tint is 4.1:1; this step is
+     5.3:1 on the tint over --surface and 4.9:1 on --raised. Marks keep
+     --neural. */
+  --neural-text: #409CFF;
+  /* Filled accent buttons: white label text at 4.7:1 (hover 5.6:1). */
+  --accent-fill: #0071E3;
+  --accent-fill-hover: #0066CC;
+  --accent-fill-active: #005BB5;
   --classic: #FF9F0A;
   --classic-soft: rgba(255, 159, 10, 0.10);
   --single: #8E8E93;
@@ -53,7 +61,35 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { color-scheme: dark; }
+/* The sticky header is about 67px tall on desktop; focus and in-page jumps
+   land below it. */
+html { color-scheme: dark; scroll-padding-top: 80px; }
+
+/* Visible keyboard focus on every control. Mouse clicks do not draw it. */
+:focus-visible {
+  outline: 2px solid var(--neural-text);
+  outline-offset: 2px;
+}
+.tab-btn:focus-visible, .seg-btn:focus-visible { outline-offset: -2px; }
+.help:focus-visible { outline-offset: 1px; }
+main:focus, main:focus-visible { outline: none; }
+
+/* Text for screen readers only: announcements and chart summaries. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
+/* The first stop in the tab order jumps past the header and the inputs. */
+.skip-link {
+  position: absolute; left: 12px; top: -60px; z-index: 100;
+  padding: 9px 14px; border-radius: var(--r-ctl);
+  background: var(--raised); color: var(--ink-hi);
+  border: 1px solid var(--line-hi);
+  font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.skip-link:focus, .skip-link:focus-visible { top: 10px; }
 
 body {
   background: var(--bg-0);
@@ -168,7 +204,7 @@ body {
 .model-card dd { font-size: 12px; line-height: 1.55; color: var(--ink);
   margin-top: 2px; }
 .model-card-link { display: inline-block; margin-top: 12px; font-size: 12px;
-  color: var(--neural); text-decoration: none; }
+  color: var(--neural-text); text-decoration: none; }
 .model-card-link:hover { text-decoration: underline; }
 
 /* Shell Layout */
@@ -279,6 +315,7 @@ h3 + p, .kicker + h3 { margin-top: 3px; }
 .param-val:hover { border-color: var(--line-hi); }
 .param-val:focus {
   outline: none; border-color: var(--neural); background: var(--well);
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.35);
 }
 .param-val.invalid { border-color: var(--rose); }
 
@@ -304,6 +341,20 @@ input[type="range"]::-moz-range-thumb {
   width: 12px; height: 12px; border-radius: 50%;
   background: var(--ink-hi); border: 1px solid var(--line-hi);
 }
+/* Keyboard focus on a slider rings its thumb, which is where an arrow key
+   acts, and outlines the track. */
+input[type="range"]:focus-visible { outline: 2px solid var(--neural-text);
+  outline-offset: 6px; border-radius: 4px; }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--bg-0), 0 0 0 5px var(--neural-text);
+}
+input[type="range"]:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px var(--bg-0), 0 0 0 5px var(--neural-text);
+}
+
+/* Why a typed value was refused, under the field it belongs to. */
+.field-error { font-size: 11px; line-height: 1.5; color: var(--rose); }
+.field-error:empty { display: none; }
 
 .readout-row {
   display: flex; justify-content: space-between; align-items: center;
@@ -375,7 +426,9 @@ input[type="range"]::-moz-range-thumb {
   .rail-section { gap: 17px; }
 }
 .help:hover { color: var(--ink-hi); border-color: var(--ink-mid); }
-.glossary { text-decoration: underline dotted var(--ink-rule);
+.glossary { font: inherit; color: inherit; background: none; border: 0;
+  padding: 0; display: inline; text-align: inherit;
+  text-decoration: underline dotted var(--ink-mid);
   text-underline-offset: 3px; cursor: pointer; }
 .help-bubble {
   position: absolute; z-index: 60; padding: 11px 13px;
@@ -466,7 +519,7 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--ink-mid); background: var(--raised);
 }
-.contract-pill.live { color: var(--neural); background: var(--neural-soft); }
+.contract-pill.live { color: var(--neural-text); background: var(--neural-soft); }
 .contract-text { font-size: 13px; line-height: 1.5; color: var(--ink); }
 
 /* Sections: the page groups into live results, accuracy, and the domain. */
@@ -586,7 +639,7 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.05em; text-transform: uppercase;
   padding: 4px 10px; border-radius: 5px;
 }
-.tag-nn { color: var(--neural); background: var(--neural-soft); }
+.tag-nn { color: var(--neural-text); background: var(--neural-soft); }
 .tag-mc { color: var(--classic); background: var(--classic-soft); }
 
 .price {
@@ -655,8 +708,7 @@ input[type="range"]::-moz-range-thumb {
 .greek:first-child { border-left: none; }
 .greek:hover { background: var(--raised); }
 .greek-sym {
-  font-family: var(--font-mono); font-size: 16px; color: var(--neural);
-  opacity: 0.7;
+  font-family: var(--font-mono); font-size: 16px; color: var(--neural-text);
 }
 .greek-name {
   display: inline-flex; align-items: center;
@@ -685,6 +737,8 @@ input[type="range"]::-moz-range-thumb {
   gap: 8px; flex: none; }
 
 .plot { height: 330px; position: relative; min-width: 0; }
+.plot-subhead { margin-top: 14px; font-family: var(--font-display);
+  font-size: 13px; font-weight: 600; color: var(--ink-hi); }
 .plot.tall { height: 460px; }
 
 /* buttons */
@@ -701,10 +755,10 @@ input[type="range"]::-moz-range-thumb {
 .btn:disabled { opacity: 0.45; cursor: wait; }
 .btn-accent {
   border: none;
-  background: var(--neural); color: #fff;
+  background: var(--accent-fill); color: #fff;
 }
-.btn-accent:hover { background: #0077e6; }
-.btn-accent:active { background: #006acc; }
+.btn-accent:hover { background: var(--accent-fill-hover); }
+.btn-accent:active { background: var(--accent-fill-active); }
 
 /* loading shimmer inside empty plot containers */
 .shimmer {
@@ -742,6 +796,9 @@ input[type="range"]::-moz-range-thumb {
   color: var(--ink-hi);
 }
 .hedge-stat .v.good { color: var(--mint); }
+/* A value that is words rather than a figure is set in the text face. */
+.hedge-stat .v.text { font-family: var(--font-ui); font-size: 14px;
+  font-weight: 500; line-height: 1.4; }
 
 /* Live Stream Stats: nine chips, so three columns fill a 3x3 grid */
 .stream-stats {
@@ -762,8 +819,11 @@ input[type="range"]::-moz-range-thumb {
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   color: var(--ink-hi);
 }
-.stream-stat .v.live { color: var(--neural); }
-.stream-stats.idle { opacity: 0.4; }
+.stream-stat .v.live { color: var(--neural-text); }
+/* While the feed is idle the last figures dim; the labels stay at full
+   contrast. wsIdle() takes the live colour off the price, so every idle
+   figure is --ink-hi, and 0.55 keeps it at 5.8:1 on --well. */
+.stream-stats.idle .v { opacity: 0.55; }
 
 .btn-stream-active {
   border-color: rgba(77, 186, 142, 0.5) !important;
@@ -875,6 +935,27 @@ input[type="range"]::-moz-range-thumb {
   .cost-slider-row input[type="range"] { width: 100%; }
   .price { font-size: 32px; }
   .speedup { font-size: 26px; }
+}
+
+/* In one column the header wraps to two or three rows. Where the viewport is
+   also short (a phone in landscape, or 400% zoom) a sticky header would
+   cover over half of it, so it scrolls away with the page there. */
+@media (max-width: 1100px) {
+  html { scroll-padding-top: 150px; }
+}
+@media (max-width: 1100px) and (max-height: 500px) {
+  .cmd-bar { position: static; }
+  html { scroll-padding-top: 0; }
+}
+
+/* Windows High Contrast and other forced palettes drop backgrounds and
+   shadows, so selection and the slider track need their own marks. */
+@media (forced-colors: active) {
+  .seg-btn.active, .tab-btn.active, .pick.active {
+    outline: 2px solid Highlight; outline-offset: -2px;
+  }
+  input[type="range"] { background: CanvasText; }
+  :focus-visible { outline-color: Highlight; }
 }
 
 /* stale-while-updating: readouts dim while a newer request is in flight */

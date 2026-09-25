@@ -8,7 +8,7 @@ name: Record surfaces
 #
 # The Deribit leg is the primary asset: 24/7, public, no key, and - verified -
 # it needs nothing but the standard library (backend/quant/deribit.py is pure
-# urllib), so this job installs no dependencies at all and finishes in well
+# urllib), so this leg installs no dependencies at all and finishes in well
 # under a minute.
 #
 # The yfinance/SPY leg is best-effort. Hosted runners are rate-limited by
@@ -22,6 +22,12 @@ name: Record surfaces
 # Captures NEVER land on main. They are committed to an orphan `surfaces`
 # branch, which shares no history with main, so cloning the code does not drag
 # the capture stream with it.
+#
+# Token scope: the `record` job, which installs and runs third-party packages,
+# holds a read-only token and keeps no credentials in .git/config. It hands
+# its captures to `publish` as a short-lived artifact. `publish` and
+# `failure-log` are the only jobs with write access, and they run git, cp and
+# tail only; nothing is installed while they hold it.
 #
 # Growth, measured on the first three runs of this workflow rather than
 # estimated: BTC 58-59 KB, ETH 48-54 KB, SPY 14 KB, all gzipped. Twelve
@@ -44,9 +50,9 @@ on:
       - "scripts/record_surfaces.py"
       - "backend/quant/deribit.py"
 
-# The publish step commits to the surfaces branch.
+# Read-only by default; publish and failure-log widen it for themselves.
 permissions:
-  contents: write
+  contents: read
 
 # Two recorders pushing to the same branch race on the rebase. Let a slow run
 # finish rather than starting a second.
@@ -57,9 +63,11 @@ concurrency:
 jobs:
   record:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -68,7 +76,7 @@ jobs:
       - name: Mark the start of this run
         # Everything the recorder writes is identified by being newer than
         # this marker. data/surfaces/ already holds 626 captures tracked on
-        # main; without the marker the publish step would copy all of them.
+        # main; without the marker the collect step would copy all of them.
         run: touch "$RUNNER_TEMP/run-start"
 
       - name: Capture Deribit (BTC, ETH)
@@ -96,21 +104,30 @@ jobs:
           fi
 
       - name: Install the SPY leg's dependencies
+        # calibrate.py imports torch and scipy. The leg runs on the stack the
+        # service pins, installed the same way as the Dockerfile and CI:
+        # torch from the CPU-only index at the version requirements.txt
+        # names, then requirements.txt with that exact torch as a constraint.
         if: steps.spy_gate.outputs.run == 'true'
         continue-on-error: true
         run: |
-          python -m pip install --upgrade pip
-          # calibrate.py imports torch and scipy; the CPU wheel is the only
-          # one this needs and the GPU wheel is ~2.5 GB.
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy scipy yfinance
+          set -o pipefail
+          {
+            python -m pip install --upgrade pip
+            pip install "$(grep -E '^torch[~=<>!]' requirements.txt | tr -d '\r')" \
+              --index-url https://download.pytorch.org/whl/cpu
+            python -c "import importlib.metadata as m; print('torch==' + m.version('torch'))" \
+              > "$RUNNER_TEMP/torch-pin.txt"
+            pip install -r requirements.txt -c "$RUNNER_TEMP/torch-pin.txt"
+          } 2>&1 | tee spy.log
+          exit ${PIPESTATUS[0]}
 
       - name: Capture SPY (best effort)
         if: steps.spy_gate.outputs.run == 'true'
         run: |
           set -o pipefail
           if python -m scripts.record_surfaces --once \
-               --currencies "" --tickers SPY 2>&1 | tee spy.log; then
+               --currencies "" --tickers SPY 2>&1 | tee -a spy.log; then
             echo "ok" > "$RUNNER_TEMP/spy-status.txt"
           else
             # Rate limits and missing deps both land here. Record WHY, then
@@ -121,18 +138,75 @@ jobs:
             echo "::warning::SPY leg failed; see equity/_spy_status.log on the surfaces branch"
           fi
 
+      - name: Collect this run's captures
+        # Only the files newer than the start marker, at their paths under
+        # data/surfaces/, plus the SPY outcome.
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/out"
+          mkdir -p "$OUT/surfaces"
+          n=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            rel="${f#data/surfaces/}"
+            mkdir -p "$OUT/surfaces/$(dirname "$rel")"
+            cp "$f" "$OUT/surfaces/$rel"
+            n=$((n + 1))
+          done < <(find data/surfaces -name '*.json.gz' \
+                     -newer "$RUNNER_TEMP/run-start" -print | sort)
+          if [ -s "$RUNNER_TEMP/spy-status.txt" ]; then
+            cp "$RUNNER_TEMP/spy-status.txt" "$OUT/spy-status.txt"
+          else
+            echo "not run" > "$OUT/spy-status.txt"
+          fi
+          echo "collected $n capture(s); spy: $(cat "$OUT/spy-status.txt")"
+
+      - name: Hand the captures to the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: captures
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+      - name: Keep this job's logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: record-log-capture
+          path: |
+            ci.log
+            spy.log
+          if-no-files-found: ignore
+          retention-days: 3
+          overwrite: true
+
+  publish:
+    needs: record
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: captures
+          path: ${{ runner.temp }}/out
+
       - name: Publish captures to the orphan surfaces branch
-        # Teed into publish.log so the failure step can write it back. This is
-        # the step with the git race in it - a lost rebase or a rejected push
-        # is precisely the outcome worth reading, and it was the one step
-        # producing no log at all.
+        # Teed into publish.log, which failure-log writes back on a branch
+        # run: a lost rebase or a rejected push is the outcome worth reading.
         run: |
           set -o pipefail
           {
           set -euo pipefail
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
           WT="$RUNNER_TEMP/surfaces-wt"
-          SPY_STATUS="$(cat "$RUNNER_TEMP/spy-status.txt" 2>/dev/null || echo 'not run')"
+          OUT="$RUNNER_TEMP/out"
+          SPY_STATUS="$(cat "$OUT/spy-status.txt" 2>/dev/null || echo 'not run')"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -154,14 +228,15 @@ jobs:
           mkdir -p "$WT/deribit" "$WT/equity"
 
           n=0
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            rel="${f#data/surfaces/}"
-            mkdir -p "$WT/$(dirname "$rel")"
-            cp "$f" "$WT/$rel"
-            n=$((n + 1))
-          done < <(find data/surfaces -name '*.json.gz' \
-                     -newer "$RUNNER_TEMP/run-start" -print | sort)
+          if [ -d "$OUT/surfaces" ]; then
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              rel="${f#"$OUT/surfaces/"}"
+              mkdir -p "$WT/$(dirname "$rel")"
+              cp "$f" "$WT/$rel"
+              n=$((n + 1))
+            done < <(find "$OUT/surfaces" -name '*.json.gz' -print | sort)
+          fi
 
           # Log the SPY outcome only when the leg actually ran. Logging every
           # skip would put a commit on the branch every two hours whether or
@@ -193,23 +268,46 @@ jobs:
           } 2>&1 | tee "$GITHUB_WORKSPACE/publish.log"
           exit ${PIPESTATUS[0]}
 
+      - name: Keep this job's log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: record-log-publish
+          path: publish.log
+          if-no-files-found: ignore
+          retention-days: 3
+          overwrite: true
+
+  failure-log:
+    # Never writes to main; a cron run from the default branch that fails is
+    # read from the Actions UI. On a branch smoke test the tail of each leg's
+    # log is committed so it can be read from the repository. Each log is
+    # guarded by a touch, so a failure before any leg wrote anything still
+    # produces a file.
+    needs: [record, publish]
+    if: failure() && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: record-log-*
+          path: logs
+          merge-multiple: true
+
       - name: Commit failure log
-        # Never writes to main; a cron run from the default branch that fails
-        # is read from the Actions UI. On a branch smoke test the tail of the
-        # failing run is committed so it can be read from the repository.
-        #
-        # All three legs are concatenated, each guarded by a touch: which step
-        # failed is exactly what the reader needs, and a failure before any of
-        # them wrote anything must still produce a file rather than failing
-        # this step on a missing one.
-        if: failure() && github.ref != 'refs/heads/main'
         run: |
-          mkdir -p .ci
-          touch ci.log spy.log publish.log
+          mkdir -p .ci logs
+          touch logs/ci.log logs/spy.log logs/publish.log
           {
             for f in ci.log spy.log publish.log; do
               echo "===== $f ====="
-              tail -c 20000 "$f"
+              tail -c 20000 "logs/$f"
             done
           } > .ci/last-failure-record.log
           git config user.name "github-actions[bot]"
