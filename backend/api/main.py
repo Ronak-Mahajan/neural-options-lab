@@ -519,6 +519,9 @@ class ImpliedVolRequest(ApiRequest):
     rate: float = Field(0.04, ge=0, le=0.1)
     option_type: str = Field("call", pattern="^(call|put)$")
     price: float = Field(..., ge=0)
+    # The volatility the caller starts from. Where several volatilities
+    # reproduce the price, the reply's `sigma` is the one nearest this.
+    sigma_hint: float | None = Field(None, gt=0, le=0.8)
 
 
 class PriceRequest(OptionParams):
@@ -780,6 +783,12 @@ def implied_vol(req: ImpliedVolRequest) -> dict:
     The inverse of pricing: a bisection on the served model, bracketed by one
     batched sweep across its trained volatility range. It costs a handful of
     forward passes and needs no simulation.
+
+    `roots` lists every volatility in the range that reproduces the price,
+    and `sigma` is the one nearest `sigma_hint`. `price_range` is the lowest
+    and highest price across the range. `vega` is the served model's vega
+    at `sigma`, per volatility point, the same figure /api/price reports
+    there.
     """
     from ..quant.solve_vol import solve_implied_vol
 
@@ -791,16 +800,21 @@ def implied_vol(req: ImpliedVolRequest) -> dict:
         try:
             sol = solve_implied_vol(
                 eng, req.spot, req.strike, req.maturity, req.rate, req.price,
-                option_type=req.option_type)
+                option_type=req.option_type, sigma_hint=req.sigma_hint)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         ms = (time.perf_counter() - t0) * 1000.0
+        vega = eng.price_with_greeks(
+            req.spot, req.strike, req.maturity, sol.sigma, req.rate,
+            req.option_type)["greeks"]["vega"]
 
     return {
         "sigma": sol.sigma,
         "price_at_sigma": sol.price_at_sigma,
         "target_price": sol.target_price,
         "bracketed": sol.bracketed,
+        "roots": list(sol.roots),
+        "vega": vega,
         "iterations": sol.iterations,
         "search_range": [sol.sigma_low, sol.sigma_high],
         "price_range": [sol.low_price, sol.high_price],

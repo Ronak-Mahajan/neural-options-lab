@@ -1507,9 +1507,12 @@ async function solveImpliedVol() {
   btn.textContent = "Solving";
   note.textContent = "";
   try {
+    // Far from the money more than one volatility can reproduce a premium;
+    // the server returns the one nearest the volatility already set.
     const d = await api("/api/implied-vol", {
       spot: state.spot, strike: state.strike, maturity: state.maturity,
       rate: state.rate, option_type: state.optionType, price: target,
+      sigma_hint: state.sigma,
     });
     if (!d.bracketed) {
       // No volatility in the trained range produces this premium. The note
@@ -1531,12 +1534,19 @@ async function solveImpliedVol() {
     $("in-sigma").value = pct;
     refreshAll();
     // The solver returns the volatility input that reproduces the premium,
-    // and its last digits are inside the pricer's error. Vega converts that
-    // error into volatility points, and the note quotes that width.
+    // and its last digits are inside the pricer's error. The vega the server
+    // measured at the solved volatility converts that error into volatility
+    // points, and the note quotes that width. Where vega is so small that
+    // the width exceeds the whole searched range, the note leaves it out.
     const bps = activeModelRmseBps();
-    const vega = lastGreeks ? lastGreeks.vega : null;
-    const volPts = (bps != null && vega && Math.abs(vega) > 1e-9)
-      ? Math.abs(bps * state.strike / 1e4 / vega) : null;
+    const rangePts = (d.search_range[1] - d.search_range[0]) * 100;
+    const volPts = (bps != null && Number.isFinite(d.vega) && d.vega !== 0)
+      ? Math.abs(bps * state.strike / 1e4 / d.vega) : null;
+    const width = volPts == null || volPts > rangePts ? ""
+      : volPts < 1 ? volPts.toFixed(2) + " of a volatility point"
+      : volPts.toFixed(1) + " volatility points";
+    const others = (d.roots || []).filter((s) => s !== d.sigma)
+      .map((s) => (s * 100).toFixed(1) + "%");
     note.textContent = "$" + d.target_price.toFixed(4) + " is reproduced by " +
       pct.toFixed(1) + "% volatility " + (is0dte()
         ? "in the short-dated model, where σ sets the rough-volatility " +
@@ -1544,9 +1554,12 @@ async function solveImpliedVol() {
           "Black-Scholes implied volatility."
         : "in this average-price model. It is this model's volatility input " +
           "and a different quantity from a market-quoted implied volatility.") +
-      (volPts != null
+      (others.length
+        ? " The model also reproduces it at " + others.join(" and ") + "."
+        : "") +
+      (width
         ? " The model's own " + bps.toFixed(1) + " bps price error moves it by " +
-          "about " + volPts.toFixed(2) + " of a volatility point."
+          "about " + width + "."
         : "");
   } catch (err) {
     note.textContent = err.message;

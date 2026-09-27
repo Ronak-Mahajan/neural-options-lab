@@ -320,6 +320,49 @@ def test_spot_and_strike_are_bounded(client):
     assert resp.status_code == 422
 
 
+#: The dashboard's far out-of-the-money put preset, priced at sigma 25%.
+FAR_OTM_PUT = {"spot": 160.0, "strike": 100.0, "maturity": 1.0,
+               "rate": 0.04, "option_type": "put"}
+
+
+def test_implied_vol_solves_the_price_the_page_shows(client):
+    """The preset's price at 25% is also reproduced near 18.5%, and both
+    lie below its price at 5%. The reply reaches it, lists both roots,
+    returns the one nearest the hint, and reports the price range and the
+    vega at the solved volatility."""
+    quoted = client.post("/api/price", json=body(
+        **FAR_OTM_PUT, sigma=0.25)).json()["nn"]
+    resp = client.post("/api/implied-vol", json={
+        **FAR_OTM_PUT, "price": quoted["price"], "sigma_hint": 0.25})
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["bracketed"]
+    assert len(d["roots"]) == 2 and d["roots"] == sorted(d["roots"])
+    assert d["roots"][0] == pytest.approx(0.185, abs=5e-3)
+    assert d["sigma"] == d["roots"][1] == pytest.approx(0.25, abs=5e-3)
+    lo, hi = d["price_range"]
+    assert lo < quoted["price"] < hi
+    at_solution = client.post("/api/price", json=body(
+        **FAR_OTM_PUT, sigma=d["sigma"])).json()["nn"]
+    assert d["vega"] == pytest.approx(at_solution["greeks"]["vega"],
+                                      rel=1e-6)
+
+
+def test_implied_vol_hint_picks_the_root(client):
+    quoted = client.post("/api/price", json=body(
+        **FAR_OTM_PUT, sigma=0.25)).json()["nn"]["price"]
+    low = client.post("/api/implied-vol", json={
+        **FAR_OTM_PUT, "price": quoted, "sigma_hint": 0.10}).json()
+    assert low["sigma"] == low["roots"][0]
+
+
+@pytest.mark.parametrize("hint", [0.0, -0.1, 0.9])
+def test_implied_vol_hint_is_bounded(client, hint):
+    resp = client.post("/api/implied-vol", json={
+        **FAR_OTM_PUT, "price": 0.005, "sigma_hint": hint})
+    assert resp.status_code == 422
+
+
 def test_put_call_parity_zero_dte(client):
     """European parity: C - P = S - K e^{-rT}. The 0DTE regime prices a
     European contract, so this is exact up to the float32 forward."""
