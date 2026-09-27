@@ -282,6 +282,21 @@ with sync_playwright() as pw:
     check("contract line follows the URL state",
           "out-of-the-money" in page.evaluate("document.getElementById('contract-text').textContent"),
           page.evaluate("document.getElementById('contract-text').textContent")[:110])
+
+    # This put's price dips below its value at 5% volatility before it rises,
+    # so the premium the page shows at 25% is reached at two volatilities.
+    # Solving it keeps the 25% that produced it and names the other one.
+    wait_for(page, "lastNNPrice != null && document.getElementById('nn-price').textContent === fmtMoney(lastNNPrice)")
+    shown = page.evaluate("document.getElementById('nn-price').textContent")
+    page.fill("#in-target-price", shown)
+    page.click("#btn-solve-iv")
+    page.wait_for_function("document.getElementById('btn-solve-iv').textContent === 'Solve'", timeout=120_000)
+    note = page.evaluate("document.getElementById('iv-solve-note').textContent")
+    sig = page.evaluate("state.sigma")
+    check("the far out-of-the-money put solves back to the volatility it was priced at",
+          abs(sig - 0.25) < 0.01 and "is reproduced by" in note
+          and "also reproduces it at" in note,
+          f"{shown} -> sigma {sig}: {note[:160]}")
     ctx.close()
 
     # ───────────────────────────────────────────────────────────── hedging
