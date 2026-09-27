@@ -20,6 +20,7 @@ import sys
 _local_browsers = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pw-browsers")
 if os.path.isdir(_local_browsers):
     os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _local_browsers)
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
 base = sys.argv[1].rstrip("/")
@@ -33,6 +34,18 @@ def check(name, cond, detail=""):
     print(f"[{'PASS' if cond else 'FAIL'}] {name}" + (f"  {detail}" if detail else ""))
     if not cond:
         fails.append(name)
+
+
+def wait_for(page, predicate, timeout=60_000):
+    """Wait for a predicate that a price refresh makes true. A price waits
+    behind a 220 ms debounce and the server's one-at-a-time simulation gate,
+    so under load it takes seconds. The bound is above the gate's 30 s
+    timeout; on a timeout this returns and the check that follows prints a
+    FAIL line with what the page shows, and the run goes on."""
+    try:
+        page.wait_for_function(predicate, timeout=timeout)
+    except PlaywrightTimeout:
+        pass
 
 
 def overflow(page):
@@ -178,7 +191,8 @@ with sync_playwright() as pw:
     # The numbers have to describe a position, and be able to leave the page.
     page.fill("#in-qty", "-5")
     page.press("#in-qty", "Enter")
-    page.wait_for_timeout(900)
+    wait_for(page, "document.getElementById('pos-sub').textContent.startsWith('short 5 ')"
+                   " && document.getElementById('pos-value').textContent.includes('−')")
     pos = page.evaluate("document.getElementById('pos-sub').textContent")
     val = page.evaluate("document.getElementById('pos-value').textContent")
     check("a position has a size and a direction",
@@ -215,7 +229,7 @@ with sync_playwright() as pw:
     page.fill("#in-target-price", "9.50")
     page.click("#btn-solve-iv")
     page.wait_for_function("document.getElementById('btn-solve-iv').textContent === 'Solve'", timeout=120_000)
-    page.wait_for_timeout(2200)
+    wait_for(page, "document.getElementById('nn-price').textContent.startsWith('$9.50')")
     solved = page.evaluate("document.getElementById('nn-price').textContent")
     check("a premium solves back to a volatility that reproduces it",
           solved.startswith("$9.50"),
@@ -251,7 +265,8 @@ with sync_playwright() as pw:
     # Expiry quick-picks reach the short-dated regime, which is a sliver of track.
     page.evaluate("document.querySelector('#maturity-quickpick .pick[data-t=\"0.02\"]').click()")
     page.wait_for_function("document.getElementById('val-maturity').value === '5d'", timeout=30_000)
-    page.wait_for_timeout(2500)
+    wait_for(page, "document.getElementById('contract-text').textContent.includes('European call')"
+                   " && document.getElementById('contract-text').textContent.includes('5 trading-day')")
     c0 = page.evaluate("document.getElementById('contract-text').textContent")
     check("short-dated regime is named as a European option",
           "European call" in c0 and "5 trading-day" in c0, c0[:120])
