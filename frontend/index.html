@@ -551,9 +551,10 @@
         <h1>Reprice on a simulated tick feed.</h1>
         <p>
           A simulated tick feed drives the network over a WebSocket at up to
-          15 updates a second, and each tick returns a new price and a new set
-          of Greeks. The server generates the ticks from a geometric Brownian
-          motion, so the feed carries no market data.
+          10 updates a second for three minutes per connection, and each tick
+          returns a new price and a new set of Greeks. The server generates the
+          ticks from a geometric Brownian motion, so the feed carries no market
+          data.
         </p>
       </header>
 

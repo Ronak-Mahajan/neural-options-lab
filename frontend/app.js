@@ -1805,6 +1805,7 @@ function applyState(p) {
 function showTab(key) {
   const id = TAB_IDS[key] || TAB_IDS.pricing;
   currentTab = TAB_IDS[key] ? key : "pricing";
+  if (currentTab !== "stream") wsStop();
   $("rail-note").hidden = currentTab === "hedging";
   if (currentTab === "ai") renderReportInputs();
   renderContractLine();
@@ -2628,8 +2629,9 @@ let wsPrices = [];
 let wsTicks = [];
 const WS_MAX_POINTS = 400;
 // The server sends one error frame and closes when it refuses a stream (a
-// contract outside the trained range, or no free stream slot). The reason is
-// kept so the close handler shows it in place of the generic line.
+// contract outside the trained range, or no free stream slot), and one
+// "ended" frame when a stream reaches its time limit. The reason is kept so
+// the close handler shows it in place of the generic line.
 let wsRefusal = "";
 function streamRefusalText(detail) {
   const d = String(detail || "");
@@ -2660,14 +2662,26 @@ function wsIdle(btn, text) {
   $("stream-stats").classList.add("idle");
 }
 
+// Closes the current stream, if one is open or opening. The server runs two
+// streams at a time, so a stream also ends when the visitor leaves the Live
+// tab or the page is hidden.
+function wsStop() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING ||
+             ws.readyState === WebSocket.OPEN)) {
+    $("btn-stream").disabled = true;
+    ws.closedByVisitor = true;
+    ws.close();
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") wsStop();
+});
+window.addEventListener("pagehide", wsStop);
+
 function wsConnect() {
   const btn = $("btn-stream");
   if (ws) {
-    if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
-      btn.disabled = true;
-      ws.closedByVisitor = true;
-      ws.close();
-    }
+    wsStop();
     return;
   }
 
@@ -2680,6 +2694,8 @@ function wsConnect() {
   wsTicks = [];
   wsRefusal = "";
   let ticksSeen = 0;
+  // Ticks a second, as the server grants it in its ready frame.
+  let hz = 1;
 
   sock.onopen = () => {
     if (ws !== sock) return;
@@ -2690,10 +2706,12 @@ function wsConnect() {
     $("stream-stats").classList.remove("idle");
     $("stream-sub").textContent = "Connected. Starting the feed…";
 
+    // No rate is requested: the server streams at its own cap and says
+    // which in the ready frame.
     sock.send(JSON.stringify({
       spot: state.spot, strike: state.strike, sigma: state.sigma,
       rate: state.rate, maturity: state.maturity,
-      option_type: state.optionType, hz: 15,
+      option_type: state.optionType,
     }));
 
     // Spot and model price move almost in lockstep, so on one pair of
@@ -2734,12 +2752,22 @@ function wsConnect() {
       if (d.tick === undefined) wsRefusal = streamRefusalText(d.error);
       return;
     }
+    if (d.status === "ended") {
+      // The server ends every stream after a fixed time and closes next;
+      // the close handler shows this line.
+      const mins = d.seconds / 60;
+      wsRefusal = "The feed ends after " + (Number.isInteger(mins)
+        ? mins + (mins === 1 ? " minute" : " minutes")
+        : Math.round(d.seconds) + " seconds") + ". Press Connect to resume.";
+      return;
+    }
     if (d.status === "ready") {
-      // The server caps the requested rate (MAX_STREAM_HZ), so the caption
-      // shows the granted rate. The ready frame carries no tick fields and
-      // returns before the tick rendering below. The stat beside this caption
-      // is the pricing wall-clock, and the caption says so because the tick
-      // period implies a different rate.
+      // The server sets the rate (MAX_STREAM_HZ), so the caption shows the
+      // granted rate. The ready frame carries no tick fields and returns
+      // before the tick rendering below. The stat beside this caption is the
+      // pricing wall-clock, and the caption says so because the tick period
+      // implies a different rate.
+      hz = d.hz;
       $("stream-sub").textContent = "Live: " + d.hz +
         " simulated ticks a second. Pricing time is the network's wall-clock " +
         "for the price and all five Greeks on this server.";
@@ -2786,8 +2814,8 @@ function wsConnect() {
         WS_MAX_POINTS);
     }
     // The figure's summary is a description, not a live region, and is
-    // refreshed every couple of seconds of feed.
-    if (ticksSeen === 1 || ticksSeen % 30 === 0) {
+    // refreshed every two seconds of feed.
+    if (ticksSeen === 1 || ticksSeen % (2 * hz) === 0) {
       describeChart("plot-stream", "Two stacked panels on one tick axis over " +
         "the last " + wsSpots.length + " ticks: spot from $" +
         Math.min(...wsSpots).toFixed(2) + " to $" + Math.max(...wsSpots).toFixed(2) +

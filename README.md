@@ -54,7 +54,7 @@ The dashboard has four tabs.
 
 **Hedge.** Sell one 30-day at-the-money call and hedge it daily under proportional transaction costs. The learned CVaR policy, a Black-Scholes delta hedge and a cost-aware Whalley-Wilmott band run on the same 15,000 simulated paths (five seeds of 3,000), under SPY-calibrated rough volatility with jumps or under Black-Scholes. The panel reports each hedger's worst-5% loss with a bootstrap standard error, its average P&L and trading cost, the P&L distributions, and the holdings along one path.
 
-**Live.** A simulated tick feed over a WebSocket at up to 15 updates a second. The server steps spot along a geometric Brownian motion and the network reprices the option and its Greeks on every tick. The feed carries no market data.
+**Live.** A simulated tick feed over a WebSocket at up to 10 updates a second, for three minutes per connection. The server steps spot along a geometric Brownian motion and the network reprices the option and its Greeks on every tick. The feed carries no market data.
 
 **Desk note.** A short risk summary built from the current price, its attribution and the hedging run. With `GROQ_API_KEY` set it is drafted by Llama 3.1 8B through Groq; without it a deterministic rule-based summary is used, so the tab always works.
 
@@ -575,7 +575,7 @@ There is also a drift monitor (`backend/quant/drift_monitor.py`): one command th
 | `GET /api/model-info` | Architecture, measured accuracy, and the served 0DTE checkpoint's own provenance |
 | `GET /api/error-distribution` | Signed pricing errors of the single model and the ensemble from `artifacts/eval.json` |
 | `GET /api/health` | Liveness and whether the checkpoints loaded (Render's health check path) |
-| `WS /ws/stream` | Live price and Greeks on a simulated spot walk, capped at 15 Hz, priced off the request thread |
+| `WS /ws/stream` | Live price and Greeks on a simulated spot walk: at most 10 Hz, three minutes per connection and two connections at once, priced off the request thread |
 | `GET /methodology` | The methodology page |
 
 The Monte Carlo benchmark switches with the pricing regime automatically: Asian under geometric Brownian motion above 12 trading days to expiry, rough Bergomi at or below.

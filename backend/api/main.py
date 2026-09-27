@@ -57,11 +57,16 @@ ROUGH_ETA, ROUGH_RHO, ROUGH_H = 1.5, -0.7, 0.1
 
 # One price-plus-Greeks frame costs 13.7 ms median and 74.7 ms at p95. A 60 Hz
 # request priced on the event loop delivers 28.8 Hz and starves every other
-# coroutine. At 15 Hz in a worker thread one stream uses about a fifth of one
-# core (15 x 13.7 ms per second), and MAX_STREAM_CLIENTS bounds how many run
-# at once.
-MAX_STREAM_HZ = 15
-MAX_STREAM_CLIENTS = 3
+# coroutine, so frames are priced in a worker thread. The container Render
+# runs has 0.5 CPU (the Starter plan; CI's docker job boots the image at
+# --cpus=0.5). Two streams at 10 Hz take 2 x 10 x 13.7 ms = 0.27 CPU-seconds
+# a second, about half of it, and leave the rest to the REST routes and the
+# health check. A stream ends after STREAM_MAX_SECONDS with an "ended" frame,
+# so a tab left open cannot hold a slot.
+STREAM_FRAME_SECONDS = 0.0137
+MAX_STREAM_HZ = 10
+MAX_STREAM_CLIENTS = 2
+STREAM_MAX_SECONDS = 180.0
 _stream_clients = 0
 
 # Handlers are sync `def`s on Starlette's 40-thread pool, and nothing else
@@ -1162,8 +1167,9 @@ def risk_report(req: RiskReportRequest):
 # ---------------------------------------------------------------------------
 
 class StreamConfig(OptionParams):
-    # Requested frame rate; the handler clamps it to [1, MAX_STREAM_HZ].
-    hz: float = 10.0
+    # Requested frame rate; the handler clamps it to [1, MAX_STREAM_HZ]. The
+    # dashboard sends none and streams at the server's cap.
+    hz: float = float(MAX_STREAM_HZ)
 
 
 STREAM_CONFIG_HELP = (
@@ -1262,6 +1268,12 @@ async def ws_stream(ws: WebSocket) -> None:
     accepted (CORS does not cover WebSockets), the config message is capped
     at MAX_STREAM_MESSAGE_BYTES, and the stream takes that one message: any
     later message closes it.
+
+    A stream lasts at most STREAM_MAX_SECONDS. It then sends
+        {"status": "ended", "reason": "session limit",
+         "seconds": STREAM_MAX_SECONDS}
+    and closes normally (1000), which frees its slot. The limit is enforced
+    here because a client that is not a browser page need not close.
     """
     global _stream_clients
     if not ws_origin_allowed(ws):
@@ -1309,8 +1321,20 @@ async def ws_stream(ws: WebSocket) -> None:
     reader = asyncio.ensure_future(ws.receive())
     try:
         done, _ = await asyncio.wait({frames, reader},
+                                     timeout=STREAM_MAX_SECONDS,
                                      return_when=asyncio.FIRST_COMPLETED)
-        if reader in done and not frames.done():
+        if not done:
+            # The session limit. The frame loop is stopped before the last
+            # message, so nothing is sent after it.
+            frames.cancel()
+            try:
+                await frames
+            except (asyncio.CancelledError, WebSocketDisconnect):
+                pass
+            await ws.send_json({"status": "ended", "reason": "session limit",
+                                "seconds": STREAM_MAX_SECONDS})
+            await ws.close(code=1000)
+        elif reader in done and not frames.done():
             frames.cancel()
             try:
                 await frames

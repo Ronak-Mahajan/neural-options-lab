@@ -331,6 +331,22 @@ with sync_playwright() as pw:
               b.textContent.replace(/\\s+/g, ' ').trim() ===
               b.querySelector('b').textContent + ' ' + b.querySelector('span').textContent)"""),
           " | ".join(page.evaluate("[...document.querySelectorAll('.chip-btn')].map(b => b.textContent)")))
+
+    # A live stream holds one of the server's two slots, so it streams at the
+    # rate the server grants and closes when the visitor leaves the tab.
+    page.unroute("**/api/market/*")
+    page.goto(base + "/?tab=stream", wait_until="networkidle", timeout=180_000)
+    page.click("#btn-stream")
+    wait_for(page, "document.getElementById('ws-ticks').textContent !== '0'")
+    sub = page.evaluate("document.getElementById('stream-sub').textContent")
+    check("the live feed runs at the rate the server grants",
+          sub.startswith("Live: 10 simulated ticks a second"), sub[:80])
+    page.click("#tabbtn-pricing")
+    wait_for(page, "ws === null", timeout=10_000)
+    check("leaving the Live tab closes the stream",
+          page.evaluate("ws === null")
+          and page.evaluate("document.getElementById('btn-stream').textContent") == "Connect",
+          page.evaluate("document.getElementById('stream-sub').textContent")[:80])
     ctx.close()
 
     # ───────────────────────────────────────────────────────────── hedging

@@ -29,6 +29,7 @@ from __future__ import annotations
 import inspect
 import json
 import math
+import re
 import subprocess
 import sys
 import warnings
@@ -1014,3 +1015,58 @@ def test_stream_slot_is_freed_when_the_client_leaves(client):
             break
         time.sleep(0.05)
     assert api._stream_clients == 0
+
+
+def test_stream_ends_at_the_session_limit_and_frees_its_slot(client,
+                                                             monkeypatch):
+    """A stream sends an "ended" frame at STREAM_MAX_SECONDS and closes
+    normally, so a tab left open cannot hold a slot."""
+    import time
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setattr(api, "STREAM_MAX_SECONDS", 0.5)
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.send_json(STREAM_CONFIG)
+        assert ws.receive_json()["status"] == "ready"
+        frames = []
+        while True:
+            frame = ws.receive_json()
+            if "status" in frame:
+                break
+            frames.append(frame)
+        assert frame == {"status": "ended", "reason": "session limit",
+                         "seconds": 0.5}
+        # Under load the first frame can take longer than the limit, so the
+        # frames before the end may be none; any that came are ticks.
+        assert all("tick" in f for f in frames)
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 1000
+    for _ in range(50):
+        if api._stream_clients == 0:
+            break
+        time.sleep(0.05)
+    assert api._stream_clients == 0
+
+
+def test_stream_rate_is_granted_at_the_cap(client):
+    """A config without hz streams at the server's cap, and a higher request
+    is clamped to it."""
+    config = {k: v for k, v in STREAM_CONFIG.items() if k != "hz"}
+    for extra in ({}, {"hz": 60}):
+        with client.websocket_connect("/ws/stream") as ws:
+            ws.send_json({**config, **extra})
+            ready = ws.receive_json()
+            assert ready["hz"] == ready["max_hz"] == api.MAX_STREAM_HZ
+
+
+def test_stream_budget_fits_the_container_cpu():
+    """Every stream slot at the full rate, priced at the median frame cost,
+    stays under the CPU of the container CI boots at the Starter plan's
+    limits."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    cpus = float(re.search(r"--cpus=([0-9.]+)", ci).group(1))
+    load = (api.MAX_STREAM_CLIENTS * api.MAX_STREAM_HZ
+            * api.STREAM_FRAME_SECONDS)
+    assert load < cpus
+    assert api.STREAM_MAX_SECONDS <= 300
