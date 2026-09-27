@@ -568,7 +568,7 @@ class SurfaceRequest(ApiRequest):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.api_route("/api/health", methods=["GET", "HEAD"])
+@app.api_route("/api/health", methods=["GET", "HEAD"], include_in_schema=False)
 async def health() -> JSONResponse:
     """Render's health check. A coroutine with no I/O, so it answers from the
     event loop while every pool thread is busy. 503 without the pricing
@@ -580,6 +580,13 @@ async def health() -> JSONResponse:
             "hedgers_loaded": sorted(HEDGERS),
             "iv_surface_loaded": IV_SURFACE is not None}
     return JSONResponse(body, status_code=200 if ready else 503)
+
+
+# The route above is left out of the OpenAPI schema, where its GET and HEAD
+# would share one operationId. This one puts GET /api/health in the schema.
+# It never serves a request: the route above is registered first and takes
+# both methods, which also keeps both in the Allow header of a 405.
+app.add_api_route("/api/health", health, methods=["GET"])
 
 
 _eval_report: dict | None = None

@@ -31,6 +31,7 @@ import json
 import math
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -851,6 +852,28 @@ def test_method_mismatch_on_an_api_route_is_405(client, method, path, allow):
     assert set(resp.headers["Allow"].split(", ")) == set(allow.split(", "))
     if method != "HEAD":
         assert resp.json() == {"detail": "Method Not Allowed"}
+
+
+def test_openapi_operation_ids_are_unique(monkeypatch):
+    """Client generators need one operationId per operation. /api/health
+    answers GET and HEAD, and the schema documents its GET only."""
+    monkeypatch.setattr(api.app, "openapi_schema", None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        schema = api.app.openapi()
+    assert not [w for w in caught if "Duplicate Operation ID" in str(w.message)]
+    ids = [op["operationId"] for ops in schema["paths"].values()
+           for op in ops.values()]
+    assert len(ids) == len(set(ids))
+    assert set(schema["paths"]["/api/health"]) == {"get"}
+
+
+@pytest.mark.parametrize("path", ["/", "/methodology"])
+def test_both_pages_declare_the_favicon(client, path):
+    """Without a declared icon a browser requests /favicon.ico, which is not
+    served."""
+    html = client.get(path).text
+    assert '<link rel="icon" href="data:image/svg+xml,' in html
 
 
 def test_unknown_api_path_is_a_json_404(client):
