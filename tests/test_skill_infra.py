@@ -241,6 +241,29 @@ def test_failed_runs_upload_their_logs_and_push_only_captures(path):
         assert teed <= uploaded, (name, sorted(teed - uploaded))
 
 
+_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$", re.M)
+
+
+@pytest.mark.parametrize("path", [CI, RECORDER], ids=lambda p: p.name)
+def test_actions_are_pinned_to_a_commit(path):
+    """A tag can be repointed; a commit cannot. The trailing comment names
+    the release at that commit."""
+    uses = _USES.findall(path.read_text(encoding="utf-8"))
+    assert uses
+    for ref, rest in uses:
+        action, _, sha = ref.partition("@")
+        assert re.fullmatch(r"[0-9a-f]{40}", sha), ref
+        assert re.fullmatch(r"\s*# v\d+\.\d+\.\d+\s*", rest), (ref, rest)
+        if action == "actions/checkout":
+            assert rest.strip().startswith("# v5."), rest
+
+
+@pytest.mark.parametrize("path", [CI, RECORDER], ids=lambda p: p.name)
+def test_every_job_has_a_timeout(path):
+    for name, job in _workflow(path)["jobs"].items():
+        assert 0 < job.get("timeout-minutes", 0) <= 30, name
+
+
 # ---- CI builds and boots the image Render deploys ----
 
 def test_ci_boots_the_image_at_starter_limits():
