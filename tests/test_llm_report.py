@@ -7,7 +7,10 @@ crowning the learned policy is a claim the numbers printed beside it refute.
 """
 
 import asyncio
+import json
 
+import groq
+import httpx
 import pytest
 
 from backend.quant import llm
@@ -157,6 +160,71 @@ def test_served_fallback_is_the_ranked_note(monkeypatch):
     assert body.rstrip(" ") == llm.render_risk_note(**BAND_WINS)
     for claim in WINNER_CLAIMS:
         assert claim not in body.lower()
+
+
+# --------------------------------------------------------------------------
+# The keyed path, offline. The real client library is built with a dummy key
+# and an httpx transport that answers in-process, so no request leaves the
+# machine and the pinned groq and httpx versions are the ones exercised.
+# --------------------------------------------------------------------------
+
+def _body(response) -> str:
+    async def collect():
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
+        return "".join(chunks)
+    return asyncio.run(collect())
+
+
+def _offline_groq(monkeypatch, handler) -> None:
+    real = groq.Groq
+
+    def build(**kw):
+        return real(http_client=httpx.Client(
+            transport=httpx.MockTransport(handler)), max_retries=0, **kw)
+
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    monkeypatch.setattr(groq, "Groq", build)
+
+
+def test_the_pinned_groq_client_constructs():
+    """groq and httpx are pinned as a pair; a pair that cannot build a
+    client never reaches the provider."""
+    groq.Groq(api_key="dummy-key")
+    groq.AsyncGroq(api_key="dummy-key")
+
+
+def test_keyed_note_streams_the_model_text(monkeypatch):
+    def handler(request):
+        chunk = {"id": "c1", "object": "chat.completion.chunk", "created": 0,
+                 "model": llm.DEFAULT_MODEL,
+                 "choices": [{"index": 0, "delta": {"content": "Model note."},
+                              "finish_reason": None}]}
+        sse = f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n"
+        return httpx.Response(200, text=sse,
+                              headers={"content-type": "text/event-stream"})
+
+    _offline_groq(monkeypatch, handler)
+    assert _body(llm.get_risk_report_stream(**BAND_WINS)) == "Model note."
+
+
+def test_a_provider_error_serves_the_ranked_note(monkeypatch):
+    _offline_groq(monkeypatch, lambda request: httpx.Response(
+        401, json={"error": {"message": "Invalid API Key"}}))
+    body = _body(llm.get_risk_report_stream(**BAND_WINS))
+    assert body.strip() == llm.render_risk_note(**BAND_WINS).strip()
+
+
+def test_a_client_that_cannot_be_built_serves_the_ranked_note(monkeypatch):
+    def broken(**kw):
+        raise TypeError("Client.__init__() got an unexpected keyword "
+                        "argument 'proxies'")
+
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+    monkeypatch.setattr(groq, "Groq", broken)
+    body = _body(llm.get_risk_report_stream(**BAND_WINS))
+    assert body.strip() == llm.render_risk_note(**BAND_WINS).strip()
 
 
 # --------------------------------------------------------------------------

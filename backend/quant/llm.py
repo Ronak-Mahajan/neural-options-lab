@@ -399,12 +399,14 @@ def get_risk_report_stream(ticker: str, nn_price: float, bs_cvar: float,
         return StreamingResponse(fallback_stream(), media_type="text/plain")
 
     # If API key exists, stream from Groq
-    from groq import Groq
-    client = Groq(api_key=api_key)
     model = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
 
     def groq_stream():
         try:
+            # Imported and built inside the try, so a client library that
+            # fails to load or to construct serves the rule-based note too.
+            from groq import Groq
+            client = Groq(api_key=api_key)
             stream = client.chat.completions.create(
                 messages=[{"role": "user", "content": parts["prompt"]}],
                 model=model,

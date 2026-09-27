@@ -531,6 +531,31 @@ def test_risk_report_accepts_dashboard_body(client, monkeypatch):
     assert "nan" not in resp.text.lower()
 
 
+def test_risk_report_with_a_key_serves_the_note_when_the_provider_fails(
+        client, monkeypatch):
+    """With GROQ_API_KEY set the page names the model as the writer. A
+    provider that refuses the key (a dummy key, answered by an in-process
+    transport, so nothing leaves the machine) still yields a 200 carrying the
+    rule-based note."""
+    import groq
+    import httpx
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    rules = client.post("/api/risk-report", json=risk_body()).text
+
+    real = groq.Groq
+    refuse = httpx.MockTransport(lambda request: httpx.Response(
+        401, json={"error": {"message": "Invalid API Key"}}))
+    monkeypatch.setattr(groq, "Groq", lambda **kw: real(
+        http_client=httpx.Client(transport=refuse), max_retries=0, **kw))
+    monkeypatch.setenv("GROQ_API_KEY", "dummy-key")
+
+    assert client.get("/api/model-info").json()["report_writer"] == "model"
+    resp = client.post("/api/risk-report", json=risk_body())
+    assert resp.status_code == 200
+    assert resp.text.strip() == rules.strip()
+
+
 @pytest.mark.parametrize("kw,loc", [
     ({"attributions": {"spot": "abc"}}, ["body", "attributions", "spot"]),
     ({"attributions": {"spot": None}}, ["body", "attributions", "spot"]),
