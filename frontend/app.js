@@ -2036,7 +2036,7 @@ async function fetchTicker() {
       ", one-year realised volatility " + (d.sigma_raw * 100).toFixed(1) +
       "%, " + esc(rateName) + " " + (d.rate_raw * 100).toFixed(2) +
       "%, used as the model's continuously compounded rate" +
-      "<br>as of " + esc(d.as_of.slice(0, 16).replace("T", " ")) + " " +
+      " <br>as of " + esc(d.as_of.slice(0, 16).replace("T", " ")) + " " +
       esc(d.as_of_tz || "UTC") + ", the time the server fetched it" +
       // The spot is a trade only when the quote endpoint answered. Otherwise
       // it is the previous session's close, as it always is outside market
@@ -2045,7 +2045,7 @@ async function fetchTicker() {
         ? "; the spot is the last daily close"
         : d.spot_source === "last_price" ? "; the spot is the last trade" : "") +
       (d.clamped
-        ? "<br><span class='warn'>volatility and rate adjusted to the range the model was trained on</span>"
+        ? " <br><span class='warn'>volatility and rate adjusted to the range the model was trained on</span>"
         : "");
     chip.classList.add("show");
   } catch (err) {

@@ -319,6 +319,18 @@ with sync_playwright() as pw:
           and tk["strike"] == 770, json.dumps(tk)[:200])
     wait_for(page, "location.search.includes('spot=771.35')", timeout=10_000)
     check("the shared link carries the fetched spot", "spot=771.35" in page.url, page.url[-120:])
+
+    # Scrapers and anything else that reads textContent see no space where a
+    # <br> or a flex column breaks the line, so the markup carries one.
+    chip_text = page.evaluate("document.getElementById('market-chip').textContent")
+    check("the market chip's text keeps its words apart",
+          "compounded rate as of" in chip_text and "nearest step" not in chip_text,
+          chip_text[:220])
+    check("preset buttons' text keeps title and subtitle apart",
+          page.evaluate("""[...document.querySelectorAll('.chip-btn')].every(b =>
+              b.textContent.replace(/\\s+/g, ' ').trim() ===
+              b.querySelector('b').textContent + ' ' + b.querySelector('span').textContent)"""),
+          " | ".join(page.evaluate("[...document.querySelectorAll('.chip-btn')].map(b => b.textContent)")))
     ctx.close()
 
     # ───────────────────────────────────────────────────────────── hedging

@@ -287,3 +287,17 @@ def test_idle_feed_dims_figures_not_labels() -> None:
     assert re.search(r"\.stream-stats\.idle \.v\s*\{[^}]*opacity", CSS)
     # The idle price drops the live colour, so the dimmed figure is ink-hi.
     assert '$("ws-price").className = "v mono";' in _function("wsIdle")
+
+
+# Extracted text -------------------------------------------------------------
+
+def test_line_breaks_keep_words_apart_in_extracted_text() -> None:
+    """textContent drops <br>, so each segment of the market chip ends in a
+    space, and each preset button has whitespace between its title and its
+    subtitle. Neither shows on screen."""
+    chip = _function("fetchTicker")
+    assert "<br>" in chip
+    assert set(re.findall(r"(.)<br>", chip)) == {" "}
+    buttons = _tags(r'(?s)<button class="chip-btn"[^>]*>.*?</button>')
+    assert len(buttons) == 4
+    assert not [b for b in buttons if "</b><span>" in b]
