@@ -1977,8 +1977,9 @@ document.querySelectorAll("#maturity-quickpick .pick").forEach((btn) => {
 });
 
 // Ticker lookup. The pricer works in moneyness, so any spot level is exact.
-// The spot and strike sliders are rescaled around the fetched price and the
-// strike is set at the money.
+// The spot and strike sliders are rescaled around the fetched price, the
+// spot is taken exactly as fetched, and the strike is set at the slider step
+// nearest to it.
 let marketData = null;
 
 // backend/quant/market_data.py returns the symbol the risk-free rate came
@@ -2009,6 +2010,10 @@ async function fetchTicker() {
     const d = await api("/api/market/" + encodeURIComponent(t));
     marketData = d;
     rescaleSpotSliders(d.spot);
+    // The spot slider's step would round $771.35 to $770; the priced spot
+    // is the fetched one.
+    $("in-spot").step = "any";
+    $("in-spot").value = d.spot;
     // A range input snaps its value to the step. At a 1% step a fetched 12.9%
     // volatility becomes 13% while the chip shows 12.9, so the steps are made
     // fine enough to keep the readout, the chip and the priced inputs equal.
@@ -2039,10 +2044,6 @@ async function fetchTicker() {
       (d.spot_source === "last_close"
         ? "; the spot is the last daily close"
         : d.spot_source === "last_price" ? "; the spot is the last trade" : "") +
-      (Math.abs(state.spot - d.spot) > 0.005
-        ? "<br>priced at $" + state.spot.toLocaleString() +
-          ", the nearest step on the spot slider"
-        : "") +
       (d.clamped
         ? "<br><span class='warn'>volatility and rate adjusted to the range the model was trained on</span>"
         : "");

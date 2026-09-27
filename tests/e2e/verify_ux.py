@@ -297,6 +297,28 @@ with sync_playwright() as pw:
           abs(sig - 0.25) < 0.01 and "is reproduced by" in note
           and "also reproduces it at" in note,
           f"{shown} -> sigma {sig}: {note[:160]}")
+
+    # A loaded ticker prices its fetched spot, not the nearest slider step.
+    # The market reply is fixed here, so the check needs no network.
+    market = {"ticker": "SPY", "spot": 771.35, "spot_source": "last_price",
+              "sigma": 0.129992, "sigma_raw": 0.129992, "rate": 0.0407,
+              "rate_raw": 0.0407, "rate_source": "^IRX", "n_return_days": 251,
+              "clamped": False, "as_of": "2026-09-26 16:31:00", "as_of_tz": "UTC"}
+    page.route("**/api/market/*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps(market)))
+    page.goto(base + "/", wait_until="networkidle", timeout=180_000)
+    page.wait_for_function("document.getElementById('nn-price').textContent.startsWith('$')", timeout=180_000)
+    page.fill("#in-ticker", "SPY")
+    page.click("#btn-fetch-ticker")
+    wait_for(page, "document.getElementById('market-chip').classList.contains('show')"
+                   " && document.getElementById('btn-fetch-ticker').textContent === 'Load'")
+    tk = page.evaluate("({spot: state.spot, strike: state.strike, slider: document.getElementById('in-spot').value,"
+                       " line: document.getElementById('contract-text').textContent})")
+    check("a loaded ticker prices the fetched spot",
+          tk["spot"] == 771.35 and tk["slider"] == "771.35" and "$771.35" in tk["line"]
+          and tk["strike"] == 770, json.dumps(tk)[:200])
+    wait_for(page, "location.search.includes('spot=771.35')", timeout=10_000)
+    check("the shared link carries the fetched spot", "spot=771.35" in page.url, page.url[-120:])
     ctx.close()
 
     # ───────────────────────────────────────────────────────────── hedging
