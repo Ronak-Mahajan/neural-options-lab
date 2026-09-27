@@ -69,6 +69,11 @@ def test_price_rises_with_volatility_near_the_money(engine):
 # at 25% is also reproduced near 18.5%, and both lie below the price at 5%.
 PRESET = (160.0, 100.0, 1.0, 0.04, "put")
 
+# These puts are the call less a parity term of order 1 per unit strike, so
+# float32 resolves their price to a few 1e-6 at a strike of 100, and a solve
+# matches the target to that resolution, not to the bisection tolerance.
+PUT_PRICE_RESOLUTION = 1e-5
+
 
 def test_the_far_otm_preset_solves_back_to_its_own_volatility(engine):
     spot, strike, mat, rate, kind = PRESET
@@ -80,7 +85,7 @@ def test_the_far_otm_preset_solves_back_to_its_own_volatility(engine):
 
     assert sol.bracketed
     assert abs(sol.sigma - 0.25) < 5e-3
-    assert abs(sol.price_at_sigma - target) < 1e-6
+    assert abs(sol.price_at_sigma - target) < PUT_PRICE_RESOLUTION
     assert len(sol.roots) == 2
     assert sol.roots[0] == pytest.approx(0.185, abs=5e-3)
     assert sol.roots[1] == sol.sigma
@@ -103,10 +108,8 @@ def test_every_crossing_is_found(engine):
     assert list(sol.roots) == sorted(sol.roots)
     for root, near in zip(sol.roots, (0.05, 0.52, 0.79)):
         assert abs(root - near) < 0.01
-        # The put is the call less a parity term near 1 per unit strike, so
-        # float32 resolves its price to about 6e-6 at this strike.
         assert abs(price_at(engine, spot, strike, mat, rate, root, kind)
-                   - target) < 1e-5
+                   - target) < PUT_PRICE_RESOLUTION
     assert sol.sigma == sol.roots[0]          # nearest the 25% hint
     high = solve_implied_vol(engine, spot, strike, mat, rate, target,
                              option_type=kind, sigma_hint=0.75)
@@ -139,7 +142,7 @@ def test_a_price_below_the_first_sweep_point_is_still_reachable(engine):
     sol = solve_implied_vol(engine, spot, strike, mat, rate, target,
                             option_type=kind, tol=1e-8)
     assert sol.bracketed
-    assert abs(sol.price_at_sigma - target) < 1e-6
+    assert abs(sol.price_at_sigma - target) < PUT_PRICE_RESOLUTION
     assert (sol.low_price, sol.high_price) == (prices.min(), prices.max())
 
 
