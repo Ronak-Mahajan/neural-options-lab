@@ -197,8 +197,8 @@ def test_serving_code_never_names_an_excluded_directory():
 # ---- workflow tokens: read-only unless the job pushes ----
 
 @pytest.mark.parametrize("path,writers", [
-    (CI, {"failure-log"}),
-    (RECORDER, {"publish", "failure-log"}),
+    (CI, set()),
+    (RECORDER, {"publish"}),
 ], ids=["ci", "record_surfaces"])
 def test_write_token_only_on_jobs_that_push(path, writers):
     wf = _workflow(path)
@@ -218,10 +218,50 @@ def test_write_token_only_on_jobs_that_push(path, writers):
                     assert step.get("with", {}).get("persist-credentials") is False, name
 
 
-def test_failure_log_never_runs_on_main_or_pull_requests():
-    job = _workflow(CI)["jobs"]["failure-log"]
-    assert "github.ref != 'refs/heads/main'" in job["if"]
-    assert "github.event_name == 'push'" in job["if"]
+_TEED_LOG = re.compile(r"\btee (?:-a )?\"?(?:\$GITHUB_WORKSPACE/)?([\w.-]+\.log)")
+
+
+@pytest.mark.parametrize("path", [CI, RECORDER], ids=lambda p: p.name)
+def test_failed_runs_upload_their_logs_and_push_only_captures(path):
+    """Every log a job tees leaves a failed run as an artifact. Nothing is
+    committed back to the branch under test; the only push anywhere is the
+    recorder's, to the surfaces branch."""
+    assert ".ci/" not in path.read_text(encoding="utf-8")
+    for name, job in _workflow(path)["jobs"].items():
+        steps = job["steps"]
+        run = "\n".join(s.get("run", "") for s in steps)
+        pushes = [m.strip() for m in re.findall(r"git push[^\n|;&]*", run)]
+        assert all(m == "git push origin surfaces" for m in pushes), (name, pushes)
+        uploaded = set()
+        for step in steps:
+            if (str(step.get("uses", "")).startswith("actions/upload-artifact")
+                    and re.search(r"\b(failure|always)\(\)", str(step.get("if", "")))):
+                uploaded.update(Path(f).name for f in str(step["with"]["path"]).split())
+        teed = set(_TEED_LOG.findall(run))
+        assert teed <= uploaded, (name, sorted(teed - uploaded))
+
+
+_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$", re.M)
+
+
+@pytest.mark.parametrize("path", [CI, RECORDER], ids=lambda p: p.name)
+def test_actions_are_pinned_to_a_commit(path):
+    """A tag can be repointed; a commit cannot. The trailing comment names
+    the release at that commit."""
+    uses = _USES.findall(path.read_text(encoding="utf-8"))
+    assert uses
+    for ref, rest in uses:
+        action, _, sha = ref.partition("@")
+        assert re.fullmatch(r"[0-9a-f]{40}", sha), ref
+        assert re.fullmatch(r"\s*# v\d+\.\d+\.\d+\s*", rest), (ref, rest)
+        if action == "actions/checkout":
+            assert rest.strip().startswith("# v5."), rest
+
+
+@pytest.mark.parametrize("path", [CI, RECORDER], ids=lambda p: p.name)
+def test_every_job_has_a_timeout(path):
+    for name, job in _workflow(path)["jobs"].items():
+        assert 0 < job.get("timeout-minutes", 0) <= 30, name
 
 
 # ---- CI builds and boots the image Render deploys ----

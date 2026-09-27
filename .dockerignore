@@ -50,5 +50,4 @@ data/
 docs/
 tests/
 .github/
-.ci/
 requirements-dev.txt

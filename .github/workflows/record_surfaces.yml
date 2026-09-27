@@ -25,9 +25,10 @@ name: Record surfaces
 #
 # Token scope: the `record` job, which installs and runs third-party packages,
 # holds a read-only token and keeps no credentials in .git/config. It hands
-# its captures to `publish` as a short-lived artifact. `publish` and
-# `failure-log` are the only jobs with write access, and they run git, cp and
-# tail only; nothing is installed while they hold it.
+# its captures to `publish` as a short-lived artifact. `publish` is the only
+# job with write access, and it runs git and cp only; nothing is installed
+# while it holds it. A failed run's logs are uploaded as artifacts, never
+# committed.
 #
 # Growth, measured on the first three runs of this workflow rather than
 # estimated: BTC 58-59 KB, ETH 48-54 KB, SPY 14 KB, all gzipped. Twelve
@@ -50,7 +51,7 @@ on:
       - "scripts/record_surfaces.py"
       - "backend/quant/deribit.py"
 
-# Read-only by default; publish and failure-log widen it for themselves.
+# Read-only by default; publish widens it for itself.
 permissions:
   contents: read
 
@@ -65,11 +66,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
@@ -162,7 +163,7 @@ jobs:
           echo "collected $n capture(s); spy: $(cat "$OUT/spy-status.txt")"
 
       - name: Hand the captures to the publish job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: captures
           path: ${{ runner.temp }}/out
@@ -171,8 +172,10 @@ jobs:
           overwrite: true
 
       - name: Keep this job's logs
+        # On success too: the SPY leg never fails the job, so spy.log is the
+        # only full account of a rate-limited or broken SPY capture.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: record-log-capture
           path: |
@@ -189,16 +192,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: captures
           path: ${{ runner.temp }}/out
 
       - name: Publish captures to the orphan surfaces branch
-        # Teed into publish.log, which failure-log writes back on a branch
-        # run: a lost rebase or a rejected push is the outcome worth reading.
+        # Teed into publish.log, which a failed run uploads as an artifact:
+        # a lost rebase or a rejected push is the outcome worth reading.
         run: |
           set -o pipefail
           {
@@ -270,49 +273,10 @@ jobs:
 
       - name: Keep this job's log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: record-log-publish
           path: publish.log
           if-no-files-found: ignore
           retention-days: 3
           overwrite: true
-
-  failure-log:
-    # Never writes to main; a cron run from the default branch that fails is
-    # read from the Actions UI. On a branch smoke test the tail of each leg's
-    # log is committed so it can be read from the repository. Each log is
-    # guarded by a touch, so a failure before any leg wrote anything still
-    # produces a file.
-    needs: [record, publish]
-    if: failure() && github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: record-log-*
-          path: logs
-          merge-multiple: true
-
-      - name: Commit failure log
-        run: |
-          mkdir -p .ci logs
-          touch logs/ci.log logs/spy.log logs/publish.log
-          {
-            for f in ci.log spy.log publish.log; do
-              echo "===== $f ====="
-              tail -c 20000 "logs/$f"
-            done
-          } > .ci/last-failure-record.log
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .ci/last-failure-record.log
-          git commit -m "ci: failure log [skip ci]" || exit 0
-          git pull --rebase origin "$GITHUB_REF_NAME"
-          git push origin "HEAD:$GITHUB_REF_NAME"

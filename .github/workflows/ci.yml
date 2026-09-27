@@ -7,7 +7,7 @@ on:
     branches: [main, master, "fix/**", "rebuild/**"]
   pull_request:
 
-# Read-only by default. The one job that writes is failure-log, below.
+# Read-only token. No job in this workflow pushes.
 permissions:
   contents: read
 
@@ -23,13 +23,13 @@ jobs:
         # this in step with the pins, not ahead of them.
         python-version: ["3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           # Nothing in this job pushes, so the token is not left in
           # .git/config while third-party packages install and run.
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -40,8 +40,8 @@ jobs:
         # with that exact torch as a constraint, so the second step can keep
         # the CPU build but never swap in the CUDA wheel from PyPI.
         #
-        # Teed into ci.log, which failure-log commits back on a feature
-        # branch, so a resolver failure here is readable too.
+        # Teed into ci.log, which a failed run uploads as an artifact, so a
+        # resolver failure here is in it too.
         run: |
           set -o pipefail
           {
@@ -82,7 +82,7 @@ jobs:
 
       - name: Keep the log of a failed run
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-log-test
           path: ci.log
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -169,54 +169,10 @@ jobs:
 
       - name: Keep the log of a failed run
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-log-docker
           path: docker.log
           if-no-files-found: ignore
           retention-days: 7
           overwrite: true
-
-  failure-log:
-    # Actions logs are not readable without a token, so on a feature branch
-    # the tail of a failed run is committed to .ci/ where it can be read from
-    # the repository. main is never written to, and pull requests never get
-    # a write token. This job runs git and tail only; no dependencies are
-    # installed while it holds write access.
-    needs: [test, docker]
-    if: failure() && github.event_name == 'push' && github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: ci-log-*
-          path: logs
-          merge-multiple: true
-
-      - name: Commit failure log
-        run: |
-          mkdir -p .ci logs
-          wrote=0
-          if [ -s logs/ci.log ]; then
-            tail -c 60000 logs/ci.log > .ci/last-failure-test.log; wrote=1
-          fi
-          if [ -s logs/docker.log ]; then
-            tail -c 60000 logs/docker.log > .ci/last-failure-docker.log; wrote=1
-          fi
-          if [ "$wrote" = 0 ]; then
-            # A failure before any step wrote a log (checkout, setup).
-            echo "No step wrote a log. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-              > .ci/last-failure-test.log
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .ci/
-          git commit -m "ci: failure log [skip ci]" || exit 0
-          git pull --rebase origin "$GITHUB_REF_NAME"
-          git push origin "HEAD:$GITHUB_REF_NAME"
